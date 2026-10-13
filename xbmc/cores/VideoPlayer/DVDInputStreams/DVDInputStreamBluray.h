@@ -164,6 +164,12 @@ public:
   //! show or hide the presentation graphic stream libbluray last reported, in navigation mode
   void SetSubtitleVisible(bool visible);
 
+  //! whether the disc lets the user change the audio stream, change the presentation graphic
+  //! stream or show or hide it, always true outside navigation mode
+  bool CanChangeAudioStream() const;
+  bool CanChangeSubtitleStream() const;
+  bool CanToggleSubtitle() const;
+
   //! the presentation graphic display flag libbluray last reported
   bool IsPgEnabled() const { return m_pgEnabled; }
 
@@ -378,5 +384,6 @@ protected:
     bool m_clipStartHeld{false};
     uint64_t m_clipStartEnd{0};
     uint32_t m_pgStreamNumber{0};
+    uint32_t m_uoMask{0};
     bool m_pgEnabled{false};
 };
