@@ -163,6 +163,9 @@ public:
   //! show or hide the presentation graphic stream libbluray last reported, in navigation mode
   void SetSubtitleVisible(bool visible);
 
+  //! the presentation graphic display flag libbluray last reported
+  bool IsPgEnabled() const { return m_pgEnabled; }
+
   struct ClipTime
   {
     uint64_t inTime{0};
@@ -362,4 +365,5 @@ protected:
     bool m_clipStartHeld{false};
     uint64_t m_clipStartEnd{0};
     uint32_t m_pgStreamNumber{0};
+    bool m_pgEnabled{false};
 };

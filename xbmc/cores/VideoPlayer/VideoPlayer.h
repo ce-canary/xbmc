@@ -649,6 +649,8 @@ protected:
   CDVDOverlayContainer m_overlayContainer;
 
   std::shared_ptr<CDVDInputStream> m_pInputStream;
+  //! written on the player thread, read by SetVideoSettings from any thread
+  std::atomic<bool> m_blurayMenu{false};
   std::unique_ptr<CDVDDemux> m_pDemuxer;
   std::shared_ptr<CDVDDemux> m_pSubtitleDemuxer;
   std::unordered_map<int64_t, std::shared_ptr<CDVDDemux>> m_subtitleDemuxerMap;
