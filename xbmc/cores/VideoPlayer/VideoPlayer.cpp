@@ -1074,8 +1074,10 @@ void CVideoPlayer::OpenDefaultStreams(bool reset)
 {
   // if input stream dictate, we will open later
   // unless we are loading a bluray playlist directly in which case set now
-  const bool noBlurayMenu{m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) &&
-                          m_State.menuType == MenuType::NONE};
+  const std::shared_ptr<CDVDInputStream::IMenus> menus{
+      std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream)};
+  const bool noBlurayMenu{m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) && menus &&
+                          menus->GetSupportedMenuType() == MenuType::NONE};
   if (!noBlurayMenu && (m_dvd.iSelectedAudioStream >= 0 || m_dvd.iSelectedSPUStream >= 0))
     return;
 
