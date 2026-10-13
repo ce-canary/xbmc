@@ -1083,6 +1083,9 @@ void CVideoPlayer::OpenDefaultStreams(bool reset)
       std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream)};
   const bool noBlurayMenu{m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) && menus &&
                           menus->GetSupportedMenuType() == MenuType::NONE};
+  // in menu mode the disc program selects every stream through libbluray, as on a disc player
+  if (m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) && !noBlurayMenu)
+    return;
   if (!noBlurayMenu && (m_dvd.iSelectedAudioStream >= 0 || m_dvd.iSelectedSPUStream >= 0))
     return;
 
