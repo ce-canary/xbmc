@@ -929,6 +929,7 @@ bool CVideoPlayer::OpenInputStream()
   if (m_pInputStream.use_count() > 1)
     throw std::runtime_error("m_pInputStream reference count is greater than 1");
   m_pInputStream.reset();
+  m_blurayMenu = false;
 
   // Flushes keep disc menu overlays, and the closed input stream can no longer remove them
   m_overlayContainer.Clear();
@@ -949,6 +950,16 @@ bool CVideoPlayer::OpenInputStream()
               CURL::GetRedacted(m_item.GetPath()));
     return false;
   }
+
+  const std::shared_ptr<CDVDInputStream::IMenus> menus{
+      std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream)};
+  m_blurayMenu = m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) && menus &&
+                 menus->GetSupportedMenuType() == MenuType::NATIVE;
+#if defined(HAVE_LIBBLURAY)
+  // a settings load before this point put the per-file subtitle state over the disc's
+  if (m_blurayMenu)
+    m_VideoPlayerVideo->EnableSubtitle(GetBlurayInputStream()->IsPgEnabled());
+#endif
 
   // find any available external subtitles for non dvd files
   if (!m_pInputStream->IsStreamType(DVDSTREAM_TYPE_DVD) &&
@@ -3468,6 +3479,7 @@ void CVideoPlayer::OnExit()
   if (m_pInputStream.use_count() > 1)
     throw std::runtime_error("m_pInputStream reference count is greater than 1");
   m_pInputStream.reset();
+  m_blurayMenu = false;
 
   // clean up all selection streams
   m_SelectionStreams.Clear(StreamType::NONE, STREAM_SOURCE_NONE);
@@ -3544,6 +3556,7 @@ void CVideoPlayer::HandleMessages()
       if (m_pInputStream.use_count() > 1)
         throw std::runtime_error("m_pInputStream reference count is greater than 1");
       m_pInputStream.reset();
+      m_blurayMenu = false;
 
       m_SelectionStreams.Clear(StreamType::NONE, STREAM_SOURCE_NONE);
 
@@ -6565,7 +6578,9 @@ void CVideoPlayer::SetVideoSettings(CVideoSettings& settings)
   m_renderManager.SetDelay(static_cast<int>(settings.m_AudioDelay * 1000.0f));
   m_renderManager.SetSubtitleVerticalPosition(settings.m_subtitleVerticalPosition,
                                               settings.m_subtitleVerticalPositionSave);
-  m_VideoPlayerVideo->EnableSubtitle(settings.m_SubtitleOn);
+  // libbluray owns the subtitle state of a menu-mode session
+  if (!m_blurayMenu)
+    m_VideoPlayerVideo->EnableSubtitle(settings.m_SubtitleOn);
   m_VideoPlayerVideo->SetSubtitleDelay(static_cast<int>(-settings.m_SubtitleDelay * DVD_TIME_BASE));
 }
 
