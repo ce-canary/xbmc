@@ -793,7 +793,11 @@ void CDVDInputStreamBluray::ProcessEvent() {
   case BD_EVENT_SECONDARY_VIDEO_SIZE:
   case BD_EVENT_SECONDARY_VIDEO_STREAM:
   case BD_EVENT_KEY_INTEREST_TABLE:
+    break;
+
   case BD_EVENT_UO_MASK_CHANGED:
+    CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_UO_MASK_CHANGED {:#x}", m_event.param);
+    m_uoMask = m_event.param;
     break;
 
   case BD_EVENT_PLAYMARK:
@@ -1609,18 +1613,48 @@ bool CDVDInputStreamBluray::SetActiveSubtitleStream(int pid, bool visible)
   if (number == 0)
     return false;
 
-  bd_select_stream(m_bd, BLURAY_PG_TEXTST_STREAM, number, visible);
+  // the flag rides along with the stream number, so keep the disc's while it forbids toggling
+  bd_select_stream(m_bd, BLURAY_PG_TEXTST_STREAM, number,
+                   CanToggleSubtitle() ? visible : m_pgEnabled);
   m_pgStreamNumber = number;
   return true;
 }
 
 void CDVDInputStreamBluray::SetSubtitleVisible(bool visible)
 {
-  if (!CanSelectStream() || m_pgStreamNumber == 0 ||
+  if (!CanSelectStream() || !CanToggleSubtitle() || m_pgStreamNumber == 0 ||
       m_pgStreamNumber > static_cast<uint32_t>(m_clip->pg_stream_count))
     return;
 
   bd_select_stream(m_bd, BLURAY_PG_TEXTST_STREAM, m_pgStreamNumber, visible);
+}
+
+// the audio and presentation graphic bits of the mask are reported since libbluray 1.4.1
+bool CDVDInputStreamBluray::CanChangeAudioStream() const
+{
+#if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 4, 1))
+  return !m_navmode || !(m_uoMask & BLURAY_UO_PRIMARY_AUDIO_CHANGE_MASK);
+#else
+  return true;
+#endif
+}
+
+bool CDVDInputStreamBluray::CanChangeSubtitleStream() const
+{
+#if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 4, 1))
+  return !m_navmode || !(m_uoMask & BLURAY_UO_PG_TEXTST_CHANGE_MASK);
+#else
+  return true;
+#endif
+}
+
+bool CDVDInputStreamBluray::CanToggleSubtitle() const
+{
+#if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 4, 1))
+  return !m_navmode || !(m_uoMask & BLURAY_UO_PG_TEXTST_ENABLE_DISABLE_MASK);
+#else
+  return true;
+#endif
 }
 
 std::optional<CDVDInputStreamBluray::ClipTime> CDVDInputStreamBluray::GetClipTime(
