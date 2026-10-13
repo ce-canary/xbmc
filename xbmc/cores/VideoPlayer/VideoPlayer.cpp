@@ -3812,6 +3812,13 @@ void CVideoPlayer::HandleMessages()
               m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY))
           {
             CDemuxStream* stream = m_pDemuxer->GetStream(st.demuxerId, st.id);
+            if (stream && stream->dvdNavId != m_dvd.iSelectedAudioStream &&
+                !std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)
+                     ->CanChangeAudioStream())
+            {
+              CLog::Log(LOGDEBUG, "CVideoPlayer - the disc does not allow an audio stream change");
+              continue;
+            }
             if (stream && std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)
                               ->SetActiveAudioStream(stream->dvdNavId))
               m_dvd.iSelectedAudioStream = stream->dvdNavId;
@@ -3891,6 +3898,14 @@ void CVideoPlayer::HandleMessages()
               m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY))
           {
             CDemuxStream* stream = m_pDemuxer->GetStream(st.demuxerId, st.id);
+            if (stream && stream->dvdNavId != m_dvd.iSelectedSPUStream &&
+                !std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)
+                     ->CanChangeSubtitleStream())
+            {
+              CLog::Log(LOGDEBUG,
+                        "CVideoPlayer - the disc does not allow a subtitle stream change");
+              continue;
+            }
             if (stream && std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)
                               ->SetActiveSubtitleStream(stream->dvdNavId,
                                                         m_VideoPlayerVideo->IsSubtitleEnabled()))
@@ -3908,6 +3923,17 @@ void CVideoPlayer::HandleMessages()
 
       const auto& ss = m_SelectionStreams.Get(StreamType::SUBTITLE, GetSubtitle());
       const auto& as = m_SelectionStreams.Get(StreamType::AUDIO, GetAudioStream());
+
+#if defined(HAVE_LIBBLURAY)
+      if (STREAM_SOURCE_MASK(ss.source) == STREAM_SOURCE_DEMUX && m_pInputStream &&
+          m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) &&
+          isVisible != m_VideoPlayerVideo->IsSubtitleEnabled() &&
+          !std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)->CanToggleSubtitle())
+      {
+        CLog::Log(LOGDEBUG, "CVideoPlayer - the disc does not allow showing or hiding subtitles");
+        continue;
+      }
+#endif
 
       // Image type subtitles (e.g. VOBSUB), ensure to have the stream opened to read overlays
       if (isVisible && StreamUtils::IsCodecSupportForcedOverlay(ss.codecId) &&
