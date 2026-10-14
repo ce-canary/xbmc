@@ -3323,6 +3323,7 @@ void CAMLCodec::Reset()
   m_last_pts = DVD_NOPTS_VALUE;
   m_state = 0;
   m_buffer_level_ready = false;
+  m_drainPrebuffer = false;
 
   SetSpeed(m_speed);
 
@@ -3801,9 +3802,12 @@ CDVDVideoCodec::VCReturn CAMLCodec::GetPicture(VideoPicture *pVideoPicture)
   if (m_drain)
     queued_frames = m_amlVideoFile->IOControl(AMLVIDEO_IOC_GET_VFQ, &queued_frames) == 0 ? queued_frames : 0;
 
-  if (m_buffer_level_ready && (buffer_level > m_minimum_buffer_level || (queued_frames > 0)) && (ret = DequeueBuffer()) == 0)
+  // queued_frames counts the pictures handed out and not yet returned, a drain dequeues
+  // whatever the decoder has ready
+  if (m_buffer_level_ready && (buffer_level > m_minimum_buffer_level || m_drain) && (ret = DequeueBuffer()) == 0)
   {
     pVideoPicture->iFlags = 0;
+    m_drainPrebuffer = false;
 
     m_minimum_buffer_level = (streambuffer ? m_minimum_buffer_level : 0.0f);
 
@@ -3865,6 +3869,27 @@ void CAMLCodec::SetDrain(bool drain)
     m_tp_drain = now;
   else if (!drain && m_drain)
     m_tp_last_frame += now - std::max(m_tp_drain, m_tp_last_frame);
+
+  // a drain hands out what the decoder holds, the start prebuffer must not hold it back; input
+  // after a drain that handed out nothing prebuffers again
+  if (drain && !m_buffer_level_ready && m_opened)
+  {
+    bool streambuffer(am_private->gcodec.dec_mode == STREAM_TYPE_STREAM);
+    m_buffer_level_ready = true;
+    m_drainPrebuffer = true;
+    m_minimum_buffer_level = (streambuffer ? 10.0f : 5.0f);
+    if (streambuffer)
+    {
+      CSysfsPath pre_decode_buf_level{"/sys/module/amvdec_h265/parameters/pre_decode_buf_level"};
+      if (pre_decode_buf_level.Exists())
+        pre_decode_buf_level.Set(static_cast<uint32_t>(0x1000));
+    }
+  }
+  else if (!drain && m_drainPrebuffer)
+  {
+    m_buffer_level_ready = false;
+    m_drainPrebuffer = false;
+  }
 
   m_drain = drain;
 }
