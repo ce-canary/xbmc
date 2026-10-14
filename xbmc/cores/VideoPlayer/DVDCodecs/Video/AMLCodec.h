@@ -199,6 +199,7 @@ private:
   std::atomic<bool> m_handback{false};
   bool             m_handbackFrame{false};
   bool             m_handbackOff{false};
+  bool             m_drainPrebuffer{false};
   am_private_t    *am_private;
   CDVDStreamInfo   m_hints;
   int              m_speed;
