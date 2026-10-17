@@ -457,6 +457,7 @@ void CDVDInputStreamBluray::FreeTitleInfo()
 
   m_titleInfo = nullptr;
   m_clip = nullptr;
+  m_endedTitleTime = 0;
   FreeClipInfo();
 }
 
@@ -573,7 +574,12 @@ void CDVDInputStreamBluray::ProcessEvent() {
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_END_OF_TITLE {}", m_event.param);
     /* when a title ends, playlist WILL eventually change */
     if (m_navmode)
+    {
+      // the player still plays the title out of its queues until the next stream
+      const int totalTime = GetTotalTime();
       FreeTitleInfo();
+      m_endedTitleTime = totalTime;
+    }
     break;
 
   case BD_EVENT_TITLE:
@@ -1164,7 +1170,7 @@ int CDVDInputStreamBluray::GetTotalTime()
   if(m_titleInfo)
     return static_cast<int>(m_titleInfo->duration / 90);
   else
-    return 0;
+    return m_endedTitleTime;
 }
 
 int CDVDInputStreamBluray::GetTime()
@@ -1478,6 +1484,8 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   m_nextClipKnown = false;
   if(!m_navmode || m_hold == HOLD_EXIT || m_hold == HOLD_ERROR)
     return NEXTSTREAM_NONE;
+
+  m_endedTitleTime = 0;
 
   // m_clip names the next item after a play item event, or after a seek within it
   bool clipKnown = false;

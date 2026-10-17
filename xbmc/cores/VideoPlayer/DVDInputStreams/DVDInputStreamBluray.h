@@ -178,6 +178,7 @@ public:
   //! hand the clip start held at a join to the demuxer opened after it
   void ReleaseClipStart() { m_clipStartHeld = false; }
   bool IsClipStartHeld() const { return !m_navmode && m_clipStartHeld && !m_clipStart.empty(); }
+  bool IsTitleEnded() const { return m_endedTitleTime > 0; }
 
   //! the clip the item opened by the last NextStream starts with, when its events named it
   const BLURAY_CLIP_INFO* GetNextItemClip() const;
@@ -329,6 +330,7 @@ protected:
     uint64_t m_readPos{0};
     std::vector<ClipSpan> m_clipSpans;
     bool m_hasMVCExtension{false};
+    int m_endedTitleTime{0};
     bool m_nextClipKnown{false};
     std::vector<uint8_t> m_clipStart;
     size_t m_clipStartOffset{0};
