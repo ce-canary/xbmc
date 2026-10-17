@@ -624,8 +624,10 @@ void CDVDInputStreamBluray::ProcessEvent() {
     {
       m_clip = &m_titleInfo->clips[m_event.param];
       UpdateClipInfo(m_event.param);
-      OpenClipSpan();
     }
+    else
+      m_clip = nullptr;
+    OpenClipSpan();
     uint64_t clip_start, clip_in, bytepos;
     ret = bd_get_clip_infos(m_bd, m_event.param, &clip_start, &clip_in, &bytepos, nullptr);
     if (ret)
@@ -735,7 +737,16 @@ void CDVDInputStreamBluray::DisableExtention()
   m_bMVCPlayback = false;
 }
 
+// counted after the events of the read have opened their clip spans
 int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
+{
+  const int result = ReadData(buf, buf_size);
+  if (result > 0)
+    m_readPos += result;
+  return result;
+}
+
+int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
 {
   int result = 0;
   if (m_navmode && !m_clipStart.empty() && !m_clipStartHeld && m_clipStartOffset == 0)
@@ -748,7 +759,6 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
     result = std::min(buf_size, static_cast<int>(m_clipStart.size() - m_clipStartOffset));
     std::copy_n(m_clipStart.data() + m_clipStartOffset, result, buf);
     m_clipStartOffset += result;
-    m_readPos += result;
     if (m_clipStartOffset == m_clipStart.size())
       m_clipStart.clear();
     return result;
@@ -870,8 +880,6 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
       HoldClipStart(buf, result);
       return 0;
     }
-    if (result > 0)
-      m_readPos += result;
   }
   return result;
 }
@@ -1475,9 +1483,6 @@ std::optional<CDVDInputStreamBluray::ClipTime> CDVDInputStreamBluray::GetClipTim
 // the bytes of the next Read come from m_clip, or carry no clip time without one
 void CDVDInputStreamBluray::OpenClipSpan()
 {
-  if (m_navmode)
-    return;
-
   ClipSpan span{m_readPos};
   if (m_clip)
     span.time = ClipTime{m_clip->in_time, m_clip->start_time};
@@ -1533,6 +1538,10 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
 
   m_hold = HOLD_DATA;
   m_nextClipKnown = clipKnown && m_clip;
+  // the next demuxer reads on from m_readPos, so no lookup reaches the spans before its first one
+  const auto span = std::ranges::upper_bound(m_clipSpans, m_readPos, {}, &ClipSpan::readPos);
+  if (span != m_clipSpans.begin())
+    m_clipSpans.erase(m_clipSpans.begin(), std::prev(span));
   return NEXTSTREAM_OPEN;
 }
 
