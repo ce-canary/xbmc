@@ -335,6 +335,7 @@ void CVideoPlayerVideo::Process()
   bool bRequestDrop = false;
   int iDropDirective;
   bool onlyPrioMsgs = false;
+  bool drainWait = false;
 
   m_vfmt.clear();
   int vfmtCheckCount = 0;
@@ -357,6 +358,13 @@ void CVideoPlayerVideo::Process()
     if (m_paused)
       iPriority = 1;
 
+    if (drainWait)
+    {
+      iPriority = 1;
+      timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::duration<double, std::micro>(frametime));
+    }
+
     if (onlyPrioMsgs)
     {
       iPriority = 1;
@@ -366,7 +374,9 @@ void CVideoPlayerVideo::Process()
     std::shared_ptr<CDVDMsg> pMsg;
     MsgQueueReturnCode ret = GetMessage(pMsg, timeout, iPriority);
 
+    const bool drainPending = drainWait;
     onlyPrioMsgs = false;
+    drainWait = false;
 
     if (MSGQ_IS_ERROR(ret))
     {
@@ -392,8 +402,10 @@ void CVideoPlayerVideo::Process()
           continue;
         }
       }
-      // don't ask for a new frame if we can't deliver it to renderer
-      else if ((m_speed != DVD_PLAYSPEED_PAUSE ||
+      // don't ask for a new frame if we can't deliver it to renderer; right after a drain waits,
+      // its pictures are the drain handler's, which releases the dropped ones
+      else if (!drainPending &&
+               (m_speed != DVD_PLAYSPEED_PAUSE ||
                 m_processInfo.IsFrameAdvance() ||
                 m_syncState != IDVDStreamPlayer::SYNC_INSYNC) && !m_paused)
       {
@@ -417,6 +429,14 @@ void CVideoPlayerVideo::Process()
           m_pVideoCodec->SetCodecControl(DVD_CODEC_CTRL_DRAIN);
           if (!ProcessDecoderOutput(frametime, pts))
             break;
+
+          // the decoder holds pictures it cannot output yet, the drain handler waits for them
+          if (m_noPicture)
+          {
+            SendMessageBack(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
+            drainWait = true;
+            break;
+          }
         }
 
         CLog::Log(LOGDEBUG, "CVideoPlayerVideo - Stillframe detected, switching to forced {:f} fps",
@@ -426,7 +446,7 @@ void CVideoPlayerVideo::Process()
       }
 
       // Waiting timed out, output last picture
-      if (m_picture.videoBuffer)
+      if (m_picture.videoBuffer && !drainWait)
       {
         m_picture.pts = pts;
         m_outputSate = OutputPicture(&m_picture);
@@ -558,6 +578,14 @@ void CVideoPlayerVideo::Process()
         {
           m_picture.videoBuffer->Release();
           m_picture.videoBuffer = nullptr;
+        }
+
+        // the decoder holds frames it cannot output yet, serve messages before retrying
+        if (m_noPicture)
+        {
+          SendMessageBack(pMsg);
+          drainWait = true;
+          break;
         }
       }
     }
@@ -707,6 +735,7 @@ void CVideoPlayerVideo::UpdatePlayerInfo()
 bool CVideoPlayerVideo::ProcessDecoderOutput(double &frametime, double &pts)
 {
   CDVDVideoCodec::VCReturn decoderState = m_pVideoCodec->GetPicture(&m_picture);
+  m_noPicture = decoderState == CDVDVideoCodec::VC_NONE;
 
   if (decoderState == CDVDVideoCodec::VC_BUFFER)
   {
