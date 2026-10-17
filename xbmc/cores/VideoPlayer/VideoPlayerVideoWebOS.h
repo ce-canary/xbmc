@@ -27,6 +27,8 @@ public:
   void Flush(const bool sync) override;
   [[nodiscard]] bool AcceptsData() const override;
   [[nodiscard]] bool HasData() const override;
+  // the media pipeline has no drained report, so a navigation tail ends with the queue
+  bool IsEOS() override { return true; }
   [[nodiscard]] bool IsInited() const override;
   void SendMessage(const std::shared_ptr<CDVDMsg> msg, const int priority) override;
   void EnableSubtitle(const bool enable) override;
