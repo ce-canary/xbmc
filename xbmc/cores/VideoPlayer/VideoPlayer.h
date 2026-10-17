@@ -692,6 +692,7 @@ protected:
   std::optional<std::chrono::steady_clock::time_point> m_syncStartPtsWait;
 
   std::optional<std::chrono::steady_clock::time_point> m_syncWait;
+  bool m_navTail{false};
 
   CEdl m_Edl;
   bool m_SkipCommercials;
