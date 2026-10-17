@@ -238,6 +238,7 @@ void CVideoPlayerVideo::OpenStream(CDVDStreamInfo& hint, std::unique_ptr<CDVDVid
   m_hints = hint;
   m_stalled = m_messageQueue.GetPacketCount(CDVDMsg::DEMUXER_PACKET) == 0;
   m_rewindStalled = false;
+  m_eos = true;
   m_packets.clear();
   m_syncState = IDVDStreamPlayer::SYNC_STARTING;
   ResetSeekDrop();
@@ -292,6 +293,11 @@ bool CVideoPlayerVideo::HasData() const
   return m_messageQueue.GetDataSize() > 0;
 }
 
+bool CVideoPlayerVideo::IsEOS()
+{
+  return m_eos && m_pendingDrains == 0;
+}
+
 bool CVideoPlayerVideo::IsInited() const
 {
   return m_messageQueue.IsInited();
@@ -299,6 +305,16 @@ bool CVideoPlayerVideo::IsInited() const
 
 inline void CVideoPlayerVideo::SendMessage(std::shared_ptr<CDVDMsg> pMsg, int priority)
 {
+  // a queued packet is data the last drain did not cover
+  if (pMsg->IsType(CDVDMsg::DEMUXER_PACKET))
+    m_eos = false;
+  // a drain is pending until its message is gone, after its handler set m_eos or in a flush
+  else if (pMsg->IsType(CDVDMsg::VIDEO_DRAIN))
+  {
+    ++m_pendingDrains;
+    pMsg =
+        std::shared_ptr<CDVDMsg>(pMsg.get(), [this, msg = pMsg](CDVDMsg*) { --m_pendingDrains; });
+  }
   m_messageQueue.Put(pMsg, priority);
   m_processInfo.SetLevelVQ(m_messageQueue.GetLevel());
 }
@@ -443,6 +459,7 @@ void CVideoPlayerVideo::Process()
         CLog::Log(LOGDEBUG, "CVideoPlayerVideo - Stillframe detected, switching to forced {:f} fps",
                   m_fFrameRate);
         m_stalled = true;
+        m_eos = !drainWait;
         pts += frametime * 4;
       }
 
@@ -503,6 +520,7 @@ void CVideoPlayerVideo::Process()
       m_syncState = IDVDStreamPlayer::SYNC_STARTING;
       m_renderManager.ShowVideo(false);
       m_rewindStalled = false;
+      m_eos = true;
     }
     else if (pMsg->IsType(CDVDMsg::GENERAL_FLUSH)) // private message sent by (CVideoPlayerVideo::Flush())
     {
@@ -535,6 +553,9 @@ void CVideoPlayerVideo::Process()
 
       m_renderManager.DiscardBuffer();
       FlushMessages();
+      // the reset decoder has nothing left, whichever drain the flush dropped; a packet that
+      // survives clears this when it is taken, a drain sent later is pending
+      m_eos = true;
     }
     else if (pMsg->IsType(CDVDMsg::PLAYER_SETSPEED))
     {
@@ -589,6 +610,7 @@ void CVideoPlayerVideo::Process()
           break;
         }
       }
+      m_eos = !drainWait;
     }
     else if (pMsg->IsType(CDVDMsg::GENERAL_PAUSE))
     {
@@ -628,6 +650,7 @@ void CVideoPlayerVideo::Process()
         }
       }
 
+      m_eos = false;
       if (m_stalled)
       {
         CLog::Log(LOGDEBUG, "CVideoPlayerVideo - Stillframe left, switching to normal playback");
@@ -784,8 +807,10 @@ bool CVideoPlayerVideo::ProcessDecoderOutput(double &frametime, double &pts)
     return false;
   }
 
+  // the decoder is drained while its last answer is the end of its output
   if (decoderState == CDVDVideoCodec::VC_EOF)
   {
+    m_eos = true;
     if (m_syncState == IDVDStreamPlayer::SYNC_STARTING)
     {
       SStartMsg msg;
@@ -802,6 +827,7 @@ bool CVideoPlayerVideo::ProcessDecoderOutput(double &frametime, double &pts)
   // check for a new picture
   if (decoderState == CDVDVideoCodec::VC_PICTURE)
   {
+    m_eos = false;
     bool hasTimestamp = true;
 
     // Detect progressive content misidentified as interlaced: if picture
