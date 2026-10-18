@@ -1916,6 +1916,10 @@ void CVideoPlayer::Process()
 
     if (!pPacket)
     {
+      // a menu jump of the disc program drops the old item instead of playing it out
+      if (TakeBlurayItemAbandoned())
+        FlushBuffers(DVD_NOPTS_VALUE, true, true);
+
       // when paused, demuxer could be be returning empty
       if (m_playSpeed == DVD_PLAYSPEED_PAUSE)
       {
@@ -2413,6 +2417,16 @@ bool CVideoPlayer::IsBlurayTitleEndWait() const
 #if defined(HAVE_LIBBLURAY)
   const auto bluray = GetBlurayInputStream();
   return bluray && bluray->IsTitleEndWait();
+#else
+  return false;
+#endif
+}
+
+bool CVideoPlayer::TakeBlurayItemAbandoned()
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  return bluray && bluray->TakeItemAbandoned();
 #else
   return false;
 #endif
