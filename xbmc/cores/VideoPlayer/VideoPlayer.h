@@ -436,6 +436,7 @@ protected:
   std::shared_ptr<CDVDInputStreamBluray> GetBlurayInputStream() const;
   bool IsBlurayTitleEnded() const;
   bool IsBlurayTitleEndWait() const;
+  bool TakeBlurayItemAbandoned();
   bool OpenStream(CCurrentStream& current, int64_t demuxerId, int iStream, int source, bool reset = true);
   bool OpenAudioStream(CDVDStreamInfo& hint, bool reset = true);
   bool OpenVideoStream(CDVDStreamInfo& hint, bool reset = true);
