@@ -1035,6 +1035,11 @@ bool CVideoPlayer::OpenDemuxStream()
     m_pInputStream->SetReadRate(static_cast<uint32_t>(len * 1000 / tim));
 
   m_offset_pts = 0;
+  // a playlist stop taken while no demuxer was open left no packets to drop
+  if (m_navStop)
+    FlushBuffers(DVD_NOPTS_VALUE, true, true);
+  m_navStop = false;
+  m_navStopped = false;
 
   if (m_updateStreamDetails)
   {
@@ -1580,6 +1585,8 @@ void CVideoPlayer::Prepare()
   m_CurrentAudioID3.hint.Clear();
   m_SpeedState.Reset(DVD_NOPTS_VALUE);
   m_navTail = false;
+  m_navStop = false;
+  m_navStopped = false;
   m_offset_pts = 0;
   m_CurrentAudio.lastdts = DVD_NOPTS_VALUE;
   m_CurrentVideo.lastdts = DVD_NOPTS_VALUE;
@@ -1771,6 +1778,15 @@ void CVideoPlayer::Process()
     if (m_bAbortRequest)
       break;
 
+    // a playlist stop flushes the old item once it is taken, by a message or by the read, and a
+    // packet read with it belongs to that item
+    if (m_navStop)
+    {
+      FlushBuffers(DVD_NOPTS_VALUE, true, true);
+      m_navStop = false;
+      m_navStopped = true;
+    }
+
     // should we open a new input stream?
     if (!m_pInputStream)
     {
@@ -1786,6 +1802,8 @@ void CVideoPlayer::Process()
     {
       if (m_pInputStream->NextStream() == CDVDInputStream::NEXTSTREAM_NONE)
         break;
+      m_navStop = false;
+      m_navStopped = false;
 
       if (m_pInputStream->IsEOF())
         break;
@@ -1906,6 +1924,20 @@ void CVideoPlayer::Process()
     DemuxPacket* pPacket = NULL;
     CDemuxStream *pStream = NULL;
     ReadPacket(pPacket, pStream);
+
+    // after a playlist stop the demuxer still hands back the packets it had open at the end of
+    // the input, of the item that was flushed
+    if (m_navStop || (m_navStopped && pPacket))
+    {
+      CDVDDemuxUtils::FreeDemuxPacket(pPacket);
+      if (m_navStop)
+        FlushBuffers(DVD_NOPTS_VALUE, true, true);
+      m_navStop = false;
+      m_navStopped = true;
+      continue;
+    }
+    m_navStopped = false;
+
     if (pPacket && !pStream)
     {
       /* probably a empty packet, just free it and move on */
@@ -1980,6 +2012,8 @@ void CVideoPlayer::Process()
         CloseStream(m_CurrentVideo, true);
 
         m_syncStartPtsWait.reset();
+        m_navStop = false;
+        m_navStopped = false;
         m_CurrentAudio.Clear();
         m_CurrentVideo.Clear();
         m_CurrentSubtitle.Clear();
@@ -5378,13 +5412,7 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
     case BD_EVENT_PLAYLIST_STOP:
       m_dvd.state = DVDSTATE_NORMAL;
       m_dvd.iDVDStillTime = 0ms;
-      // while the demuxer is being opened no streams are open yet, and a queued flush would only
-      // discard the first packets of the streams opened next. The subtitle player isn't closed
-      // on a stream change, so its overlays are flushed now.
-      if (m_CurrentAudio.id >= 0 || m_CurrentVideo.id >= 0)
-        m_messenger.Put(std::make_shared<CDVDMsg>(CDVDMsg::GENERAL_FLUSH));
-      else
-        m_VideoPlayerSubtitle->Flush();
+      m_navStop = true;
       // the disc program may start another playlist, so only the kept picture goes
       aml_drop_kept_picture(true);
       break;
