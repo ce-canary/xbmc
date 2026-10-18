@@ -492,8 +492,7 @@ void CRenderer::PrepareOverlays(int idx)
   UpdateSubtitlePosition(resolution);
 
   bool doMarkDirty = false;
-  bool hasImageSpu = false;
-  bool hasLibassImages = false;
+  int shownCount = 0;
   for (auto& e : m_buffers[idx])
   {
     // Clear last frame's cached output; libass may have invalidated the
@@ -510,10 +509,10 @@ void CRenderer::PrepareOverlays(int idx)
     // so finding one means it is on screen now. m_textureid == 0 is the
     // "new arrival" signal (also true every frame for animated PGS where
     // each frame is a fresh CDVDOverlay). Disappearance is caught after
-    // the loop by the hasImageSpu vs m_prevHadImageSpu check.
+    // the loop by the shownCount vs m_prevShownCount check.
     if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE) || o.IsOverlayType(DVDOVERLAY_TYPE_SPU))
     {
-      hasImageSpu = true;
+      ++shownCount;
       if (o.m_textureid == 0)
         doMarkDirty = true;
       continue;
@@ -536,7 +535,7 @@ void CRenderer::PrepareOverlays(int idx)
     e.renderedImages =
         ovAss.GetLibassHandler()->RenderImage(e.pts, rOpts, m_overlayStyle, &currentChange);
     if (e.renderedImages)
-      hasLibassImages = true;
+      ++shownCount;
     if (currentChange > 0)
     {
       // Persist on the overlay so a skipped GUI render does not drop the change.
@@ -545,15 +544,14 @@ void CRenderer::PrepareOverlays(int idx)
     }
   }
 
-  // PGS/DVB/SPU disappearance: arrival is caught by m_textureid==0 in
-  // the loop above. Without this, a PGS subtitle ending leaves its
-  // cached bitmap on the GUI plane until something else dirties.
-  // Likewise libass output once its overlay is no longer added.
-  if (hasImageSpu != m_prevHadImageSpu || hasLibassImages != m_prevHadLibassImages)
+  // Disappearance: arrival is caught by m_textureid==0 and libass
+  // detect_change in the loop above. Without this, a subtitle ending leaves
+  // its cached output on the GUI plane until something else dirties, also
+  // when another one stays on screen.
+  if (shownCount != m_prevShownCount)
     doMarkDirty = true;
 
-  m_prevHadImageSpu = hasImageSpu;
-  m_prevHadLibassImages = hasLibassImages;
+  m_prevShownCount = shownCount;
 
   if (doMarkDirty)
     MarkDirty();

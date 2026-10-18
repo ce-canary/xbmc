@@ -258,12 +258,10 @@ namespace OVERLAY {
 
     std::shared_ptr<struct KODI::SUBTITLES::STYLE::style> m_overlayStyle;
     std::atomic<bool> m_isSettingsChanged{false};
-    // Whether last frame had any image/SPU overlay. Used by PrepareOverlays
-    // to detect arrival/disappearance transitions (image/SPU have no
-    // per-frame change signal of their own, unlike libass detect_change).
-    bool m_prevHadImageSpu{false};
-    // Whether last frame had libass output. detect_change cannot report an
-    // overlay that is no longer added at all, e.g. once subtitles are hidden.
-    bool m_prevHadLibassImages{false};
+    // How many overlays had output on screen last frame. Used by
+    // PrepareOverlays to detect disappearance: image/SPU have no per-frame
+    // change signal, and libass detect_change cannot report an overlay that
+    // is no longer added at all.
+    int m_prevShownCount{0};
   };
 }
