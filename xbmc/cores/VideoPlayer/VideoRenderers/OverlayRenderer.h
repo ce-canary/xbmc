@@ -204,6 +204,7 @@ namespace OVERLAY {
     void Release(std::vector<SElement>& list);
     void ReleaseCache();
     void ReleaseUnused();
+    void CheckCompositeState();
 
     /*!
      * \brief Load and store settings locally
@@ -241,6 +242,7 @@ namespace OVERLAY {
     std::vector<SElement> m_buffers[NUM_BUFFERS];
     std::map<unsigned int, std::shared_ptr<COverlay>> m_textureCache;
     static unsigned int m_textureid;
+    bool m_hdrComposite{false};
     CRect m_rv; // Frame size
     CRect m_rs; // Source size
     CRect m_rd; // Video size, may be influenced by video settings (e.g. zoom)
