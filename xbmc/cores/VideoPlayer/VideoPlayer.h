@@ -685,6 +685,8 @@ protected:
 
   std::optional<std::chrono::steady_clock::time_point> m_syncWait;
   bool m_navTail{false};
+  bool m_navStop{false};
+  bool m_navStopped{false};
 
   CEdl m_Edl;
   bool m_SkipCommercials;
