@@ -182,6 +182,9 @@ public:
   bool IsTitleEnded() const { return m_endedTitleTime > 0; }
   bool IsTitleEndWait() const { return m_titleEndWait; }
 
+  //! whether a menu action made the disc program leave the item being played out, reset by the call
+  bool TakeItemAbandoned();
+
   //! the clip the item opened by the last NextStream starts with, when its events named it
   const BLURAY_CLIP_INFO* GetNextItemClip() const;
 
@@ -346,6 +349,8 @@ protected:
     bool m_hasMVCExtension{false};
     int m_endedTitleTime{0};
     bool m_titleEndWait{false};
+    bool m_menuInput{false};
+    bool m_itemAbandoned{false};
     bool m_nextClipKnown{false};
     std::vector<uint8_t> m_clipStart;
     size_t m_clipStartOffset{0};
