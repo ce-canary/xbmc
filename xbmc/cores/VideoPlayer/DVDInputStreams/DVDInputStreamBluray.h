@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <queue>
+#include <vector>
 
 extern "C"
 {
@@ -242,6 +243,7 @@ protected:
   struct SPlane;
 
   void OverlayFlush(int64_t pts);
+  void UpdateMenuRange(bool hdr);
   void OverlayClose();
   static void OverlayClear(SPlane& plane, int x, int y, int w, int h);
   static void OverlayInit (SPlane& plane, int w, int h);
@@ -257,6 +259,7 @@ protected:
   BLURAY_TITLE_INFO* m_titleInfo = nullptr;
   uint32_t m_playlist = MAX_PLAYLIST_ID + 1;
   BLURAY_CLIP_INFO* m_clip = nullptr;
+  bool m_hdrVideo = false;
 
   //! The clip information of the play item being played, ie. every stream its m2ts carries (see
   //! GetStreamInfo). Owned, and only valid while m_clip refers to the same play item.
@@ -287,11 +290,14 @@ protected:
   struct SPlane
   {
     SOverlays o;
+    std::vector<BD_PG_PALETTE_ENTRY> palette;
+    bool drawing = false;
     int w = 0;
     int h = 0;
   };
 
   SPlane m_planes[2];
+  CCriticalSection m_overlayLock;
   enum EHoldState
   {
     HOLD_NONE = 0,
