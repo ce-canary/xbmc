@@ -121,6 +121,17 @@ void CRenderer::ReleaseCache()
   m_textureid++;
 }
 
+// cached textures are built for the composite state they were first drawn in
+void CRenderer::CheckCompositeState()
+{
+  const bool hdrComposite = CServiceBroker::GetWinSystem()->IsHdrComposite();
+  if (hdrComposite == m_hdrComposite)
+    return;
+
+  m_hdrComposite = hdrComposite;
+  ReleaseCache();
+}
+
 void CRenderer::ReleaseUnused()
 {
   for (auto it = m_textureCache.begin(); it != m_textureCache.end(); )
@@ -151,6 +162,8 @@ void CRenderer::ReleaseUnused()
 void CRenderer::Render(int idx, float depth)
 {
   std::unique_lock lock(m_section);
+
+  CheckCompositeState();
 
   // during HDR composite the m_isHDROverlay overlays render via
   // RenderHDROverlays instead
@@ -189,6 +202,8 @@ void CRenderer::RenderHDROverlays(int idx)
     return;
 
   std::unique_lock lock(m_section);
+
+  CheckCompositeState();
 
   const RenderStereoView stereoView =
       CServiceBroker::GetWinSystem()->GetGfxContext().GetStereoView();
