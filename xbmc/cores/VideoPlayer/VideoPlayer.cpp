@@ -1882,7 +1882,7 @@ void CVideoPlayer::Process()
       // when paused, demuxer could be be returning empty
       if (m_playSpeed == DVD_PLAYSPEED_PAUSE)
       {
-        if (m_navTail)
+        if (m_navTail || IsBlurayTitleEndWait())
           CThread::Sleep(10ms);
         continue;
       }
@@ -1946,7 +1946,8 @@ void CVideoPlayer::Process()
       // input stream asked us to just retry
       if(next == CDVDInputStream::NEXTSTREAM_RETRY)
       {
-        CThread::Sleep(100ms);
+        // a BD-J title end waits on the disc program, which acts on its own thread
+        CThread::Sleep(IsBlurayTitleEndWait() ? 10ms : 100ms);
         continue;
       }
 
@@ -2363,6 +2364,16 @@ bool CVideoPlayer::IsBlurayTitleEnded() const
 #if defined(HAVE_LIBBLURAY)
   const auto bluray = GetBlurayInputStream();
   return bluray && bluray->IsTitleEnded();
+#else
+  return false;
+#endif
+}
+
+bool CVideoPlayer::IsBlurayTitleEndWait() const
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  return bluray && bluray->IsTitleEndWait();
 #else
   return false;
 #endif
