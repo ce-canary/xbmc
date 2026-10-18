@@ -488,7 +488,7 @@ void CRenderer::PrepareOverlays(int idx)
   UpdateSubtitlePosition(resolution);
 
   bool doMarkDirty = false;
-  bool hasImageSpu = false;
+  int imageSpuCount = 0;
   for (auto& e : m_buffers[idx])
   {
     // Clear last frame's cached output; libass may have invalidated the
@@ -505,10 +505,10 @@ void CRenderer::PrepareOverlays(int idx)
     // so finding one means it is on screen now. m_textureid == 0 is the
     // "new arrival" signal (also true every frame for animated PGS where
     // each frame is a fresh CDVDOverlay). Disappearance is caught after
-    // the loop by the hasImageSpu vs m_prevHadImageSpu check.
+    // the loop by the imageSpuCount vs m_prevImageSpuCount check.
     if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE) || o.IsOverlayType(DVDOVERLAY_TYPE_SPU))
     {
-      hasImageSpu = true;
+      ++imageSpuCount;
       if (o.m_textureid == 0)
         doMarkDirty = true;
       continue;
@@ -540,10 +540,11 @@ void CRenderer::PrepareOverlays(int idx)
 
   // PGS/DVB/SPU disappearance: arrival is caught by m_textureid==0 in
   // the loop above. Without this, a PGS subtitle ending leaves its
-  // cached bitmap on the GUI plane until something else dirties.
-  if (hasImageSpu != m_prevHadImageSpu)
+  // cached bitmap on the GUI plane until something else dirties, also
+  // when another image stays on screen.
+  if (imageSpuCount != m_prevImageSpuCount)
     doMarkDirty = true;
-  m_prevHadImageSpu = hasImageSpu;
+  m_prevImageSpuCount = imageSpuCount;
 
   if (doMarkDirty)
     MarkDirty();
