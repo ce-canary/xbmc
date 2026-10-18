@@ -140,6 +140,13 @@ static BD_FILE_H* file_open(void* handle, const char* rel_path)
   return static_cast<CDVDInputStreamBluray*>(handle)->OpenFile(rel_path);
 }
 
+#if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 5, 0))
+static bool is_hdr_range(uint8_t range)
+{
+  return range == BLURAY_DYNAMIC_RANGE_HDR10 || range == BLURAY_DYNAMIC_RANGE_DOLBY_VISION;
+}
+#endif
+
 static void bluray_overlay_cb(void *this_gen, const BD_OVERLAY * ov)
 {
   static_cast<CDVDInputStreamBluray*>(this_gen)->OverlayCallback(ov);
@@ -724,6 +731,10 @@ void CDVDInputStreamBluray::ProcessEvent() {
     if (m_titleInfo && m_event.param < m_titleInfo->clip_count)
     {
       m_clip = &m_titleInfo->clips[m_event.param];
+#if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 5, 0))
+      if (m_clip->video_stream_count > 0)
+        UpdateMenuRange(is_hdr_range(m_clip->video_streams[0].dynamic_range_type));
+#endif
       UpdateClipInfo(m_event.param);
     }
     else
@@ -1123,11 +1134,15 @@ static uint8_t  clamp(double v)
   return (v) > 255.0 ? 255 : ((v) < 0.0 ? 0 : static_cast<uint32_t>((v + 0.5)));
 }
 
-static uint32_t build_rgba(const BD_PG_PALETTE_ENTRY &e)
+static uint32_t build_rgba(const BD_PG_PALETTE_ENTRY &e, bool bt2020)
 {
-  double r = 1.164 * (e.Y - 16)                        + 1.596 * (e.Cr - 128);
-  double g = 1.164 * (e.Y - 16) - 0.391 * (e.Cb - 128) - 0.813 * (e.Cr - 128);
-  double b = 1.164 * (e.Y - 16) + 2.018 * (e.Cb - 128);
+  const double rv = bt2020 ? 1.679 : 1.596;
+  const double gu = bt2020 ? 0.187 : 0.391;
+  const double gv = bt2020 ? 0.650 : 0.813;
+  const double bu = bt2020 ? 2.142 : 2.018;
+  double r = 1.164 * (e.Y - 16)                   + rv * (e.Cr - 128);
+  double g = 1.164 * (e.Y - 16) - gu * (e.Cb - 128) - gv * (e.Cr - 128);
+  double b = 1.164 * (e.Y - 16) + bu * (e.Cb - 128);
   return static_cast<uint32_t>(e.T)      << PIXEL_ASHIFT
        | static_cast<uint32_t>(clamp(r)) << PIXEL_RSHIFT
        | static_cast<uint32_t>(clamp(g)) << PIXEL_GSHIFT
@@ -1138,7 +1153,10 @@ void CDVDInputStreamBluray::OverlayClose()
 {
 #if(BD_OVERLAY_INTERFACE_VERSION >= 2)
   for(SPlane& plane : m_planes)
+  {
     plane.o.clear();
+    plane.drawing = false;
+  }
   auto group = std::make_shared<CDVDOverlayGroup>();
   group->bForced = true;
   group->SetDiscMenu(true);
@@ -1217,9 +1235,47 @@ void CDVDInputStreamBluray::OverlayFlush(int64_t pts)
 #endif
 }
 
+// libbluray draws the first menu page of a play item before its event reaches us, so a page
+// already on screen is converted again when the range changes
+void CDVDInputStreamBluray::UpdateMenuRange(bool hdr)
+{
+#if(BD_OVERLAY_INTERFACE_VERSION >= 2)
+  std::unique_lock lock(m_overlayLock);
+
+  if (hdr == m_hdrVideo)
+    return;
+  m_hdrVideo = hdr;
+
+  bool changed = false;
+  for (SPlane& plane : m_planes)
+  {
+    for (SOverlay& o : plane.o)
+    {
+      const bool paletted = !o->palette.empty();
+      if (paletted && (&plane != &m_planes[BD_OVERLAY_IG] || plane.palette.empty()))
+        continue;
+      SOverlay copy = std::make_shared<CDVDOverlayImage>(*o, o->x, o->y, o->width, o->height);
+      copy->m_isHDROverlay = hdr;
+      if (paletted)
+      {
+        for (unsigned i = 0; i < 256; i++)
+          copy->palette[i] = build_rgba(plane.palette[i], hdr);
+      }
+      o = copy;
+      changed = true;
+    }
+  }
+  // a draw in progress posts the plane with its own flush
+  if (changed && !m_planes[0].drawing && !m_planes[1].drawing)
+    OverlayFlush(-1);
+#endif
+}
+
 void CDVDInputStreamBluray::OverlayCallback(const BD_OVERLAY * const ov)
 {
 #if(BD_OVERLAY_INTERFACE_VERSION >= 2)
+  std::unique_lock lock(m_overlayLock);
+
   if(ov == nullptr || ov->cmd == BD_OVERLAY_CLOSE)
   {
     OverlayClose();
@@ -1233,6 +1289,7 @@ void CDVDInputStreamBluray::OverlayCallback(const BD_OVERLAY * const ov)
   }
 
   SPlane& plane(m_planes[ov->plane]);
+  plane.drawing = ov->cmd != BD_OVERLAY_FLUSH;
 
   if (ov->cmd == BD_OVERLAY_CLEAR)
   {
@@ -1263,13 +1320,17 @@ void CDVDInputStreamBluray::OverlayCallback(const BD_OVERLAY * const ov)
   if (ov->img && ov->cmd == BD_OVERLAY_DRAW)
   {
     SOverlay overlay = std::make_shared<CDVDOverlayImage>();
+    // a palette uses the colour matrix of the video it belongs to
+    overlay->m_isHDROverlay = ov->plane == BD_OVERLAY_IG && m_hdrVideo;
 
     if (ov->palette)
     {
+      if (ov->plane == BD_OVERLAY_IG)
+        plane.palette.assign(ov->palette, ov->palette + 256);
       overlay->palette.resize(256);
 
       for(unsigned i = 0; i < 256; i++)
-        overlay->palette[i] = build_rgba(ov->palette[i]);
+        overlay->palette[i] = build_rgba(ov->palette[i], overlay->m_isHDROverlay);
     }
     else
       overlay->palette.clear();
@@ -1310,6 +1371,8 @@ void CDVDInputStreamBluray::OverlayCallback(const BD_OVERLAY * const ov)
 #ifdef HAVE_LIBBLURAY_BDJ
 void CDVDInputStreamBluray::OverlayCallbackARGB(const struct bd_argb_overlay_s * const ov)
 {
+  std::unique_lock lock(m_overlayLock);
+
   if(ov == nullptr || ov->cmd == BD_ARGB_OVERLAY_CLOSE)
   {
     OverlayClose();
@@ -1323,6 +1386,7 @@ void CDVDInputStreamBluray::OverlayCallbackARGB(const struct bd_argb_overlay_s *
   }
 
   SPlane& plane(m_planes[ov->plane]);
+  plane.drawing = ov->cmd != BD_ARGB_OVERLAY_FLUSH;
 
   if (ov->cmd == BD_ARGB_OVERLAY_INIT)
   {
@@ -1337,6 +1401,8 @@ void CDVDInputStreamBluray::OverlayCallbackARGB(const struct bd_argb_overlay_s *
   if (ov->argb && ov->cmd == BD_ARGB_OVERLAY_DRAW)
   {
     SOverlay overlay = std::make_shared<CDVDOverlayImage>();
+    // UHD BD-J apps draw their HDR artwork already PQ-coded, as a UHD player shows it
+    overlay->m_isHDROverlay = m_hdrVideo;
 
     overlay->palette.clear();
     overlay->linesize = ov->w * 4;
