@@ -199,6 +199,13 @@ bool CRendererAML::CaptureVideoFrame(const KODI::RENDERING::CAPTURE::CaptureSpec
   return true;
 }
 
+bool CRendererAML::CompositeVideoCapture(KODI::RENDERING::CAPTURE::CaptureResult& result)
+{
+  if (m_capture && m_capture->IsPresented())
+    m_capture->CreateCompositePixels(result);
+  return true;
+}
+
 CRenderInfo CRendererAML::GetRenderInfo()
 {
   CRenderInfo info;

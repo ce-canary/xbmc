@@ -20,13 +20,14 @@
 #include "utils/AMLUtils.h"
 #include "utils/log.h"
 #include "windowing/GraphicContext.h"
-#include "windowing/amlogic/WinSystemAmlogic.h"
+#include "windowing/amlogic/WinSystemAmlogicGLESContext.h"
 
 #include "platform/linux/SysfsPath.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -212,10 +213,13 @@ public:
                                                             m_spec.height * 4);
     const AMLCaptureImage dst = AMLCaptureImage::Packed(
         AV_PIX_FMT_BGRA, m_spec.width, m_spec.height, buffer.get(), m_spec.width * 4);
-    const bool ok = session->Read(
-        m_streamWidth, m_streamHeight,
-        [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
-        { return convert.Convert(CAMLCapture::Crop(frame.image, m_spec.rect), frame.color, dst); });
+    const bool ok =
+        session->Read(m_streamWidth, m_streamHeight,
+                      [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
+                      {
+                        return convert.Convert(CAMLCapture::Crop(frame.image, m_spec.rect),
+                                               frame.color, AMLCaptureCoding(), dst);
+                      });
 
     if (ok)
       m_buffer = std::move(buffer);
@@ -226,6 +230,174 @@ private:
   std::weak_ptr<CAMLCapture> m_session;
   std::shared_ptr<void> m_lease;
   AMLCaptureVideoSpec m_spec;
+  int m_streamWidth{0};
+  int m_streamHeight{0};
+  std::mutex m_lock;
+  bool m_read{false};
+  std::unique_ptr<uint8_t[]> m_buffer;
+};
+
+constexpr int FULL_SPAN_8 = 255;
+constexpr int CODE_SPAN_8_TO_16 = 257;
+
+// a normalized coordinate in pixels
+int Edge(float v, int pixels)
+{
+  return std::clamp(static_cast<int>(std::lround(v * pixels)), 0, pixels);
+}
+
+AMLCaptureImage Offset(AMLCaptureImage image, int x, int y, int pixelBytes)
+{
+  image.data[0] += static_cast<std::ptrdiff_t>(y) * image.linesize[0] + x * pixelBytes;
+  return image;
+}
+
+// fill(y, from, to) on the row spans of width x height around a w x h place at (x1, y1)
+template<typename Fill>
+void FillAround(int width, int height, int x1, int y1, int w, int h, const Fill& fill)
+{
+  for (int y = 0; y < height; y++)
+  {
+    if (y < y1 || y >= y1 + h)
+      fill(y, 0, width);
+    else
+    {
+      fill(y, 0, x1);
+      fill(y, x1 + w, width);
+    }
+  }
+}
+
+class CAMLCompositePixels : public ICapturePixels
+{
+public:
+  CAMLCompositePixels(std::weak_ptr<CAMLCapture> session,
+                      std::shared_ptr<void> lease,
+                      CaptureResult gui,
+                      const AMLCaptureCoding& coding,
+                      const CRect& video)
+    : m_session(std::move(session)),
+      m_lease(std::move(lease)),
+      m_gui(std::move(gui)),
+      m_coding(coding),
+      m_video(video)
+  {
+    CAMLCapture::GetCaptureSize(m_streamWidth, m_streamHeight);
+  }
+
+  const uint8_t* Lock() override
+  {
+    std::lock_guard lock(m_lock);
+
+    if (m_read)
+      return m_buffer.get();
+    m_read = true;
+
+    const CScopedCapturePixels guiPixels(*m_gui.pixels);
+    const int width = static_cast<int>(m_gui.width);
+    const int height = static_cast<int>(m_gui.height);
+    const bool bgra = m_gui.format == AV_PIX_FMT_BGRA;
+    const AMLCaptureImage overlay = AMLCaptureImage::Packed(
+        bgra ? AV_PIX_FMT_BGRA : AV_PIX_FMT_RGBA, width, height,
+        const_cast<uint8_t*>(CaptureSrcRow0(guiPixels.data(), m_gui.stride, m_gui.height)),
+        m_gui.stride);
+    const auto guiRow = [&overlay](int y)
+    { return overlay.data[0] + static_cast<std::ptrdiff_t>(y) * overlay.linesize[0]; };
+    const bool hdr = m_coding.transfer != AMLCaptureCoding::Transfer::SDR;
+
+    // place the visible video, mapped to SDR, in the GUI's coding at its place on black, blend the
+    // premultiplied GUI over it as the OSD blender does, then invert the coding to SDR, so the GUI
+    // keeps its look and the video matches a video capture
+    const auto blend = [&](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
+    {
+      const size_t size = static_cast<size_t>(width) * height * 4;
+      const AMLCaptureImage image = convert.GetCompositeImage(width, height);
+      uint16_t* composite = reinterpret_cast<uint16_t*>(image.data[0]);
+
+      // in an HDR coding the video under clear GUI goes straight to SDR, the value the inverse of
+      // the coding would give
+      const AMLCaptureImage dst =
+          AMLCaptureImage::Packed(AV_PIX_FMT_RGBA, width, height, m_buffer.get(), width * 4);
+
+      // vdin holds the visible video at the frame origin, at its size on screen
+      const int x1 = Edge(m_video.x1, width);
+      const int y1 = Edge(m_video.y1, height);
+      AMLCaptureImage place = Offset(image, x1, y1, 8);
+      place.width = Edge(m_video.x2, width) - x1;
+      place.height = Edge(m_video.y2, height) - y1;
+      const AMLCaptureImage overlayPlace = Offset(overlay, x1, y1, 4);
+      const AMLCaptureImage dstPlace = Offset(dst, x1, y1, 4);
+      if (place.width > 0 && place.height > 0 &&
+          !convert.Convert(
+              CAMLCapture::Crop(frame.image, CRect(0.0f, 0.0f, m_video.Width(), m_video.Height())),
+              frame.color, m_coding, place, hdr ? &overlayPlace : nullptr, &dstPlace))
+        return false;
+
+      // the video place is converted whole; around it the GUI is over black
+      FillAround(width, height, x1, y1, place.width, place.height,
+                 [&](int y, int from, int to)
+                 {
+                   const size_t first = static_cast<size_t>(y) * width + from;
+                   std::fill(composite + first * 4, composite + (first + to - from) * 4, 0);
+                   uint8_t* out = m_buffer.get() + first * 4;
+                   for (int x = from; hdr && x < to; x++, out += 4)
+                   {
+                     out[0] = 0;
+                     out[1] = 0;
+                     out[2] = 0;
+                     out[3] = 255;
+                   }
+                 });
+
+      const int r = bgra ? 2 : 0;
+      const int b = bgra ? 0 : 2;
+      for (int y = 0; y < height; y++)
+      {
+        const uint8_t* gui = guiRow(y);
+        uint16_t* out = composite + static_cast<size_t>(y) * width * 4;
+        for (int x = 0; x < width; x++, gui += 4, out += 4)
+        {
+          if (hdr && CAMLCaptureConvert::IsClear(gui))
+            continue;
+          const int alpha = gui[3];
+          const int channel[3] = {gui[r], gui[1], gui[b]};
+          for (int c = 0; c < 3; c++)
+          {
+            const int value =
+                channel[c] * CODE_SPAN_8_TO_16 + (FULL_SPAN_8 - alpha) * out[c] / FULL_SPAN_8;
+            out[c] = static_cast<uint16_t>(std::min(value, 65535));
+          }
+          out[3] = 65535;
+        }
+      }
+
+      if (!hdr)
+      {
+        for (size_t i = 0; i < size; i++)
+          m_buffer[i] =
+              static_cast<uint8_t>((composite[i] + CODE_SPAN_8_TO_16 / 2) / CODE_SPAN_8_TO_16);
+        return true;
+      }
+
+      convert.MapToSdr(image, m_coding, dst, &overlay, frame.color.luminance);
+      return true;
+    };
+
+    m_buffer = std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(width) * height * 4);
+    const auto session = m_session.lock();
+    // the GUI alone is clear where the video shows, and in an HDR coding would pass for SDR
+    if (!session || !session->Read(m_streamWidth, m_streamHeight, blend))
+      m_buffer.reset();
+    return m_buffer.get();
+  }
+
+private:
+  std::weak_ptr<CAMLCapture> m_session;
+  std::shared_ptr<void> m_lease;
+  CaptureResult m_gui;
+  AMLCaptureCoding m_coding;
+  //! the visible video, normalized to the output
+  CRect m_video;
   int m_streamWidth{0};
   int m_streamHeight{0};
   std::mutex m_lock;
@@ -935,4 +1107,30 @@ void CAMLCapture::CreateVideoPixels(const AMLCaptureVideoSpec& spec, CaptureResu
       std::make_shared<CAMLVideoPixels>(weak_from_this(), std::move(lease), spec, width, height);
   DescribeSdr(spec.width, spec.height, result);
   result.content = CaptureContent::VIDEO;
+}
+
+void CAMLCapture::CreateCompositePixels(CaptureResult& result)
+{
+  using KODI::WINDOWING::AML::CWinSystemAmlogicGLESContext;
+
+  auto* winSystem = dynamic_cast<CWinSystemAmlogicGLESContext*>(CServiceBroker::GetWinSystem());
+  if (!winSystem)
+    return;
+
+  AMLCaptureCoding coding;
+  const int transfer = winSystem->GetGuiCompositeTransfer();
+  if (transfer == AVCOL_TRC_SMPTE2084)
+    coding.transfer = AMLCaptureCoding::Transfer::PQ;
+  else if (transfer == AVCOL_TRC_ARIB_STD_B67)
+    coding.transfer = AMLCaptureCoding::Transfer::HLG;
+  // the GUI composite peak is PQ-normalized luminance
+  coding.whiteNits = winSystem->GetGuiCompositePeak() * PQ_PEAK_NITS;
+
+  result.pixels = std::make_shared<CAMLCompositePixels>(weak_from_this(), Lease(), result, coding,
+                                                        GetVisibleRect());
+  result.stride = static_cast<int>(result.width) * 4;
+  result.format = AV_PIX_FMT_RGBA;
+  result.color.primaries = AVCOL_PRI_BT709;
+  result.color.transfer = AVCOL_TRC_IEC61966_2_1;
+  result.color.range = AVCOL_RANGE_JPEG;
 }

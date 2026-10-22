@@ -44,6 +44,7 @@ public:
   virtual bool IsGuiLayer() override { return false; };
   virtual bool CaptureVideoFrame(const KODI::RENDERING::CAPTURE::CaptureSpec& spec,
                                  KODI::RENDERING::CAPTURE::CaptureResult& result) override;
+  virtual bool CompositeVideoCapture(KODI::RENDERING::CAPTURE::CaptureResult& result) override;
   virtual bool StartVsyncPresent() override;
   virtual void StopVsyncPresent() override;
   virtual bool WaitVsync() override;
