@@ -9,6 +9,7 @@
 
 #include "ServiceBroker.h"
 #include "rendering/capture/CapturePixels.h"
+#include "rendering/capture/CaptureTypes.h"
 #include "utils/AMLCapture.h"
 #include "utils/Screenshot.h"
 #include "windowing/amlogic/WinSystemAmlogicGLESContext.h"
@@ -105,7 +106,7 @@ public:
     m_buffer = std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(m_gui.width) *
                                                          m_gui.height * 4);
     const auto session = m_session.lock();
-    if (!session || !session->Read(m_gui.streamWidth, m_gui.streamHeight,
+    if (!session || !session->Read(AMLCaptureInput::VIDEO, m_gui.streamWidth, m_gui.streamHeight,
                                    [this](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
                                    { return Blend(frame, convert); }))
     {
@@ -237,6 +238,18 @@ void CScreenshotSurfaceAML::Register()
 std::unique_ptr<IScreenshotSurface> CScreenshotSurfaceAML::CreateSurface()
 {
   return std::make_unique<CScreenshotSurfaceAML>();
+}
+
+bool CScreenshotSurfaceAML::CaptureDirect(const CaptureSpec& spec, CaptureResult& result)
+{
+  if (spec.content != CaptureContent::COMPOSITE || spec.cadence != CaptureCadence::CONTINUOUS ||
+      spec.format != CaptureFormat::BGRA8 || spec.width == 0 || spec.height == 0)
+    return false;
+
+  // without vdin1 the fallback is a full-size readback on every drawn frame, so the request fails
+  CAMLCapture::CreateLivePixels(static_cast<int>(spec.width), static_cast<int>(spec.height),
+                                result);
+  return true;
 }
 
 void CScreenshotSurfaceAML::TakePixels(const CaptureSpec& spec, CaptureResult& result)
