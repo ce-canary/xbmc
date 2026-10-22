@@ -123,11 +123,11 @@ public:
   //! The crop of an NV12 or full pack image to a normalized rect, on even pixels for the chroma
   static AMLCaptureImage Crop(const AMLCaptureImage& image, const CRect& rect);
 
-  //! Deferred sRGB BGRA pixels of the visible video in result.
+  //! Deferred sRGB pixels of the visible video in result: BGRA, RGB24 for a STANDARD shot.
   void CreateVideoPixels(const AMLCaptureVideoSpec& spec,
                          KODI::RENDERING::CAPTURE::CaptureResult& result);
   //! Render thread: the GUI readback in result with the presented video blended under it on
-  //! Lock, as sRGB RGBA pixels of its size
+  //! Lock, as sRGB pixels of its size: RGBA, RGB24 for a STANDARD shot
   void CreateCompositePixels(KODI::RENDERING::CAPTURE::CaptureResult& result);
 
   //! Render thread: continuous sRGB BGRA pixels of the screen in result, read at each Lock, so they
