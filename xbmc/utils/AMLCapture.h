@@ -95,6 +95,9 @@ public:
   //! Deferred sRGB BGRA pixels of the visible video in result.
   void CreateVideoPixels(const AMLCaptureVideoSpec& spec,
                          KODI::RENDERING::CAPTURE::CaptureResult& result);
+  //! Render thread: the GUI readback in result with the presented video blended under it on
+  //! Lock, as sRGB RGBA pixels of its size
+  void CreateCompositePixels(KODI::RENDERING::CAPTURE::CaptureResult& result);
 
 private:
   class CStream;
