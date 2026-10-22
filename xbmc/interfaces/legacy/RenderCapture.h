@@ -17,6 +17,7 @@
 #include "commons/Buffer.h"
 #include "rendering/capture/CaptureConvert.h"
 #include "rendering/capture/CaptureHandle.h"
+#include "rendering/capture/CaptureRequest.h"
 #include "rendering/capture/CaptureService.h"
 
 #include <chrono>
@@ -59,6 +60,14 @@ namespace XBMCAddon
       {
         DelayedCallGuard dg(languageHook);
         return std::unique_lock(m_lock);
+      }
+
+      //! a continuous capture that has not ended
+      bool IsRunning() const
+      {
+        const KODI::RENDERING::CAPTURE::CaptureState state = m_handle->GetState();
+        return state == KODI::RENDERING::CAPTURE::CaptureState::PENDING ||
+               state == KODI::RENDERING::CAPTURE::CaptureState::LATCHED;
       }
 
 #endif
@@ -185,6 +194,11 @@ namespace XBMCAddon
 #endif
       {
         const auto lock = LockCapture();
+        // a running continuous capture already delivers fresh frames at this size
+        if (m_handle && static_cast<unsigned int>(width) == m_width &&
+            static_cast<unsigned int>(height) == m_height && IsRunning())
+          return;
+
         // cancel any previous request before its buffer goes away
         m_handle.reset();
 
