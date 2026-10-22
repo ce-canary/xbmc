@@ -18,6 +18,8 @@
 #include "rendering/capture/CaptureTypes.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/MediaSettings.h"
+#include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
 #include "utils/AMLCapture.h"
 #include "utils/AMLUtils.h"
 #include "utils/log.h"
@@ -31,6 +33,20 @@ namespace
 {
 // queued in one vsync, picked at the next and live one later
 constexpr int PLANE_PRESENT_VSYNCS = 2;
+constexpr int SCREENSHOT_TYPE_NATIVE = 1;
+
+// a CONFIGURED screenshot takes the type the user set
+KODI::RENDERING::CAPTURE::CaptureScreenshot GetScreenshotType(
+    KODI::RENDERING::CAPTURE::CaptureScreenshot shot)
+{
+  using KODI::RENDERING::CAPTURE::CaptureScreenshot;
+
+  if (shot != CaptureScreenshot::CONFIGURED)
+    return shot;
+  const int type = CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(
+      CSettings::SETTING_COREELEC_AMLOGIC_SCREENSHOTTYPE);
+  return type == SCREENSHOT_TYPE_NATIVE ? CaptureScreenshot::NATIVE : CaptureScreenshot::STANDARD;
+}
 } // namespace
 
 CRendererAML::CRendererAML()
@@ -190,7 +206,7 @@ bool CRendererAML::CaptureVideoFrame(const KODI::RENDERING::CAPTURE::CaptureSpec
   AMLCaptureVideoSpec video;
   video.rect = CRect(0.0f, 0.0f, visible.Width(), visible.Height());
   video.continuous = spec.cadence == CaptureCadence::CONTINUOUS;
-  video.shot = spec.screenshot;
+  video.shot = GetScreenshotType(spec.screenshot);
   video.width = spec.width ? static_cast<int>(spec.width)
                            : std::max(2, static_cast<int>(video.rect.Width() * captureWidth));
   video.height = spec.height ? static_cast<int>(spec.height)
@@ -202,8 +218,12 @@ bool CRendererAML::CaptureVideoFrame(const KODI::RENDERING::CAPTURE::CaptureSpec
 
 bool CRendererAML::CompositeVideoCapture(KODI::RENDERING::CAPTURE::CaptureResult& result)
 {
+  // with no video presented a native screenshot is the GUI readback, which loses nothing
   if (m_capture && m_capture->IsPresented())
+  {
+    result.screenshot = GetScreenshotType(result.screenshot);
     m_capture->CreateCompositePixels(result);
+  }
   return true;
 }
 
