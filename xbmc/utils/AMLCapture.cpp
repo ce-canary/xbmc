@@ -50,6 +50,12 @@ namespace
 constexpr int FRAME_WAIT_PERIODS = 10;
 // vdin1 writes one, holds the last, the reader holds one and one stays free
 constexpr unsigned int CAPTURE_BUFFERS = 4;
+// V4L2_PIX_FMT_AML_YUV422_10P in the vendor tvin.h, which the sysroot does not ship
+constexpr uint32_t PIX_FMT_YUV422_10P = v4l2_fourcc('A', 'Y', '2', 'P');
+// vdin1 raises this to the fewest it allows
+constexpr unsigned int SHOT_BUFFERS = 1;
+// V4L2_PIX_FMT_FLAG_AML_COSITED_CHROMA in the vendor tvin.h
+constexpr uint8_t PIX_FMT_FLAG_COSITED_CHROMA = 0x80;
 // DV player-led, dv2hdr and sdr2hdr frames are already display-mapped
 constexpr float MAPPED_PEAK_NITS = 1000.0f;
 // the grade of a Dolby Vision TV-led signal when the stream carries no HDR statics
@@ -216,12 +222,15 @@ public:
     const AMLCaptureImage dst = AMLCaptureImage::Packed(
         AV_PIX_FMT_BGRA, m_spec.width, m_spec.height, buffer.get(), m_spec.width * 4);
     const bool ok =
-        session->Read(AMLCaptureInput::VIDEO, m_streamWidth, m_streamHeight,
-                      [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
-                      {
-                        return convert.Convert(CAMLCapture::Crop(frame.image, m_spec.rect),
-                                               frame.color, AMLCaptureCoding(), dst);
-                      });
+        session->ReadVideo(m_spec.shot, m_streamWidth, m_streamHeight,
+                           [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
+                           {
+                             return convert.Convert(CAMLCapture::Crop(frame.image, m_spec.rect),
+                                                    frame.color, AMLCaptureCoding(), dst);
+                           });
+    // a screenshot holds no stream while it is encoded
+    if (m_spec.shot != CaptureScreenshot::NONE)
+      m_lease.reset();
 
     if (ok)
       m_buffer = std::move(buffer);
@@ -305,19 +314,25 @@ public:
     LOST,
   };
 
-  //! failures log at `logLevel`; `busy` tells whether another vdin1 user holds the node, `refused`
-  //! whether vdin1 cannot give this input at this size
-  static std::shared_ptr<CStream> Open(
-      AMLCaptureInput input, int width, int height, int logLevel, bool& busy);
+  //! failures log at `logLevel`; `busy` tells whether another vdin1 user holds the node
+  static std::shared_ptr<CStream> Open(AMLCaptureInput input,
+                                       uint32_t pixelFormat,
+                                       unsigned int buffers,
+                                       int width,
+                                       int height,
+                                       int logLevel,
+                                       bool& busy);
   ~CStream();
 
   void Stop();
   AMLCaptureInput GetInput() const { return m_input; }
+  uint32_t GetPixelFormat() const { return m_pixelFormat; }
   int GetBuffers() const { return static_cast<int>(m_maps.size()); }
   float GetFramePeriodMs() const { return m_framePeriodMs; }
-  bool Matches(AMLCaptureInput input, int width, int height) const
+  bool Matches(AMLCaptureInput input, uint32_t pixelFormat, int width, int height) const
   {
-    return input == m_input && width == m_width && height == m_height;
+    return input == m_input && pixelFormat == m_pixelFormat && width == m_width &&
+           height == m_height;
   }
   //! Takes the newest frame vdin1 finished since the last dequeue, false when there is none or
   //! when that dequeue is older than `maxAge`
@@ -325,6 +340,10 @@ public:
   Wake Wait(int timeoutMs, unsigned int& index);
   bool Queue(unsigned int index);
   AMLCaptureImage Image(unsigned int index) const;
+  size_t GetLength(unsigned int index) const { return m_maps[index].second; }
+  //! a read-only dmabuf of buffer `index`, which keeps the buffer after the stream closes; -1 on
+  //! failure
+  int Export(unsigned int index) const;
 
 private:
   bool Dequeue(unsigned int& index);
@@ -333,12 +352,14 @@ private:
   int m_fd{-1};
   int m_eventFd{-1};
   AMLCaptureInput m_input{AMLCaptureInput::VIDEO};
+  uint32_t m_pixelFormat{V4L2_PIX_FMT_NV12};
   int m_width{0};
   int m_height{0};
   // the size vdin1 agreed to deliver for the size asked for
   int m_imageWidth{0};
   int m_imageHeight{0};
   int m_stride{0};
+  bool m_cositedChroma{false};
   float m_framePeriodMs{0.0f};
   bool m_streaming{false};
   std::atomic<bool> m_stopped{false};
@@ -347,8 +368,13 @@ private:
   std::chrono::steady_clock::time_point m_dequeued;
 };
 
-std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(
-    AMLCaptureInput input, int width, int height, int logLevel, bool& busy)
+std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(AMLCaptureInput input,
+                                                                 uint32_t pixelFormat,
+                                                                 unsigned int buffers,
+                                                                 int width,
+                                                                 int height,
+                                                                 int logLevel,
+                                                                 bool& busy)
 {
   const AMLCaptureDevice& device = FindDevice();
   int index = input == AMLCaptureInput::SCREEN ? device.screenInput : device.input;
@@ -357,6 +383,7 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(
 
   auto stream = std::make_shared<CStream>();
   stream->m_input = input;
+  stream->m_pixelFormat = pixelFormat;
   stream->m_width = width;
   stream->m_height = height;
   stream->m_fd = open(device.path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
@@ -381,20 +408,25 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(
   format.type = BUFFER_TYPE;
   format.fmt.pix_mp.width = width;
   format.fmt.pix_mp.height = height;
-  format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12;
+  format.fmt.pix_mp.pixelformat = pixelFormat;
   format.fmt.pix_mp.field = V4L2_FIELD_NONE;
   format.fmt.pix_mp.num_planes = 1;
+  const bool fullPack = pixelFormat == PIX_FMT_YUV422_10P;
   const int ioctlResult = ioctl(stream->m_fd, VIDIOC_S_FMT, &format);
   stream->m_stride = static_cast<int>(format.fmt.pix_mp.plane_fmt[0].bytesperline);
   stream->m_imageWidth = static_cast<int>(format.fmt.pix_mp.width);
   stream->m_imageHeight = static_cast<int>(format.fmt.pix_mp.height);
-  const size_t frameSize = static_cast<size_t>(stream->m_stride) * stream->m_imageHeight * 3 / 2;
-  if (ioctlResult < 0 || format.fmt.pix_mp.pixelformat != V4L2_PIX_FMT_NV12 ||
-      stream->m_stride < stream->m_imageWidth ||
+  stream->m_cositedChroma = format.fmt.pix_mp.flags & PIX_FMT_FLAG_COSITED_CHROMA;
+  const size_t lumaSize = static_cast<size_t>(stream->m_stride) * stream->m_imageHeight;
+  const size_t frameSize = fullPack ? lumaSize : lumaSize * 3 / 2;
+  if (ioctlResult < 0 || format.fmt.pix_mp.pixelformat != pixelFormat ||
+      stream->m_stride <
+          (fullPack ? stream->m_imageWidth / 2 * AML_FULL_PACK_PAIR_BYTES : stream->m_imageWidth) ||
       format.fmt.pix_mp.plane_fmt[0].sizeimage < frameSize)
   {
     busy = ioctlResult < 0 && errno == EBUSY;
-    CLog::Log(logLevel, "CAMLCapture::{}: NV12 {}x{} refused", __FUNCTION__, width, height);
+    CLog::Log(logLevel, "CAMLCapture::{}: {} {}x{} refused", __FUNCTION__,
+              fullPack ? "10-bit" : "NV12", width, height);
     return {};
   }
 
@@ -410,7 +442,7 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(
   stream->m_framePeriodMs = 1000.0f * period.numerator / period.denominator;
 
   v4l2_requestbuffers request{};
-  request.count = CAPTURE_BUFFERS;
+  request.count = buffers;
   request.type = BUFFER_TYPE;
   request.memory = V4L2_MEMORY_MMAP;
   if (ioctl(stream->m_fd, VIDIOC_REQBUFS, &request) < 0 || request.count == 0)
@@ -579,14 +611,33 @@ CAMLCapture::CStream::Wake CAMLCapture::CStream::Wait(int timeoutMs, unsigned in
   }
 }
 
+int CAMLCapture::CStream::Export(unsigned int index) const
+{
+  v4l2_exportbuffer exportBuffer{};
+  exportBuffer.type = BUFFER_TYPE;
+  exportBuffer.index = index;
+  exportBuffer.flags = O_RDONLY | O_CLOEXEC;
+  if (ioctl(m_fd, VIDIOC_EXPBUF, &exportBuffer) < 0)
+    return -1;
+  return exportBuffer.fd;
+}
+
 AMLCaptureImage CAMLCapture::CStream::Image(unsigned int index) const
 {
-  // single-plane NV12: the chroma plane follows the luma plane at the same stride
   AMLCaptureImage image;
-  image.format = AV_PIX_FMT_NV12;
   image.width = m_imageWidth;
   image.height = m_imageHeight;
   image.data[0] = static_cast<uint8_t*>(m_maps[index].first);
+  if (m_pixelFormat == PIX_FMT_YUV422_10P)
+  {
+    image.fullPack = true;
+    image.cositedChroma = m_cositedChroma;
+    image.linesize[0] = m_stride;
+    return image;
+  }
+
+  // single-plane NV12: the chroma plane follows the luma plane at the same stride
+  image.format = AV_PIX_FMT_NV12;
   image.data[1] = image.data[0] + static_cast<size_t>(m_stride) * m_imageHeight;
   image.linesize[0] = m_stride;
   image.linesize[1] = m_stride;
@@ -776,12 +827,89 @@ bool CAMLCapture::Read(AMLCaptureInput input, int width, int height, const ReadF
 {
   std::lock_guard read(m_readLock);
 
-  return ReadStream(input, width, height,
+  return ReadStream(input, V4L2_PIX_FMT_NV12, CAPTURE_BUFFERS, width, height,
                     [this, &use](CStream&, unsigned int, const AMLCaptureFrame& frame)
                     { return use(frame, m_convert); });
 }
 
-bool CAMLCapture::ReadStream(AMLCaptureInput input, int width, int height, const StreamFunc& use)
+bool CAMLCapture::ReadVideo(CaptureScreenshot shot, int width, int height, const ReadFunc& use)
+{
+  if (shot != CaptureScreenshot::NONE)
+  {
+    AMLCaptureShotFrame frame;
+    CAMLCaptureConvert convert;
+    if (ReadShot(width, height, frame) && use(frame.frame, convert))
+      return true;
+  }
+  return Read(AMLCaptureInput::VIDEO, width, height, use);
+}
+
+bool CAMLCapture::ReadShot(int width, int height, AMLCaptureShotFrame& frame)
+{
+  std::unique_lock read(m_readLock);
+
+  // a full frame copy takes longer than a continuous reader can wait, so it runs from a dmabuf of
+  // the frame after the stream closes
+  int dmabuf = -1;
+  void* map = MAP_FAILED;
+  size_t length = 0;
+  size_t size = 0;
+  const auto copy = [&](CStream& stream, unsigned int index, const AMLCaptureFrame& source)
+  {
+    size = static_cast<size_t>(source.image.linesize[0]) * source.image.height;
+    frame.data = std::make_unique_for_overwrite<uint8_t[]>(size);
+    frame.frame = source;
+    dmabuf = stream.Export(index);
+    if (dmabuf >= 0)
+    {
+      length = stream.GetLength(index);
+      map = mmap(nullptr, length, PROT_READ, MAP_SHARED, dmabuf, 0);
+    }
+    if (map == MAP_FAILED)
+    {
+      CLog::Log(LOGWARNING, "CAMLCapture::{}: no dmabuf of the frame: {}", __FUNCTION__,
+                strerror(errno));
+      if (dmabuf >= 0)
+        close(dmabuf);
+      return false;
+    }
+    // vdin1 must not refill the exported buffer once it is queued again
+    stream.Stop();
+    return true;
+  };
+
+  const bool ok =
+      ReadStream(AMLCaptureInput::VIDEO, PIX_FMT_YUV422_10P, SHOT_BUFFERS, width, height, copy);
+
+  // close the shot stream whatever leases remain
+  std::shared_ptr<CStream> stream;
+  {
+    std::lock_guard lock(m_lock);
+    if (m_stream && m_stream->GetPixelFormat() == PIX_FMT_YUV422_10P)
+      stream = TakeStream();
+  }
+  Close(std::move(stream));
+  read.unlock();
+
+  if (map != MAP_FAILED)
+  {
+    std::memcpy(frame.data.get(), map, size);
+    frame.frame.image.data[0] = frame.data.get();
+    munmap(map, length);
+    close(dmabuf);
+  }
+
+  if (!ok)
+    CLog::Log(LOGWARNING, "CAMLCapture::{}: no 10-bit frame at {}x{}", __FUNCTION__, width, height);
+  return ok;
+}
+
+bool CAMLCapture::ReadStream(AMLCaptureInput input,
+                             uint32_t pixelFormat,
+                             unsigned int buffers,
+                             int width,
+                             int height,
+                             const StreamFunc& use)
 {
   std::shared_ptr<CStream> stream;
   std::shared_ptr<CStream> stale;
@@ -794,12 +922,12 @@ bool CAMLCapture::ReadStream(AMLCaptureInput input, int width, int height, const
       return false;
     for (const auto& [continuousInput, continuousWidth, continuousHeight] : m_continuousSizes)
     {
-      if (continuousInput != input)
+      if (continuousInput != input || pixelFormat != V4L2_PIX_FMT_NV12)
         continue;
       width = std::max(width, continuousWidth);
       height = std::max(height, continuousHeight);
     }
-    if (m_stream && !m_stream->Matches(input, width, height))
+    if (m_stream && !m_stream->Matches(input, pixelFormat, width, height))
       stale = TakeStream();
     stream = m_stream;
     UpdateStatics(std::move(meta));
@@ -820,7 +948,7 @@ bool CAMLCapture::ReadStream(AMLCaptureInput input, int width, int height, const
 
     bool busy = false;
     const int logLevel = m_openFailed ? LOGDEBUG : LOGWARNING;
-    stream = CStream::Open(input, width, height, logLevel, busy);
+    stream = CStream::Open(input, pixelFormat, buffers, width, height, logLevel, busy);
     if (!busy)
       m_openFailed = !stream;
 
@@ -998,6 +1126,11 @@ AMLCaptureImage CAMLCapture::Crop(const AMLCaptureImage& image, const CRect& rec
   AMLCaptureImage crop = image;
   crop.width = x2 - x1;
   crop.height = y2 - y1;
+  if (image.fullPack)
+  {
+    crop.data[0] += y1 * image.linesize[0] + x1 / 2 * AML_FULL_PACK_PAIR_BYTES;
+    return crop;
+  }
   crop.data[0] += y1 * image.linesize[0] + x1;
   crop.data[1] += y1 / 2 * image.linesize[1] + x1;
   return crop;
@@ -1017,7 +1150,8 @@ void CAMLCapture::CreateVideoPixels(const AMLCaptureVideoSpec& spec, CaptureResu
 
 void CAMLCapture::CreateLivePixels(int width, int height, CaptureResult& result)
 {
-  if (FindDevice().screenInput < 0)
+  const AMLCaptureDevice& device = FindDevice();
+  if (device.input < 0 || device.screenInput < 0)
     return;
 
   const auto session = Get();
