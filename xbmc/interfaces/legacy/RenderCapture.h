@@ -71,6 +71,13 @@ namespace XBMCAddon
                state == KODI::RENDERING::CAPTURE::CaptureState::LATCHED;
       }
 
+      //! a live frame is read from the device on the copy, so it runs without the interpreter lock
+      bool CopyFrame(const KODI::RENDERING::CAPTURE::CaptureResult& result)
+      {
+        DelayedCallGuard dg(languageHook);
+        return KODI::RENDERING::CAPTURE::CaptureCopyBGRA8(result, m_width, m_height,
+                                                          m_buffer.get());
+      }
 #endif
 
     public:
@@ -231,17 +238,21 @@ namespace XBMCAddon
       {
         if (!m_handle)
           return false;
+        if (!m_handle->WaitNext(std::chrono::milliseconds(0)))
         {
+          const bool running = IsRunning();
+          const KODI::RENDERING::CAPTURE::CaptureResult last = m_handle->CopyResult();
+          if (last.live && running && CopyFrame(last))
+            return true;
           // wait for the next frame without holding the interpreter lock
           DelayedCallGuard dg(languageHook);
           if (!m_handle->WaitNext(std::chrono::milliseconds(msec ? msec : 1000)))
             return false;
         }
         const KODI::RENDERING::CAPTURE::CaptureResult result = m_handle->CopyResult();
-        // legacy contract: raw output-coded 8-bit BGRA, never tonemapped; an
-        // HDR session delivers PQ/HLG-coded bytes exactly as glReadPixels did
-        return KODI::RENDERING::CAPTURE::CaptureCopyBGRA8(result, m_width, m_height,
-                                                          m_buffer.get());
+        // legacy contract: 8-bit BGRA as delivered, never tonemapped here; a framebuffer
+        // readback of an HDR session gives PQ/HLG-coded bytes as glReadPixels did
+        return CopyFrame(result);
       }
 #endif
 
