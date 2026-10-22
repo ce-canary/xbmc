@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -46,6 +47,8 @@ using namespace KODI::RENDERING::CAPTURE;
 namespace
 {
 
+// the widest stream outside a Native shot: a Standard shot stays easy to share
+constexpr int MAX_CAPTURE_WIDTH = 1920;
 // the first frame after STREAMON comes within this many frame periods
 constexpr int FRAME_WAIT_PERIODS = 10;
 // vdin1 writes one, holds the last, the reader holds one and one stays free
@@ -97,6 +100,16 @@ struct AMLCaptureDevice
   //! the widest scaled capture
   int maxWidth{0};
 };
+
+void FitOutput(int maxWidth, int& width, int& height)
+{
+  const RESOLUTION_INFO screen = CServiceBroker::GetWinSystem()->GetGfxContext().GetResInfo();
+  const int screenWidth = std::max(screen.iScreenWidth, 1);
+  const int screenHeight = std::max(screen.iScreenHeight, 1);
+  const float scale = std::min(1.0f, static_cast<float>(maxWidth) / screenWidth);
+  width = static_cast<int>(screenWidth * scale) & ~1;
+  height = static_cast<int>(screenHeight * scale) & ~1;
+}
 
 AMLCaptureDevice Discover()
 {
@@ -188,6 +201,28 @@ void DescribeSdr(int width, int height, bool rgb, CaptureResult& result)
   result.color.range = AVCOL_RANGE_JPEG;
 }
 
+ImageColorMetadata GetNativeColor(AMLCaptureSignal signal)
+{
+  ImageColorMetadata color;
+  switch (CAMLCaptureConvert::GetNativeTransfer(signal))
+  {
+    case AMLCaptureCoding::Transfer::PQ:
+      color.primaries = AVCOL_PRI_BT2020;
+      color.transfer = AVCOL_TRC_SMPTE2084;
+      break;
+    case AMLCaptureCoding::Transfer::HLG:
+      color.primaries = AVCOL_PRI_BT2020;
+      color.transfer = AVCOL_TRC_ARIB_STD_B67;
+      break;
+    default:
+      color.primaries = AVCOL_PRI_BT709;
+      color.transfer = AVCOL_TRC_BT709;
+      break;
+  }
+  color.range = AVCOL_RANGE_JPEG;
+  return color;
+}
+
 class CAMLVideoPixels : public ICapturePixels
 {
 public:
@@ -202,6 +237,8 @@ public:
       m_streamWidth(streamWidth),
       m_streamHeight(streamHeight)
   {
+    if (spec.shot == CaptureScreenshot::NATIVE)
+      CAMLCapture::GetShotSize(spec.shot, m_shotWidth, m_shotHeight);
   }
 
   const uint8_t* Lock() override
@@ -215,7 +252,19 @@ public:
 
     const auto session = m_session.lock();
     if (!session)
+    {
+      if (m_spec.shot == CaptureScreenshot::NATIVE)
+        CLog::Log(LOGWARNING, "CAMLCapture::{}: no native screenshot, the video stopped",
+                  __FUNCTION__);
       return nullptr;
+    }
+
+    if (m_spec.shot == CaptureScreenshot::NATIVE)
+    {
+      m_buffer = ReadNative(*session);
+      m_lease.reset();
+      return m_buffer.get();
+    }
 
     // a standard screenshot is the rows of an 8-bit PNG
     const bool rgb = m_spec.shot == CaptureScreenshot::STANDARD;
@@ -241,15 +290,40 @@ public:
     return m_buffer.get();
   }
 
+  bool Describe(CaptureResult& result) const override { return m_native.Describe(result); }
+
 private:
+  // the visible video of a native shot at the shot's size, which only the read knows
+  std::unique_ptr<uint8_t[]> ReadNative(CAMLCapture& session)
+  {
+    AMLCaptureShotFrame shot;
+    if (!session.ReadShot(m_spec.shot, m_shotWidth, m_shotHeight, shot))
+      return {};
+
+    const AMLCaptureImage video = CAMLCapture::Crop(shot.frame.image, m_spec.rect);
+    const int height = video.height * shot.height / shot.frame.image.height;
+    auto buffer =
+        std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(video.width) * height * 6);
+    const AMLCaptureImage dst = AMLCaptureImage::Packed(AV_PIX_FMT_RGB48BE, video.width, height,
+                                                        buffer.get(), video.width * 6);
+    const bool ok = CAMLCaptureConvert::ConvertNative(video, shot.frame.color, dst);
+    m_native = {ok, shot.frame.color, video.width, height};
+    if (!ok)
+      return {};
+    return buffer;
+  }
+
   std::weak_ptr<CAMLCapture> m_session;
   std::shared_ptr<void> m_lease;
   AMLCaptureVideoSpec m_spec;
   int m_streamWidth{0};
   int m_streamHeight{0};
+  int m_shotWidth{0};
+  int m_shotHeight{0};
   std::mutex m_lock;
   bool m_read{false};
   std::unique_ptr<uint8_t[]> m_buffer;
+  AMLCaptureNative m_native;
 };
 
 class CAMLLivePixels : public ICapturePixels
@@ -670,12 +744,29 @@ std::shared_ptr<CAMLCapture> CAMLCapture::GetActive()
 
 void CAMLCapture::GetCaptureSize(int& width, int& height)
 {
-  const RESOLUTION_INFO screen = CServiceBroker::GetWinSystem()->GetGfxContext().GetResInfo();
-  const int screenWidth = std::max(screen.iScreenWidth, 1);
-  const int screenHeight = std::max(screen.iScreenHeight, 1);
-  const float scale = std::min(1.0f, static_cast<float>(FindDevice().maxWidth) / screenWidth);
-  width = static_cast<int>(screenWidth * scale) & ~1;
-  height = static_cast<int>(screenHeight * scale) & ~1;
+  FitOutput(std::min(FindDevice().maxWidth, MAX_CAPTURE_WIDTH), width, height);
+}
+
+void CAMLCapture::GetShotSize(CaptureScreenshot shot, int& width, int& height)
+{
+  if (shot == CaptureScreenshot::NATIVE)
+    FitOutput(std::numeric_limits<int>::max(), width, height);
+  else
+    GetCaptureSize(width, height);
+}
+
+bool AMLCaptureNative::Describe(CaptureResult& result) const
+{
+  if (!resolved)
+    return false;
+
+  result.width = static_cast<unsigned int>(width);
+  result.height = static_cast<unsigned int>(height);
+  result.stride = width * 6;
+  result.format = AV_PIX_FMT_RGB48BE;
+  result.color = GetNativeColor(color.signal);
+  result.displayMapped = color.displayMapped;
+  return true;
 }
 
 CAMLCapture::CAMLCapture()
@@ -827,6 +918,16 @@ bool CAMLCapture::CanRead(AMLCaptureInput input) const
   return input == AMLCaptureInput::SCREEN || (m_presented && !m_busy);
 }
 
+bool CAMLCapture::Unreadable(bool log) const
+{
+  if (log)
+    CLog::Log(LOGWARNING, "CAMLCapture::{}: no video frame: {}", __FUNCTION__,
+              m_displayLost  ? "display lost"
+              : !m_presented ? "no video presented"
+                             : "another vdin1 user holds the node");
+  return false;
+}
+
 bool CAMLCapture::Read(AMLCaptureInput input, int width, int height, const ReadFunc& use)
 {
   std::lock_guard read(m_readLock);
@@ -842,13 +943,16 @@ bool CAMLCapture::ReadVideo(CaptureScreenshot shot, int width, int height, const
   {
     AMLCaptureShotFrame frame;
     CAMLCaptureConvert convert;
-    if (ReadShot(width, height, frame) && use(frame.frame, convert))
+    if (ReadShot(shot, width, height, frame) && use(frame.frame, convert))
       return true;
   }
   return Read(AMLCaptureInput::VIDEO, width, height, use);
 }
 
-bool CAMLCapture::ReadShot(int width, int height, AMLCaptureShotFrame& frame)
+bool CAMLCapture::ReadShot(CaptureScreenshot shot,
+                           int width,
+                           int height,
+                           AMLCaptureShotFrame& frame)
 {
   std::unique_lock read(m_readLock);
 
@@ -882,8 +986,8 @@ bool CAMLCapture::ReadShot(int width, int height, AMLCaptureShotFrame& frame)
     return true;
   };
 
-  const bool ok =
-      ReadStream(AMLCaptureInput::VIDEO, PIX_FMT_YUV422_10P, SHOT_BUFFERS, width, height, copy);
+  const bool ok = ReadStream(AMLCaptureInput::VIDEO, PIX_FMT_YUV422_10P, SHOT_BUFFERS, width,
+                             height, copy, shot == CaptureScreenshot::NATIVE);
 
   // close the shot stream whatever leases remain
   std::shared_ptr<CStream> stream;
@@ -904,8 +1008,13 @@ bool CAMLCapture::ReadShot(int width, int height, AMLCaptureShotFrame& frame)
   }
 
   if (!ok)
+  {
     CLog::Log(LOGWARNING, "CAMLCapture::{}: no 10-bit frame at {}x{}", __FUNCTION__, width, height);
-  return ok;
+    return false;
+  }
+
+  frame.height = height * frame.frame.image.width / width;
+  return true;
 }
 
 bool CAMLCapture::ReadStream(AMLCaptureInput input,
@@ -913,7 +1022,8 @@ bool CAMLCapture::ReadStream(AMLCaptureInput input,
                              unsigned int buffers,
                              int width,
                              int height,
-                             const StreamFunc& use)
+                             const StreamFunc& use,
+                             bool logCause)
 {
   std::shared_ptr<CStream> stream;
   std::shared_ptr<CStream> stale;
@@ -923,7 +1033,7 @@ bool CAMLCapture::ReadStream(AMLCaptureInput input,
   {
     std::lock_guard lock(m_lock);
     if (!CanRead(input))
-      return false;
+      return Unreadable(logCause);
     for (const auto& [continuousInput, continuousWidth, continuousHeight] : m_continuousSizes)
     {
       if (continuousInput != input || pixelFormat != V4L2_PIX_FMT_NV12)
@@ -946,7 +1056,7 @@ bool CAMLCapture::ReadStream(AMLCaptureInput input,
       std::unique_lock lock(m_lock);
       m_closed.wait(lock, [this] { return m_closing == 0; });
       if (!CanRead(input))
-        return false;
+        return Unreadable(logCause);
       epoch = m_displayEpoch;
     }
 
@@ -964,8 +1074,14 @@ bool CAMLCapture::ReadStream(AMLCaptureInput input,
     if (!stream)
       return false;
     // a stream opened across a mode set still holds the old mode
-    if (!CanRead(input) || epoch != m_displayEpoch)
+    if (epoch != m_displayEpoch)
+    {
+      if (logCause)
+        CLog::Log(LOGWARNING, "CAMLCapture::{}: the output mode changed", __FUNCTION__);
       return false;
+    }
+    if (!CanRead(input))
+      return Unreadable(logCause);
     m_stream = stream;
   }
 
@@ -998,6 +1114,19 @@ bool CAMLCapture::ReadStream(AMLCaptureInput input,
     return false;
   }
   // vdin1 gives no frames while the output is muted, so a stream stays open through silence
+  if (wake == CStream::Wake::TIMEOUT)
+  {
+    std::lock_guard lock(m_lock);
+    if (m_stream == stream)
+    {
+      if (logCause)
+        CLog::Log(LOGWARNING, "CAMLCapture::{}: no frame in {} ms, stream kept open", __FUNCTION__,
+                  waitMs);
+      return false;
+    }
+  }
+  if (logCause)
+    CLog::Log(LOGWARNING, "CAMLCapture::{}: stream stopped", __FUNCTION__);
   return false;
 }
 
@@ -1053,6 +1182,7 @@ AMLCaptureColor CAMLCapture::GetSignal(const AMLCaptureSource& source) const
         if (display->aml_get_drmProperty("dv_ll_policy", DRM_MODE_OBJECT_CRTC) >= DV_LL_YUV422)
         {
           color.signal = AMLCaptureSignal::DV_LL;
+          color.displayMapped = true;
           mapped = true;
         }
         else
@@ -1060,11 +1190,13 @@ AMLCaptureColor CAMLCapture::GetSignal(const AMLCaptureSource& source) const
         break;
       case DvMode::HDR10:
         color.signal = AMLCaptureSignal::DV_HDR10;
+        color.displayMapped = true;
         mapped = true;
         break;
       case DvMode::SDR10:
       case DvMode::SDR8:
         color.signal = AMLCaptureSignal::DV_SDR;
+        color.displayMapped = true;
         break;
       default:
         if (sourcePQ)
@@ -1083,12 +1215,15 @@ AMLCaptureColor CAMLCapture::GetSignal(const AMLCaptureSource& source) const
       case HdrOutput::HDR10PLUS:
       case HdrOutput::CUVA_HDR:
         color.signal = AMLCaptureSignal::PQ;
+        color.displayMapped = !sourcePQ;
         break;
       case HdrOutput::HLG:
       case HdrOutput::CUVA_HLG:
         color.signal = AMLCaptureSignal::HLG;
+        color.displayMapped = sourcePQ;
         break;
       default:
+        color.displayMapped = sourcePQ || sourceHLG;
         break;
     }
   }
