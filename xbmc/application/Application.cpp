@@ -893,6 +893,7 @@ void ServiceCaptureTaps(CApplicationPlayer& player)
   result.format = surface->GetFormat();
   result.color = GetOutputColorMetadata(*winSystem);
   result.content = CaptureContent::COMPOSITE; // this tap is the composite half
+  result.screenshot = request->spec.screenshot;
 
   if (!player.CompositeVideoCapture(result))
   {
