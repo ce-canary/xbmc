@@ -53,6 +53,20 @@ struct AMLCaptureShotFrame
   //! frame.image points into data
   std::unique_ptr<uint8_t[]> data;
   AMLCaptureFrame frame;
+  //! the shot's rows, more than the image holds when it is a field of an interlaced output
+  int height{0};
+};
+
+//! What only the read of a native screenshot knows about its pixels
+struct AMLCaptureNative
+{
+  bool resolved{false};
+  AMLCaptureColor color;
+  int width{0};
+  int height{0};
+
+  //! once resolved, width x height RGB48BE pixels in the signal's own coding
+  bool Describe(KODI::RENDERING::CAPTURE::CaptureResult& result) const;
 };
 
 struct AMLCaptureVideoSpec
@@ -84,6 +98,10 @@ public:
   static std::shared_ptr<CAMLCapture> GetActive();
   //! the largest capture size for the current output mode
   static void GetCaptureSize(int& width, int& height);
+  //! the size a shot of type `shot` reads; call on a thread that may read the resolutions
+  static void GetShotSize(KODI::RENDERING::CAPTURE::CaptureScreenshot shot,
+                          int& width,
+                          int& height);
 
   CAMLCapture();
   ~CAMLCapture() override;
@@ -114,7 +132,10 @@ public:
   //! Consumer thread: copy out a frame of a one-shot 10-bit video stream of the size asked for;
   //! vdin1 settles what it delivers. The stream closes before this returns; a continuous reader
   //! reopens its own.
-  bool ReadShot(int width, int height, AMLCaptureShotFrame& frame);
+  bool ReadShot(KODI::RENDERING::CAPTURE::CaptureScreenshot shot,
+                int width,
+                int height,
+                AMLCaptureShotFrame& frame);
   //! Consumer thread: run `use` on the frame of a shot, else, or when that fails, on a Read of
   //! the video at width x height.
   bool ReadVideo(KODI::RENDERING::CAPTURE::CaptureScreenshot shot,
@@ -125,7 +146,8 @@ public:
   //! The crop of an NV12 or full pack image to a normalized rect, on even pixels for the chroma
   static AMLCaptureImage Crop(const AMLCaptureImage& image, const CRect& rect);
 
-  //! Deferred sRGB pixels of the visible video in result: BGRA, RGB24 for a STANDARD shot.
+  //! Deferred sRGB pixels of the visible video in result: BGRA, RGB24 for a STANDARD shot; a
+  //! NATIVE shot describes its own.
   void CreateVideoPixels(const AMLCaptureVideoSpec& spec,
                          KODI::RENDERING::CAPTURE::CaptureResult& result);
 
@@ -142,14 +164,18 @@ private:
 
   void ReleaseLease(AMLCaptureInput input, int width, int height);
   //! m_readLock must be held; `use` runs on buffer `index`, which is queued again after it.
+  //! With `logCause`, it logs why it gets no frame
   bool ReadStream(AMLCaptureInput input,
                   uint32_t pixelFormat,
                   unsigned int buffers,
                   int width,
                   int height,
-                  const StreamFunc& use);
+                  const StreamFunc& use,
+                  bool logCause = false);
   //! m_lock must be held
   bool CanRead(AMLCaptureInput input) const;
+  //! m_lock must be held; false, after logging why the video cannot be read when `log`
+  bool Unreadable(bool log) const;
   //! takes m_stream for Close; m_lock must be held
   std::shared_ptr<CStream> TakeStream();
   void Close(std::shared_ptr<CStream> stream);
