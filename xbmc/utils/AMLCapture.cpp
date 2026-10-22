@@ -13,6 +13,7 @@
 #include "cores/VideoPlayer/DVDCodecs/Video/AMLFrameMetadata.h"
 #include "cores/VideoPlayer/Interface/StreamInfo.h"
 #include "jobs/JobManager.h"
+#include "rendering/capture/CapturePixels.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "utils/AMLUtils.h"
@@ -39,6 +40,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+using namespace KODI::RENDERING::CAPTURE;
+
 namespace
 {
 
@@ -55,6 +58,8 @@ constexpr float HLG_PEAK_NITS = 1000.0f;
 // the range of ITU-R BT.2100 PQ, the peak of a stream that states none
 constexpr float PQ_PEAK_NITS = 10000.0f;
 constexpr uint32_t BUFFER_TYPE = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+// far above the float error of a normalized edge times a size, far below a pixel
+constexpr float CROP_END_EPSILON = 0.01f;
 
 // amdv dv_mode and dv_ll_policy values (dolby_vision.h, amdv.h)
 enum class DvMode
@@ -147,6 +152,85 @@ float GetPeak(const AMLCaptureSource& source, float fallback)
 {
   return source.titlePeak > 0 ? source.titlePeak : fallback;
 }
+
+// the stream size that holds width x height pixels in the normalized crop
+void GetStreamSize(const CRect& crop, int width, int height, int& streamWidth, int& streamHeight)
+{
+  CAMLCapture::GetCaptureSize(streamWidth, streamHeight);
+  if (crop.IsEmpty())
+    return;
+
+  const auto size = [](int pixels, float part, int limit)
+  { return std::min((static_cast<int>(std::ceil(pixels / part)) + 1) & ~1, limit); };
+  streamWidth = size(width, crop.Width(), streamWidth);
+  streamHeight = size(height, crop.Height(), streamHeight);
+}
+
+// width x height sRGB pixels
+void DescribeSdr(int width, int height, CaptureResult& result)
+{
+  result.width = static_cast<unsigned int>(width);
+  result.height = static_cast<unsigned int>(height);
+  result.stride = width * 4;
+  result.format = AV_PIX_FMT_BGRA;
+  result.color.primaries = AVCOL_PRI_BT709;
+  result.color.transfer = AVCOL_TRC_IEC61966_2_1;
+  result.color.range = AVCOL_RANGE_JPEG;
+}
+
+class CAMLVideoPixels : public ICapturePixels
+{
+public:
+  CAMLVideoPixels(std::weak_ptr<CAMLCapture> session,
+                  std::shared_ptr<void> lease,
+                  const AMLCaptureVideoSpec& spec,
+                  int streamWidth,
+                  int streamHeight)
+    : m_session(std::move(session)),
+      m_lease(std::move(lease)),
+      m_spec(spec),
+      m_streamWidth(streamWidth),
+      m_streamHeight(streamHeight)
+  {
+  }
+
+  const uint8_t* Lock() override
+  {
+    std::lock_guard lock(m_lock);
+
+    // per-frame buffers stay immutable: every Lock returns the first read
+    if (m_read)
+      return m_buffer.get();
+    m_read = true;
+
+    const auto session = m_session.lock();
+    if (!session)
+      return nullptr;
+
+    auto buffer = std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(m_spec.width) *
+                                                            m_spec.height * 4);
+    const AMLCaptureImage dst = AMLCaptureImage::Packed(
+        AV_PIX_FMT_BGRA, m_spec.width, m_spec.height, buffer.get(), m_spec.width * 4);
+    const bool ok = session->Read(
+        m_streamWidth, m_streamHeight,
+        [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
+        { return convert.Convert(CAMLCapture::Crop(frame.image, m_spec.rect), frame.color, dst); });
+
+    if (ok)
+      m_buffer = std::move(buffer);
+    return m_buffer.get();
+  }
+
+private:
+  std::weak_ptr<CAMLCapture> m_session;
+  std::shared_ptr<void> m_lease;
+  AMLCaptureVideoSpec m_spec;
+  int m_streamWidth{0};
+  int m_streamHeight{0};
+  std::mutex m_lock;
+  bool m_read{false};
+  std::unique_ptr<uint8_t[]> m_buffer;
+};
 
 std::mutex s_sessionLock;
 std::weak_ptr<CAMLCapture> s_session;
@@ -521,6 +605,28 @@ void CAMLCapture::SetPresented()
   m_presented = true;
 }
 
+void CAMLCapture::SetVideoRect(const CRect& rect)
+{
+  std::lock_guard lock(m_lock);
+
+  m_videoRect = rect;
+}
+
+CRect CAMLCapture::GetVisibleRect()
+{
+  // the codec places the video at the GUI rect scaled to the output, so the GUI size normalizes it
+  const CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+  const RESOLUTION_INFO gui = context.GetResInfo(context.GetVideoResolution());
+  if (gui.iWidth <= 0 || gui.iHeight <= 0)
+    return {};
+
+  std::lock_guard lock(m_lock);
+
+  CRect rect(m_videoRect.x1 / gui.iWidth, m_videoRect.y1 / gui.iHeight, m_videoRect.x2 / gui.iWidth,
+             m_videoRect.y2 / gui.iHeight);
+  return rect.Intersect(CRect(0.0f, 0.0f, 1.0f, 1.0f));
+}
+
 std::shared_ptr<CAMLCapture::CStream> CAMLCapture::TakeStream()
 {
   if (m_stream)
@@ -794,4 +900,39 @@ AMLCaptureColor CAMLCapture::GetSignal(const AMLCaptureSource& source) const
       break;
   }
   return color;
+}
+
+AMLCaptureImage CAMLCapture::Crop(const AMLCaptureImage& image, const CRect& rect)
+{
+  if (rect.IsEmpty())
+    return image;
+
+  const auto edge = [](float v, int size)
+  { return std::clamp(static_cast<int>(std::lround(v * size / 2)) * 2, 0, size); };
+  // the end rounds down to even, so a whole end stays put and a fractional one does not round up
+  const auto end = [](float v, int size)
+  { return std::clamp(static_cast<int>(std::floor(v * size + CROP_END_EPSILON)) & ~1, 0, size); };
+  const int x1 = edge(rect.x1, image.width);
+  const int x2 = end(rect.x2, image.width);
+  const int y1 = edge(rect.y1, image.height);
+  const int y2 = end(rect.y2, image.height);
+
+  AMLCaptureImage crop = image;
+  crop.width = x2 - x1;
+  crop.height = y2 - y1;
+  crop.data[0] += y1 * image.linesize[0] + x1;
+  crop.data[1] += y1 / 2 * image.linesize[1] + x1;
+  return crop;
+}
+
+void CAMLCapture::CreateVideoPixels(const AMLCaptureVideoSpec& spec, CaptureResult& result)
+{
+  int width = 0;
+  int height = 0;
+  GetStreamSize(spec.rect, spec.width, spec.height, width, height);
+  auto lease = spec.continuous ? Lease(width, height) : Lease();
+  result.pixels =
+      std::make_shared<CAMLVideoPixels>(weak_from_this(), std::move(lease), spec, width, height);
+  DescribeSdr(spec.width, spec.height, result);
+  result.content = CaptureContent::VIDEO;
 }
