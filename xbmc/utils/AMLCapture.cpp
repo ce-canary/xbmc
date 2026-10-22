@@ -179,12 +179,12 @@ void GetStreamSize(const CRect& crop, int width, int height, int& streamWidth, i
 }
 
 // width x height sRGB pixels
-void DescribeSdr(int width, int height, CaptureResult& result)
+void DescribeSdr(int width, int height, bool rgb, CaptureResult& result)
 {
   result.width = static_cast<unsigned int>(width);
   result.height = static_cast<unsigned int>(height);
-  result.stride = width * 4;
-  result.format = AV_PIX_FMT_BGRA;
+  result.stride = width * (rgb ? 3 : 4);
+  result.format = rgb ? AV_PIX_FMT_RGB24 : AV_PIX_FMT_BGRA;
   result.color.primaries = AVCOL_PRI_BT709;
   result.color.transfer = AVCOL_TRC_IEC61966_2_1;
   result.color.range = AVCOL_RANGE_JPEG;
@@ -219,10 +219,14 @@ public:
     if (!session)
       return nullptr;
 
+    // a standard screenshot is the rows of an 8-bit PNG
+    const bool rgb = m_spec.shot == CaptureScreenshot::STANDARD;
+    const int pixelBytes = rgb ? 3 : 4;
     auto buffer = std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(m_spec.width) *
-                                                            m_spec.height * 4);
-    const AMLCaptureImage dst = AMLCaptureImage::Packed(
-        AV_PIX_FMT_BGRA, m_spec.width, m_spec.height, buffer.get(), m_spec.width * 4);
+                                                            m_spec.height * pixelBytes);
+    const AMLCaptureImage dst =
+        AMLCaptureImage::Packed(rgb ? AV_PIX_FMT_RGB24 : AV_PIX_FMT_BGRA, m_spec.width,
+                                m_spec.height, buffer.get(), m_spec.width * pixelBytes);
     const bool ok =
         session->ReadVideo(m_spec.shot, m_streamWidth, m_streamHeight,
                            [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
@@ -252,6 +256,17 @@ private:
 
 constexpr int FULL_SPAN_8 = 255;
 constexpr int CODE_SPAN_8_TO_16 = 257;
+
+// 16-bit RGBA codes to 8-bit pixels of STEP bytes
+template<int STEP>
+void Quantize(const uint16_t* in, int pixels, uint8_t* out)
+{
+  for (int i = 0; i < pixels; i++, in += 4, out += STEP)
+  {
+    for (int c = 0; c < STEP; c++)
+      out[c] = static_cast<uint8_t>((in[c] + CODE_SPAN_8_TO_16 / 2) / CODE_SPAN_8_TO_16);
+  }
+}
 
 // a normalized coordinate in pixels
 int Edge(float v, int pixels)
@@ -316,6 +331,8 @@ public:
         m_gui.stride);
     const auto guiRow = [&overlay](int y)
     { return overlay.data[0] + static_cast<std::ptrdiff_t>(y) * overlay.linesize[0]; };
+    // a standard screenshot is the rows of an 8-bit PNG
+    const bool rgb = m_gui.screenshot == CaptureScreenshot::STANDARD;
     const bool hdr = m_coding.transfer != AMLCaptureCoding::Transfer::SDR;
 
     // place the visible video, mapped to SDR, in the GUI's coding at its place on black, blend the
@@ -323,7 +340,6 @@ public:
     // keeps its look and the video matches a video capture
     const auto blend = [&](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
     {
-      const size_t size = static_cast<size_t>(width) * height * 4;
       const AMLCaptureImage image = convert.GetCompositeImage(width, height);
       uint16_t* composite = reinterpret_cast<uint16_t*>(image.data[0]);
 
@@ -384,15 +400,29 @@ public:
         }
       }
 
+      const int pixels = width * height;
       if (!hdr)
       {
-        for (size_t i = 0; i < size; i++)
-          m_buffer[i] =
-              static_cast<uint8_t>((composite[i] + CODE_SPAN_8_TO_16 / 2) / CODE_SPAN_8_TO_16);
+        if (rgb)
+          Quantize<3>(composite, pixels, m_buffer.get());
+        else
+          Quantize<4>(composite, pixels, m_buffer.get());
         return true;
       }
 
       convert.MapToSdr(image, m_coding, dst, &overlay, frame.color.luminance);
+
+      if (rgb)
+      {
+        // RGBA repacked to RGB in place
+        const uint8_t* in = m_buffer.get();
+        uint8_t* out = m_buffer.get();
+        for (int i = 0; i < pixels; i++, in += 4, out += 3)
+        {
+          for (int c = 0; c < 3; c++)
+            out[c] = in[c];
+        }
+      }
       return true;
     };
 
@@ -1318,7 +1348,7 @@ void CAMLCapture::CreateVideoPixels(const AMLCaptureVideoSpec& spec, CaptureResu
   auto lease = spec.continuous ? Lease(AMLCaptureInput::VIDEO, width, height) : Lease();
   result.pixels =
       std::make_shared<CAMLVideoPixels>(weak_from_this(), std::move(lease), spec, width, height);
-  DescribeSdr(spec.width, spec.height, result);
+  DescribeSdr(spec.width, spec.height, spec.shot == CaptureScreenshot::STANDARD, result);
   result.content = CaptureContent::VIDEO;
 }
 
@@ -1339,10 +1369,11 @@ void CAMLCapture::CreateCompositePixels(CaptureResult& result)
   // the GUI composite peak is PQ-normalized luminance
   coding.whiteNits = winSystem->GetGuiCompositePeak() * PQ_PEAK_NITS;
 
+  const bool rgb = result.screenshot == CaptureScreenshot::STANDARD;
   result.pixels = std::make_shared<CAMLCompositePixels>(weak_from_this(), Lease(), result, coding,
                                                         GetVisibleRect());
-  result.stride = static_cast<int>(result.width) * 4;
-  result.format = AV_PIX_FMT_RGBA;
+  result.stride = static_cast<int>(result.width) * (rgb ? 3 : 4);
+  result.format = rgb ? AV_PIX_FMT_RGB24 : AV_PIX_FMT_RGBA;
   result.color.primaries = AVCOL_PRI_BT709;
   result.color.transfer = AVCOL_TRC_IEC61966_2_1;
   result.color.range = AVCOL_RANGE_JPEG;
@@ -1361,7 +1392,7 @@ void CAMLCapture::CreateLivePixels(int width, int height, CaptureResult& result)
   auto lease = session->Lease(AMLCaptureInput::SCREEN, streamWidth, streamHeight);
   result.pixels = std::make_shared<CAMLLivePixels>(session, std::move(lease), width, height,
                                                    streamWidth, streamHeight);
-  DescribeSdr(width, height, result);
+  DescribeSdr(width, height, false, result);
   result.content = CaptureContent::COMPOSITE;
   result.live = true;
 }
