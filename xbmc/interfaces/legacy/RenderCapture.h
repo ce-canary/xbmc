@@ -10,6 +10,7 @@
 
 #include "AddonClass.h"
 #include "Exception.h"
+#include "LanguageHook.h"
 #include "ServiceBroker.h"
 #include "application/ApplicationComponents.h"
 #include "application/ApplicationPlayer.h"
@@ -21,6 +22,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 
 namespace XBMCAddon
 {
@@ -48,6 +50,18 @@ namespace XBMCAddon
       unsigned int m_width{0};
       unsigned int m_height{0};
       std::unique_ptr<uint8_t[]> m_buffer;
+      std::mutex m_lock;
+
+#ifndef SWIG
+      //! getImage uses the handle and the buffer without the interpreter lock, so it and capture()
+      //! hold this lock across them; a thread waits for it without the interpreter lock
+      std::unique_lock<std::mutex> LockCapture()
+      {
+        DelayedCallGuard dg(languageHook);
+        return std::unique_lock(m_lock);
+      }
+
+#endif
 
     public:
       RenderCapture() = default;
@@ -144,6 +158,7 @@ namespace XBMCAddon
       inline XbmcCommons::Buffer getImage(unsigned int msecs = 0)
 #endif
       {
+        const auto lock = LockCapture();
         if (!GetPixels(msecs))
           return XbmcCommons::Buffer(0);
 
@@ -169,6 +184,7 @@ namespace XBMCAddon
       inline void capture(int width, int height)
 #endif
       {
+        const auto lock = LockCapture();
         // cancel any previous request before its buffer goes away
         m_handle.reset();
 
@@ -194,8 +210,12 @@ namespace XBMCAddon
       {
         if (!m_handle)
           return false;
-        if (!m_handle->WaitNext(std::chrono::milliseconds(msec ? msec : 1000)))
-          return false;
+        {
+          // wait for the next frame without holding the interpreter lock
+          DelayedCallGuard dg(languageHook);
+          if (!m_handle->WaitNext(std::chrono::milliseconds(msec ? msec : 1000)))
+            return false;
+        }
         const KODI::RENDERING::CAPTURE::CaptureResult result = m_handle->CopyResult();
         // legacy contract: raw output-coded 8-bit BGRA, never tonemapped; an
         // HDR session delivers PQ/HLG-coded bytes exactly as glReadPixels did
