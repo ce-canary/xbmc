@@ -58,6 +58,13 @@ enum class CaptureFormat
   NATIVE, //!< the output surface's coding at its native depth
 };
 
+//! The screenshot type a platform builds; captures other than screenshots leave it NONE
+enum class CaptureScreenshot
+{
+  NONE,
+  STANDARD, //!< what the user sees
+};
+
 struct CaptureSpec
 {
   CaptureContent content{CaptureContent::COMPOSITE};
@@ -66,6 +73,7 @@ struct CaptureSpec
   unsigned int width{0};
   unsigned int height{0};
   CaptureFormat format{CaptureFormat::BGRA8};
+  CaptureScreenshot screenshot{CaptureScreenshot::NONE};
 };
 
 struct CaptureResult
@@ -82,6 +90,8 @@ struct CaptureResult
   //! which tap produced this result; stamped at delivery so a BOTH consumer
   //! knows whether it holds the video-only or the composite capture
   CaptureContent content{CaptureContent::COMPOSITE};
+  //! the request's screenshot type, stamped at the composite tap for a renderer that composites
+  CaptureScreenshot screenshot{CaptureScreenshot::NONE};
   //! the pixels read the newest frame on every Lock, so a consumer may copy them again without
   //! waiting for a delivery; a delivery comes only with a drawn frame
   bool live{false};
