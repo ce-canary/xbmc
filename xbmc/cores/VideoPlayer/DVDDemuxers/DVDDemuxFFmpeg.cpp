@@ -2375,7 +2375,9 @@ CDemuxStream* CDVDDemuxFFmpeg::AddStream(int streamIdx)
               const std::shared_ptr<CDVDInputStream::IMenus> menuInterface =
                   std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInput);
               CDemuxMVC *extDemux = static_cast<CDemuxMVC*>(pExt->GetExtentionDemux());
-              extDemux->SetStartTime(m_pFormatContext->start_time, menuInterface->GetSupportedMenuType());
+              extDemux->SetStartTime(m_pFormatContext->start_time,
+                                     menuInterface->GetSupportedMenuType(),
+                                     !m_checkTransportStream);
               mvcStream = extDemux->GetAVStream();
             }
             else if (CDVDCodecUtils::GetH264MvcStreamIndex(m_pFormatContext, &mvcIndex))
