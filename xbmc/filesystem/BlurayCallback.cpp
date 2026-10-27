@@ -110,6 +110,11 @@ int CBlurayCallback::file_eof(BD_FILE_H *file)
 
 BD_FILE_H * CBlurayCallback::file_open(void *handle, const char *rel_path)
 {
+  return file_open(handle, rel_path, 0);
+}
+
+BD_FILE_H* CBlurayCallback::file_open(void* handle, const char* rel_path, unsigned int flags)
+{
   std::string strRelPath(rel_path);
   std::string* strBasePath = reinterpret_cast<std::string*>(handle);
   if (!strBasePath)
@@ -130,7 +135,7 @@ BD_FILE_H * CBlurayCallback::file_open(void *handle, const char *rel_path)
   file->eof = file_eof;
 
   CFile* fp = new CFile();
-  if (fp->Open(strFilename))
+  if (fp->Open(strFilename, flags))
   {
     file->internal = (void*)fp;
     return file;
