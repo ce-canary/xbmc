@@ -873,13 +873,7 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
         return result;
       }
 
-      // the disc program answers an activation key with its next seek, play item, playlist or title
-      const bool menuJump =
-          m_menuInput && (m_event.event == BD_EVENT_SEEK || m_event.event == BD_EVENT_TITLE ||
-                          m_event.event == BD_EVENT_PLAYLIST ||
-                          (m_event.event == BD_EVENT_PLAYITEM && !joinsInLine()));
-      if (menuJump)
-        m_menuInput = false;
+      const bool menuJump = TakeMenuJump(joinsInLine());
 
       /* Check for holding events */
       switch(m_event.event) {
@@ -898,9 +892,7 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
             // a hold without data keeps the time the demuxer being closed already has
             if (result == 0)
               m_dispTimeBeforeRead = dispTimeHeld;
-            // a BD-J play item or seek with no data answers the key and leaves the item unplayed
-            if (result == 0 && menuJump && m_title && m_title->bdj &&
-                (m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_SEEK))
+            if (result == 0 && AbandonsItem(menuJump))
               m_itemAbandoned = true;
             // the read starts the new play item, which the demuxer being closed must not consume
             if ((m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_DISCONTINUITY) &&
@@ -1676,11 +1668,107 @@ void CDVDInputStreamBluray::SetPresentedTime(double time)
                                         CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE));
 }
 
+void CDVDInputStreamBluray::PollEvents()
+{
+  if (!m_bd || !m_navmode)
+    return;
+
+  // a move away from the held clip start shows only in the read position until the next stream
+  if (m_hold == HOLD_HELD)
+  {
+    if (!m_clipStart.empty() && bd_tell(m_bd) != m_clipStartEnd)
+    {
+      m_clipStart.clear();
+      if (m_menuInput && m_title && m_title->bdj)
+      {
+        m_menuInput = false;
+        m_itemAbandoned = true;
+      }
+    }
+    return;
+  }
+
+  // a clip start being handed on is checked by its next read
+  if (m_hold == HOLD_STILL || m_hold == HOLD_ERROR || m_hold == HOLD_EXIT || !m_clipStart.empty())
+    return;
+
+  while (true)
+  {
+    if (bd_read_ext(m_bd, nullptr, 0, &m_event) < 0)
+    {
+      m_hold = HOLD_ERROR;
+      return;
+    }
+
+    if (m_event.event == BD_EVENT_NONE)
+      return;
+
+    // a read without data joins no play item in line
+    const bool menuJump = TakeMenuJump(false);
+
+    switch (m_event.event)
+    {
+      case BD_EVENT_STILL_TIME:
+        // an infinite still starts here as in the read
+        if (m_event.param == 0)
+          break;
+        m_hold = HOLD_HELD;
+        return;
+
+      case BD_EVENT_PLAYITEM:
+      case BD_EVENT_SEEK:
+      case BD_EVENT_TITLE:
+      case BD_EVENT_ANGLE:
+      case BD_EVENT_PLAYLIST:
+      case BD_EVENT_DISCONTINUITY:
+        if (m_hold != HOLD_DATA)
+        {
+          if (AbandonsItem(menuJump))
+            m_itemAbandoned = true;
+          m_hold = HOLD_HELD;
+          return;
+        }
+        break;
+
+      case BD_EVENT_END_OF_TITLE:
+        if (m_hold != HOLD_DATA && m_title && m_title->bdj)
+          m_titleEndWait = true;
+        break;
+
+      default:
+        break;
+    }
+
+    ProcessEvent();
+    if (m_hold == HOLD_STILL || m_hold == HOLD_ERROR || m_hold == HOLD_EXIT || m_hold == HOLD_HELD)
+      return;
+  }
+}
+
 const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetNextItemClip() const
 {
   if (!m_nextClipKnown || m_bMVCPlayback || m_hasMVCExtension)
     return nullptr;
   return m_clip;
+}
+
+// the disc program answers an activation key with its next seek, play item, playlist or title
+bool CDVDInputStreamBluray::TakeMenuJump(bool joinsInLine)
+{
+  const bool menuJump =
+      m_menuInput &&
+      (m_event.event == BD_EVENT_SEEK || m_event.event == BD_EVENT_TITLE ||
+       m_event.event == BD_EVENT_PLAYLIST || (m_event.event == BD_EVENT_PLAYITEM && !joinsInLine));
+  if (menuJump)
+    m_menuInput = false;
+  return menuJump;
+}
+
+// a BD-J play item or seek with no data answers the key and leaves the item unplayed
+bool CDVDInputStreamBluray::AbandonsItem(bool menuJump) const
+{
+  return menuJump && m_title && m_title->bdj &&
+         (m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_SEEK);
 }
 
 bool CDVDInputStreamBluray::TakeItemAbandoned()
