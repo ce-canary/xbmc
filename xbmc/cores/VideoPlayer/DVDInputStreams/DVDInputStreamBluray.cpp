@@ -130,6 +130,16 @@ static int read_blocks(void* handle, void* buf, int lba, int num_blocks)
   return blurayStream->ReadBlocks(reinterpret_cast<uint8_t*>(buf), lba, num_blocks);
 }
 
+static BD_DIR_H* dir_open(void* handle, const char* rel_path)
+{
+  return static_cast<CDVDInputStreamBluray*>(handle)->OpenDir(rel_path);
+}
+
+static BD_FILE_H* file_open(void* handle, const char* rel_path)
+{
+  return static_cast<CDVDInputStreamBluray*>(handle)->OpenFile(rel_path);
+}
+
 static void bluray_overlay_cb(void *this_gen, const BD_OVERLAY * ov)
 {
   static_cast<CDVDInputStreamBluray*>(this_gen)->OverlayCallback(ov);
@@ -351,7 +361,7 @@ bool CDVDInputStreamBluray::Open()
     m_udfMount.emplace(root);
 #endif
 
-    if (!bd_open_files(m_bd, &m_rootPath, CBlurayCallback::dir_open, CBlurayCallback::file_open))
+    if (!bd_open_files(m_bd, this, dir_open, file_open))
     {
       CLog::Log(LOGERROR, "CDVDInputStreamBluray::Open - failed to open {} in files mode",
                 CURL::GetRedacted(root));
@@ -1082,6 +1092,19 @@ int CDVDInputStreamBluray::ReadBlocks(uint8_t* buf, int lba, int num_blocks)
       result = lpstream->Read(buf, static_cast<int>(size)) / 2048;
   }
   return result;
+}
+
+BD_DIR_H* CDVDInputStreamBluray::OpenDir(const char* relPath)
+{
+  return CBlurayCallback::dir_open(&m_rootPath, relPath);
+}
+
+// libbluray reads navigation-mode clips on the player thread, the file cache reads on ahead of it
+BD_FILE_H* CDVDInputStreamBluray::OpenFile(const char* relPath)
+{
+  const unsigned int flags =
+      m_navmode && URIUtils::HasExtension(relPath, ".m2ts|.ssif") ? XFILE::READ_AUDIO_VIDEO : 0;
+  return CBlurayCallback::file_open(&m_rootPath, relPath, flags);
 }
 
 static uint8_t  clamp(double v)
