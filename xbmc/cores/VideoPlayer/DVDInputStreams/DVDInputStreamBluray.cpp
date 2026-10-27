@@ -18,6 +18,8 @@
 #include "URL.h"
 #include "filesystem/BlurayCallback.h"
 #include "filesystem/SpecialProtocol.h"
+#include "guilib/StereoscopicsManager.h"
+#include "settings/DisplaySettings.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "utils/Geometry.h"
@@ -28,9 +30,11 @@
 #include "utils/log.h"
 #include "video/VideoFileItemClassify.h"
 #include "video/VideoInfoTag.h"
+#include "windowing/GraphicContext.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <iterator>
 #include <limits>
@@ -55,6 +59,60 @@ namespace
 /*! libbluray skips an aligned unit (6144 bytes) it cannot read and reports each one. This many in
     a row, about 6 MB, is a disc that has gone rather than a damaged patch to play past */
 constexpr unsigned int MAX_CONSECUTIVE_READ_ERRORS{1000};
+
+#if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 1, 0))
+// HDMI frame packing stacks both views with one frame's vertical blanking between them
+constexpr int FRAME_PACKED_1080_HEIGHT = 2205;
+constexpr int FRAME_PACKED_720_HEIGHT = 1470;
+
+// frame packing as the Amlogic windowing flags it or as CDisplaySettings stores it
+bool IsFramePacking(const RESOLUTION_INFO& res, int width, int height, int packedHeight)
+{
+  if (res.dwFlags & D3DPRESENTFLAG_MODE3DFP)
+    return res.iScreenHeight == height;
+  return (res.dwFlags & D3DPRESENTFLAG_MODE3DTB) && res.iScreenWidth == width &&
+         res.iScreenHeight == packedHeight;
+}
+
+uint32_t GetDisplayCap()
+{
+  uint32_t displayCap = 0;
+  const CDisplaySettings& displaySettings = CDisplaySettings::GetInstance();
+  for (size_t i = RES_CUSTOM; i < displaySettings.ResolutionInfoSize(); ++i)
+  {
+    const RESOLUTION_INFO& res = displaySettings.GetResolutionInfo(i);
+    const long refreshRate = std::lround(res.fRefreshRate);
+    if (res.dwFlags & D3DPRESENTFLAG_INTERLACED)
+    {
+      if (res.dwFlags &
+          (D3DPRESENTFLAG_MODE3DSBS | D3DPRESENTFLAG_MODE3DTB | D3DPRESENTFLAG_MODE3DFP))
+        displayCap |= BLURAY_DCAP_INTERLACED_3D;
+    }
+    else if (refreshRate == 24 && IsFramePacking(res, 1920, 1080, FRAME_PACKED_1080_HEIGHT))
+      displayCap |= BLURAY_DCAP_1080p_720p_3D;
+    else if (refreshRate == 50 && IsFramePacking(res, 1280, 720, FRAME_PACKED_720_HEIGHT))
+      displayCap |= BLURAY_DCAP_720p_50Hz_3D;
+  }
+  return displayCap;
+}
+
+// the base view plays on any display, 3D output only on a 3D display not set to play 2D
+void SetupStereoSettings(BLURAY* bd)
+{
+  const int playbackMode = CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(
+      CSettings::SETTING_VIDEOPLAYER_STEREOSCOPICPLAYBACKMODE);
+  const uint32_t displayCap = GetDisplayCap();
+  const bool prefer3D = displayCap != 0 && playbackMode != STEREOSCOPIC_PLAYBACK_MODE_MONO &&
+                        playbackMode != STEREOSCOPIC_PLAYBACK_MODE_IGNORE;
+  CLog::Log(LOGDEBUG,
+            "CDVDInputStreamBluray::Open - 3D disc, display capability (PSR 23) 0x{:x}, prefer 3D {}",
+            displayCap | BLURAY_DCAP_1080p_720p_3D, prefer3D);
+  bd_set_player_setting(bd, BLURAY_PLAYER_SETTING_DISPLAY_CAP,
+                        displayCap | BLURAY_DCAP_1080p_720p_3D);
+  bd_set_player_setting(bd, BLURAY_PLAYER_SETTING_OUTPUT_PREFER,
+                        prefer3D ? BLURAY_OUTPUT_PREFER_3D : BLURAY_OUTPUT_PREFER_2D);
+}
+#endif
 } // namespace
 
 static int read_blocks(void* handle, void* buf, int lba, int num_blocks)
@@ -357,6 +415,12 @@ bool CDVDInputStreamBluray::Open()
     m_player->OnDiscNavResult(nullptr, BD_EVENT_ENC_ERROR);
     return false;
   }
+
+#if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 1, 0))
+  // libbluray's 3D setup assumes a 3D display with 3D output preferred
+  if (disc_info->content_exist_3D)
+    SetupStereoSettings(m_bd);
+#endif
 
   m_nTitles = bd_get_titles(m_bd, TITLES_RELEVANT, 0);
 
@@ -1955,6 +2019,7 @@ void CDVDInputStreamBluray::SetupPlayerSettings()
   bd_set_player_setting(m_bd, BLURAY_PLAYER_SETTING_REGION_CODE, static_cast<uint32_t>(region));
   bd_set_player_setting(m_bd, BLURAY_PLAYER_SETTING_PARENTAL, 99);
   bd_set_player_setting(m_bd, BLURAY_PLAYER_SETTING_3D_CAP, 0xffffffff);
+#if (BLURAY_VERSION < BLURAY_VERSION_CODE(1, 1, 0))
 #if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 0, 2))
   bd_set_player_setting(m_bd, BLURAY_PLAYER_SETTING_PLAYER_PROFILE, BLURAY_PLAYER_PROFILE_6_v3_1);
   bd_set_player_setting(m_bd, BLURAY_PLAYER_SETTING_UHD_CAP, 0xffffffff);
@@ -1962,6 +2027,7 @@ void CDVDInputStreamBluray::SetupPlayerSettings()
   bd_set_player_setting(m_bd, BLURAY_PLAYER_SETTING_HDR_PREFERENCE, 0xffffffff);
 #else
   bd_set_player_setting(m_bd, BLURAY_PLAYER_SETTING_PLAYER_PROFILE, BLURAY_PLAYER_PROFILE_5_v2_4);
+#endif
 #endif
 
   const std::string audioLang{g_langInfo.GetDVDAudioLanguage().AsIso6392T()};
