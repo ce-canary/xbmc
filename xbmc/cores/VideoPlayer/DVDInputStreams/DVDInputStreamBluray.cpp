@@ -779,8 +779,7 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
     // the running demuxer plays on into the next play item of the title, a discontinuity holds it
     const auto joinsInLine = [this, &result]
     {
-      return result > 0 && !m_hasMVCExtension && m_titleInfo && m_clip &&
-             m_event.param < m_titleInfo->clip_count &&
+      return result > 0 && m_titleInfo && m_clip && m_event.param < m_titleInfo->clip_count &&
              m_event.param == static_cast<uint32_t>(m_clip - m_titleInfo->clips) + 1;
     };
     do {
@@ -831,7 +830,7 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
               m_itemAbandoned = true;
             // the read starts the new play item, which the demuxer being closed must not consume
             if ((m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_DISCONTINUITY) &&
-                result > 0 && !m_hasMVCExtension)
+                result > 0)
             {
               HoldClipStart(buf, result);
               return 0;
@@ -874,13 +873,9 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
               playItemInLine = true;
               break;
             }
-            if(!m_hasMVCExtension)
-            {
-              m_hold = HOLD_HELD;
-              HoldClipStart(buf, result);
-              return 0;
-            }
-            [[fallthrough]];
+            m_hold = HOLD_HELD;
+            HoldClipStart(buf, result);
+            return 0;
           case BD_EVENT_SEEK:
           case BD_EVENT_TITLE:
           case BD_EVENT_ANGLE:
@@ -888,7 +883,7 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
           case BD_EVENT_STILL_TIME:
           case BD_EVENT_DISCONTINUITY:
             m_hold = HOLD_HELD;
-            if (playItemInLine || (m_event.event == BD_EVENT_DISCONTINUITY && !m_hasMVCExtension))
+            if (playItemInLine || m_event.event == BD_EVENT_DISCONTINUITY)
             {
               HoldClipStart(buf, result);
               return 0;
@@ -915,7 +910,7 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
       ProcessEvent();
     }
     // the read starts the new clip, which the demuxer being reset must not consume
-    if (discontinuity && result > 0 && !m_hasMVCExtension)
+    if (discontinuity && result > 0)
     {
       HoldClipStart(buf, result);
       return 0;
@@ -1498,9 +1493,6 @@ void CDVDInputStreamBluray::SetSubtitleVisible(bool visible)
 std::optional<CDVDInputStreamBluray::ClipTime> CDVDInputStreamBluray::GetClipTime(
     uint64_t readPos) const
 {
-  if (m_hasMVCExtension)
-    return {};
-
   const auto it = std::ranges::upper_bound(m_clipSpans, readPos, {}, &ClipSpan::readPos);
   if (it == m_clipSpans.begin())
     return {};
@@ -1822,6 +1814,7 @@ bool CDVDInputStreamBluray::OpenNextStream()
 
   // save start time for the next clip
   int64_t start_time = pMVCDemux->GetStartTime();
+  const bool clampPreroll = pMVCDemux->GetClampPreroll();
 
   CloseMVCDemux();
 
@@ -1831,7 +1824,7 @@ bool CDVDInputStreamBluray::OpenNextStream()
     if (nextDemux) {
       // set start time for next clip
       CDVDInputStream::IMenus *menu = dynamic_cast<CDVDInputStream::IMenus*>(this);
-      nextDemux->SetStartTime(start_time, menu->GetSupportedMenuType());
+      nextDemux->SetStartTime(start_time, menu->GetSupportedMenuType(), clampPreroll);
     }
   }
 
@@ -1877,6 +1870,8 @@ bool CDVDInputStreamBluray::OpenMVCDemux(int playItem)
   }
 
   m_nMVCClip = m_titleInfo->clips + playItem;
+  // the dependent view shares the in and out time of its play item
+  pMVCDemux->SetClipTime(m_nMVCClip->in_time, m_nMVCClip->out_time, m_nMVCClip->start_time);
   return true;
 }
 

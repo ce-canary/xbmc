@@ -171,7 +171,7 @@ public:
   /*!
    * \brief Get the in time and start time (90 kHz) of the clip a byte was read from.
    * \param readPos The position of the byte in the bytes Read returned since Open
-   * \return The clip time, or nothing without a clip and on a playlist with an MVC extension
+   * \return The clip time, or nothing without a clip
    */
   std::optional<ClipTime> GetClipTime(uint64_t readPos) const;
 
