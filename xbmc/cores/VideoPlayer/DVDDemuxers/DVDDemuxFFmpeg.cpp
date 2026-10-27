@@ -1130,7 +1130,6 @@ double CDVDDemuxFFmpeg::ConvertTimestamp(int64_t pts, int den, int num)
 // ConvertTimestamp, which steps back at every seamless clip join.
 void CDVDDemuxFFmpeg::ConvertBlurayTimestamps(DemuxPacket* packet, const AVStream* stream)
 {
-  constexpr AVRational CLIP_TIME_BASE = {1, 90000};
   const auto bluray = static_cast<CDVDInputStreamBluray*>(m_pInput.get());
 
   // a packet without position stays in the clip of its stream's last packet
@@ -1143,28 +1142,11 @@ void CDVDDemuxFFmpeg::ConvertBlurayTimestamps(DemuxPacket* packet, const AVStrea
   if (!clip)
     return;
 
-  const int64_t inTime =
-      av_rescale_q(static_cast<int64_t>(clip->inTime), CLIP_TIME_BASE, stream->time_base);
-  const int64_t startTime =
-      av_rescale_q(static_cast<int64_t>(clip->startTime), CLIP_TIME_BASE, stream->time_base);
-  const int64_t wrap = INT64_C(1) << stream->pts_wrap_bits;
-
-  const auto toTitleTime = [&](int64_t ts) -> double
+  // the preroll clamp of ConvertTimestamp, not on the transport stream path
+  const auto toTitleTime = [&](int64_t ts)
   {
-    if (ts == AV_NOPTS_VALUE)
-      return DVD_NOPTS_VALUE;
-
-    int64_t clipTime = (ts - inTime) & (wrap - 1);
-    if (clipTime >= wrap / 2)
-      clipTime -= wrap;
-
-    double timestamp =
-        static_cast<double>(clipTime + startTime) * stream->time_base.num / stream->time_base.den;
-    // the preroll clamp of ConvertTimestamp, not on the transport stream path
-    if (!m_checkTransportStream && timestamp < 0 && timestamp + 0.5 > 0)
-      timestamp = 0;
-
-    return timestamp * DVD_TIME_BASE;
+    return CDVDDemuxUtils::BlurayTitleTime(ts, stream, clip->inTime, clip->startTime,
+                                           !m_checkTransportStream);
   };
 
   packet->pts = toTitleTime(m_pkt.pkt.pts);
