@@ -27,6 +27,7 @@ extern "C"
 {
 #include <libbluray/bluray.h>
 #include <libbluray/bluray-version.h>
+#include <libbluray/filesystem.h>
 #include <libbluray/keys.h>
 #include <libbluray/overlay.h>
 #include <libbluray/player_settings.h>
@@ -70,6 +71,8 @@ public:
   void Close() override;
   int Read(uint8_t* buf, int buf_size) override;
   int ReadBlocks(uint8_t* buf, int lba, int num_blocks);
+  BD_DIR_H* OpenDir(const char* relPath);
+  BD_FILE_H* OpenFile(const char* relPath);
   int64_t Seek(int64_t offset, int whence) override;
   void Abort() override;
   bool IsEOF() override;
