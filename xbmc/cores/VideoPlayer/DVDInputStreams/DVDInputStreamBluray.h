@@ -185,8 +185,18 @@ public:
   //! whether a menu action made the disc program leave the item being played out, reset by the call
   bool TakeItemAbandoned();
 
+  //! run the disc program while the player does not read; its events hold the read as a read would
+  void PollEvents();
+
   //! tell the disc program the title time on screen, DVD_NOPTS_VALUE when not known
   void SetPresentedTime(double time);
+
+  //! whether the read returns no data until the next stream
+  bool IsReadHeld() const
+  {
+    return m_navmode && (m_hold == HOLD_HELD || m_hold == HOLD_STILL || m_hold == HOLD_ERROR ||
+                         m_aborted || m_titleEndWait);
+  }
 
   //! the clip the item opened by the last NextStream starts with, when its events named it
   const BLURAY_CLIP_INFO* GetNextItemClip() const;
@@ -292,6 +302,8 @@ protected:
     int ReadData(uint8_t* buf, int buf_size);
     void HoldClipStart(const uint8_t* buf, int size);
     void DropClipStartOnJump();
+    bool TakeMenuJump(bool joinsInLine);
+    bool AbandonsItem(bool menuJump) const;
 
     /*!
      * \brief Whether so many reads in a row have failed that the disc is taken to have gone.
