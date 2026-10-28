@@ -440,6 +440,8 @@ protected:
   bool PollBlurayEvents();
   double GetBlurayPresentedTime();
   void ReportBlurayPresented();
+  void ReportBlurayReadPresented();
+  void ReportBlurayItemPlayedOut();
   void CloseSubtitleForNextStream();
   bool OpenStream(CCurrentStream& current, int64_t demuxerId, int iStream, int source, bool reset = true);
   bool OpenAudioStream(CDVDStreamInfo& hint, bool reset = true);
