@@ -204,6 +204,15 @@ public:
   //! tell the disc program the title time on screen, DVD_NOPTS_VALUE when not known
   void SetPresentedTime(double time);
 
+  //! tell the disc program that everything read is on screen or will not be shown
+  void SetReadPresented();
+
+  //! tell the disc program that the item before the last NextStream has played out
+  void ReportItemPlayedOut();
+
+  //! forget that the data being played belongs to a position the disc program has left
+  void ResetPresentedLeft() { m_presentedLeft = false; }
+
   //! whether the read returns no data until the next stream
   bool IsReadHeld() const
   {
@@ -250,6 +259,9 @@ protected:
   static void OverlayClear(SPlane& plane, int x, int y, int w, int h);
   static void OverlayInit (SPlane& plane, int w, int h);
   bool ProcessItem(int playitem);
+
+  void CheckPresentedLeft();
+  void ReportPresented(int64_t titleTime);
 
   bool OpenMVCDemux(int playItem);
   bool CloseMVCDemux();
@@ -328,7 +340,7 @@ protected:
     void HoldClipStart(const uint8_t* buf, int size);
     void DropClipStartOnJump();
     bool TakeMenuJump(bool joinsInLine);
-    bool AbandonsItem(bool menuJump) const;
+    bool AbandonsItem(bool menuJump, bool fromStill) const;
 
     /*!
      * \brief Whether so many reads in a row have failed that the disc is taken to have gone.
@@ -391,6 +403,13 @@ protected:
     bool m_titleEndWait{false};
     bool m_menuInput{false};
     bool m_itemAbandoned{false};
+    //! libbluray holds the BD-J notifications of the read until their picture is presented
+    bool m_notificationsHeld{false};
+    bool m_presentedLeft{false};
+    bool m_readSinceReport{false};
+    int64_t m_heldDue{-2};
+    int64_t m_reportedTime{-1};
+    int64_t m_playedItemEnd{-1};
     bool m_nextClipKnown{false};
     bool m_playlistLeft{false};
     bool m_nextItemInPlaylist{false};
