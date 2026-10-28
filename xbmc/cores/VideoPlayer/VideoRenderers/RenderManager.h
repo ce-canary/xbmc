@@ -135,6 +135,12 @@ public:
   bool GetStats(int &lateframes, double &pts, int &queued, int &discard);
 
   /**
+   * The pts of the frame on the video plane, DVD_NOPTS_VALUE without a vsync presenter or
+   * until the first frame after a discard or flush goes live
+   */
+  double GetDisplayedPts();
+
+  /**
    * Video player call this on flush in order to discard any queued frames
    */
   void DiscardBuffer();
@@ -286,4 +292,7 @@ protected:
   //! Vsync thread, under m_presentlock: the frame on the video plane when a GUI flip made now
   //! latches
   int m_planeSource{-1};
+  //! Vsync thread, under m_presentlock: the pts of m_planeSource once it is a new frame
+  double m_displayedPts{DVD_NOPTS_VALUE};
+  int m_offTimelineSource{-1};
 };
