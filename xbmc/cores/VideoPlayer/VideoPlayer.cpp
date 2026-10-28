@@ -3894,6 +3894,9 @@ void CVideoPlayer::HandleMessages()
         else if (!st.IsCurrent(m_CurrentSubtitle) || m_CurrentSubtitle.demuxDisabled)
         {
 #if defined(HAVE_LIBBLURAY)
+          const bool fromExternal{
+              STREAM_SOURCE_MASK(m_CurrentSubtitle.source) == STREAM_SOURCE_DEMUX_SUB ||
+              STREAM_SOURCE_MASK(m_CurrentSubtitle.source) == STREAM_SOURCE_TEXT};
           if (STREAM_SOURCE_MASK(st.source) == STREAM_SOURCE_DEMUX && m_pDemuxer &&
               m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY))
           {
@@ -3914,6 +3917,13 @@ void CVideoPlayer::HandleMessages()
 #endif
           // a stream disabled in the demuxer is only enabled again by a reopen
           ReopenSubtitleStream(st);
+#if defined(HAVE_LIBBLURAY)
+          // the disc's display flag was not applied while the external subtitle was current
+          const auto bluray = GetBlurayInputStream();
+          if (fromExternal && STREAM_SOURCE_MASK(st.source) == STREAM_SOURCE_DEMUX && bluray &&
+              !bluray->CanToggleSubtitle())
+            m_VideoPlayerVideo->EnableSubtitle(bluray->IsPgEnabled());
+#endif
         }
       }
     }
@@ -5378,6 +5388,10 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
       break;
     case BD_EVENT_PG_TEXTST:
     {
+      // the disc's flag is for its own subtitles, not for an external file
+      if (STREAM_SOURCE_MASK(m_CurrentSubtitle.source) == STREAM_SOURCE_DEMUX_SUB ||
+          STREAM_SOURCE_MASK(m_CurrentSubtitle.source) == STREAM_SOURCE_TEXT)
+        break;
       bool enable = (*static_cast<int*>(pData) != 0);
       m_VideoPlayerVideo->EnableSubtitle(enable);
     }
