@@ -2593,7 +2593,9 @@ bool CVideoPlayer::PlayNavTail()
   return true;
 }
 
-// picks and seeks in the tail are dropped, as they are once the demuxer closes for the reopen
+// seeks in the tail are dropped, as they would act on the next item; a disc audio or subtitle
+// pick goes to the disc, whose stream registers carry it into the next item; video and program
+// picks have no disc register and are dropped
 bool CVideoPlayer::DropInNavTail(CDVDMsg& msg)
 {
   if (!m_navTail)
@@ -2604,9 +2606,63 @@ bool CVideoPlayer::DropInNavTail(CDVDMsg& msg)
     m_processInfo->SetStateSeeking(false);
     return true;
   }
-  return msg.IsType(CDVDMsg::PLAYER_SEEK_CHAPTER) || msg.IsType(CDVDMsg::PLAYER_SET_AUDIOSTREAM) ||
-         msg.IsType(CDVDMsg::PLAYER_SET_VIDEOSTREAM) ||
-         msg.IsType(CDVDMsg::PLAYER_SET_SUBTITLESTREAM) || msg.IsType(CDVDMsg::PLAYER_SET_PROGRAM);
+  if (msg.IsType(CDVDMsg::PLAYER_SET_AUDIOSTREAM))
+  {
+    SelectDiscStream(m_SelectionStreams.Get(
+        StreamType::AUDIO, static_cast<CDVDMsgPlayerSetAudioStream&>(msg).GetStreamId()));
+    return true;
+  }
+  if (msg.IsType(CDVDMsg::PLAYER_SET_SUBTITLESTREAM))
+  {
+    const SelectionStream& st{m_SelectionStreams.Get(
+        StreamType::SUBTITLE, static_cast<CDVDMsgPlayerSetSubtitleStream&>(msg).GetStreamId())};
+    // an external subtitle does not depend on the disc's streams, and a disc pick replaces a
+    // current external one at once
+    if (STREAM_SOURCE_MASK(st.source) != STREAM_SOURCE_DEMUX ||
+        STREAM_SOURCE_MASK(m_CurrentSubtitle.source) != STREAM_SOURCE_DEMUX)
+      return false;
+    SelectDiscStream(st);
+    return true;
+  }
+  return msg.IsType(CDVDMsg::PLAYER_SEEK_CHAPTER) || msg.IsType(CDVDMsg::PLAYER_SET_VIDEOSTREAM) ||
+         msg.IsType(CDVDMsg::PLAYER_SET_PROGRAM);
+}
+
+// passes a pick of a disc stream to the disc, false when the disc does not allow the change; in a
+// nav tail the demuxer of the old item still holds the streams a pick names
+bool CVideoPlayer::SelectDiscStream(const SelectionStream& st)
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  if (!bluray || !m_pDemuxer || STREAM_SOURCE_MASK(st.source) != STREAM_SOURCE_DEMUX)
+    return true;
+
+  const CDemuxStream* stream{m_pDemuxer->GetStream(st.demuxerId, st.id)};
+  if (!stream)
+    return true;
+
+  if (st.type == StreamType::AUDIO)
+  {
+    if (stream->dvdNavId != m_dvd.iSelectedAudioStream && !bluray->CanChangeAudioStream())
+    {
+      CLog::Log(LOGDEBUG, "CVideoPlayer - the disc does not allow an audio stream change");
+      return false;
+    }
+    if (bluray->SetActiveAudioStream(stream->dvdNavId))
+      m_dvd.iSelectedAudioStream = stream->dvdNavId;
+  }
+  else if (st.type == StreamType::SUBTITLE)
+  {
+    if (stream->dvdNavId != m_dvd.iSelectedSPUStream && !bluray->CanChangeSubtitleStream())
+    {
+      CLog::Log(LOGDEBUG, "CVideoPlayer - the disc does not allow a subtitle stream change");
+      return false;
+    }
+    if (bluray->SetActiveSubtitleStream(stream->dvdNavId, m_VideoPlayerVideo->IsSubtitleEnabled()))
+      m_dvd.iSelectedSPUStream = stream->dvdNavId;
+  }
+#endif
+  return true;
 }
 
 void CVideoPlayer::HandlePlaySpeed()
@@ -3873,21 +3929,8 @@ void CVideoPlayer::HandleMessages()
         else if (!st.IsCurrent(m_CurrentAudio))
         {
 #if defined(HAVE_LIBBLURAY)
-          if (STREAM_SOURCE_MASK(st.source) == STREAM_SOURCE_DEMUX && m_pDemuxer &&
-              m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY))
-          {
-            CDemuxStream* stream = m_pDemuxer->GetStream(st.demuxerId, st.id);
-            if (stream && stream->dvdNavId != m_dvd.iSelectedAudioStream &&
-                !std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)
-                     ->CanChangeAudioStream())
-            {
-              CLog::Log(LOGDEBUG, "CVideoPlayer - the disc does not allow an audio stream change");
-              continue;
-            }
-            if (stream && std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)
-                              ->SetActiveAudioStream(stream->dvdNavId))
-              m_dvd.iSelectedAudioStream = stream->dvdNavId;
-          }
+          if (!SelectDiscStream(st))
+            continue;
 #endif
           CloseStream(m_CurrentAudio, false);
           OpenStream(m_CurrentAudio, st.demuxerId, st.id, st.source);
@@ -3962,23 +4005,8 @@ void CVideoPlayer::HandleMessages()
           const bool fromExternal{
               STREAM_SOURCE_MASK(m_CurrentSubtitle.source) == STREAM_SOURCE_DEMUX_SUB ||
               STREAM_SOURCE_MASK(m_CurrentSubtitle.source) == STREAM_SOURCE_TEXT};
-          if (STREAM_SOURCE_MASK(st.source) == STREAM_SOURCE_DEMUX && m_pDemuxer &&
-              m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY))
-          {
-            CDemuxStream* stream = m_pDemuxer->GetStream(st.demuxerId, st.id);
-            if (stream && stream->dvdNavId != m_dvd.iSelectedSPUStream &&
-                !std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)
-                     ->CanChangeSubtitleStream())
-            {
-              CLog::Log(LOGDEBUG,
-                        "CVideoPlayer - the disc does not allow a subtitle stream change");
-              continue;
-            }
-            if (stream && std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)
-                              ->SetActiveSubtitleStream(stream->dvdNavId,
-                                                        m_VideoPlayerVideo->IsSubtitleEnabled()))
-              m_dvd.iSelectedSPUStream = stream->dvdNavId;
-          }
+          if (!SelectDiscStream(st))
+            continue;
 #endif
           // a stream disabled in the demuxer is only enabled again by a reopen
           ReopenSubtitleStream(st);
