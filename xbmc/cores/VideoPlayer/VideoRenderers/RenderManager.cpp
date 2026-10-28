@@ -270,6 +270,7 @@ bool CRenderManager::Configure()
     m_presentsourcePast = -1;
     m_guiPresentSource = -1;
     m_planeSource = -1;
+    m_displayedPts = DVD_NOPTS_VALUE;
     m_offTimelineSource = -1;
     for (int i = 0; i < m_QueueSize; i++)
       m_free.push_back(i);
@@ -495,6 +496,10 @@ void CRenderManager::PresentFromVsync()
     m_presentstep = m_queued.empty() ? PRESENT_IDLE : PRESENT_READY;
   }
 
+  if (m_planeSource != planeSource)
+    m_displayedPts = m_planeSource >= 0 && m_planeSource != m_offTimelineSource
+                         ? m_Queue[m_planeSource].pts
+                         : DVD_NOPTS_VALUE;
   if (m_planeSource != planeSource && m_planeSource >= 0 && m_planeSource != m_offTimelineSource)
     m_offTimelineSource = -1;
 
@@ -666,6 +671,7 @@ bool CRenderManager::Flush(bool wait, bool saveBuffers)
         m_presentsourcePast = -1;
         m_guiPresentSource = -1;
         m_planeSource = -1;
+        m_displayedPts = DVD_NOPTS_VALUE;
         m_offTimelineSource = -1;
         m_presentstep = PRESENT_IDLE;
         for (int i = 0; i < m_QueueSize; i++)
@@ -1536,6 +1542,7 @@ void CRenderManager::DiscardBuffer()
     m_queued.pop_front();
   }
   PublishQueued();
+  m_displayedPts = DVD_NOPTS_VALUE;
   m_offTimelineSource = m_presentsource;
 
   if(m_presentstep == PRESENT_READY)
@@ -1560,6 +1567,13 @@ bool CRenderManager::GetStats(int &lateframes, double &pts, int &queued, int &di
   queued = m_queued.size();
   discard  = m_discard.size();
   return true;
+}
+
+double CRenderManager::GetDisplayedPts()
+{
+  std::unique_lock lock(m_presentlock);
+
+  return m_displayedPts;
 }
 
 void CRenderManager::CheckEnableClockSync()
