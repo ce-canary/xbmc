@@ -184,6 +184,9 @@ public:
   //! whether a menu action made the disc program leave the item being played out, reset by the call
   bool TakeItemAbandoned();
 
+  //! tell the disc program the title time on screen, DVD_NOPTS_VALUE when not known
+  void SetPresentedTime(double time);
+
   //! the clip the item opened by the last NextStream starts with, when its events named it
   const BLURAY_CLIP_INFO* GetNextItemClip() const;
 

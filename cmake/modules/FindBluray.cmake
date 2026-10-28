@@ -220,6 +220,20 @@ if(NOT TARGET ${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME})
 
     set(${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_COMPILE_DEFINITIONS HAVE_LIBBLURAY)
 
+    if(NOT TARGET ${${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_BUILD_NAME})
+      include(CheckSymbolExists)
+      set(CMAKE_REQUIRED_INCLUDES ${${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME}_INCLUDE_DIRS})
+      set(CMAKE_REQUIRED_LIBRARIES ${${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME}_LINK_LIBRARIES})
+      foreach(symbol bd_presented)
+        check_symbol_exists(${symbol} libbluray/bluray.h LIBBLURAY_HAS_${symbol})
+        if(NOT LIBBLURAY_HAS_${symbol})
+          message(FATAL_ERROR "libbluray lacks ${symbol} of the CoreELEC presentation hold API")
+        endif()
+      endforeach()
+      unset(CMAKE_REQUIRED_INCLUDES)
+      unset(CMAKE_REQUIRED_LIBRARIES)
+    endif()
+
     # This is incorrectly applied to all platforms. Requires its own handling in the future
     if(NOT CORE_PLATFORM_NAME_LC STREQUAL windowsstore)
       list(APPEND ${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_COMPILE_DEFINITIONS HAVE_LIBBLURAY_BDJ)
