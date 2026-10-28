@@ -97,6 +97,11 @@ public:
    */
   void SetSubtitleVerticalPosition(const int value, bool save);
 
+  void SetMenuPlane(std::shared_ptr<CDVDMenuPlane> menuPlane)
+  {
+    m_overlays.SetMenuPlane(std::move(menuPlane));
+  }
+
   // Functions called from GUI
   bool Supports(ERENDERFEATURE feature) const;
   bool Supports(ESCALINGMETHOD method) const;
