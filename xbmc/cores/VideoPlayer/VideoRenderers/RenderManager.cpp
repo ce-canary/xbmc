@@ -258,6 +258,8 @@ bool CRenderManager::Configure()
     m_presentsourcePast = -1;
     m_guiPresentSource = -1;
     m_planeSource = -1;
+    m_displayedPts = DVD_NOPTS_VALUE;
+    m_offTimelineSource = -1;
     for (int i = 0; i < m_QueueSize; i++)
       m_free.push_back(i);
 
@@ -448,6 +450,7 @@ void CRenderManager::PresentFromVsync()
   CheckEnableClockSync();
 
   std::unique_lock lock2(m_presentlock);
+  const int planeSource = m_planeSource;
   // by vsync RDMA a frame queued now goes live a vsync after a GUI flip made now
   m_planeSource = m_presentsource;
   PrepareNextStep();
@@ -465,6 +468,18 @@ void CRenderManager::PresentFromVsync()
     if (!m_pRenderer->PresentFrame(m_presentsource) || m_planeSource == -1)
       m_planeSource = m_presentsource;
     m_presentstep = m_queued.empty() ? PRESENT_IDLE : PRESENT_READY;
+  }
+
+  // a discarded frame stays on the plane, off the new timeline, until a new one replaces it
+  if (m_planeSource != planeSource)
+  {
+    if (m_planeSource >= 0 && m_planeSource != m_offTimelineSource)
+    {
+      m_displayedPts = m_Queue[m_planeSource].pts;
+      m_offTimelineSource = -1;
+    }
+    else
+      m_displayedPts = DVD_NOPTS_VALUE;
   }
 
   // the render loop still draws the overlays of its frame; WaitForBuffer
@@ -585,6 +600,8 @@ bool CRenderManager::Flush(bool wait, bool saveBuffers)
         m_presentsourcePast = -1;
         m_guiPresentSource = -1;
         m_planeSource = -1;
+        m_displayedPts = DVD_NOPTS_VALUE;
+        m_offTimelineSource = -1;
         m_presentstep = PRESENT_IDLE;
         for (int i = 0; i < m_QueueSize; i++)
           m_free.push_back(i);
@@ -1375,6 +1392,8 @@ void CRenderManager::DiscardBuffer()
     m_discard.push_back(m_queued.front());
     m_queued.pop_front();
   }
+  m_displayedPts = DVD_NOPTS_VALUE;
+  m_offTimelineSource = m_presentsource;
 
   if(m_presentstep == PRESENT_READY)
     m_presentstep = PRESENT_IDLE;
@@ -1389,6 +1408,13 @@ bool CRenderManager::GetStats(int &lateframes, double &pts, int &queued, int &di
   queued = m_queued.size();
   discard  = m_discard.size();
   return true;
+}
+
+double CRenderManager::GetDisplayedPts()
+{
+  std::unique_lock lock(m_presentlock);
+
+  return m_displayedPts;
 }
 
 void CRenderManager::CheckEnableClockSync()
