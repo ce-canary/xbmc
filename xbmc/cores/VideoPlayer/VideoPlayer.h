@@ -437,6 +437,7 @@ protected:
   bool IsBlurayTitleEnded() const;
   bool IsBlurayTitleEndWait() const;
   bool TakeBlurayItemAbandoned();
+  bool PollBlurayEvents();
   double GetBlurayPresentedTime();
   void ReportBlurayPresented();
   bool OpenStream(CCurrentStream& current, int64_t demuxerId, int iStream, int source, bool reset = true);
