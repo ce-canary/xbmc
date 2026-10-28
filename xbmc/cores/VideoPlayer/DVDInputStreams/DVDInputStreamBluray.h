@@ -213,6 +213,13 @@ public:
   //! the clip the item opened by the last NextStream starts with, when its events named it
   const BLURAY_CLIP_INFO* GetNextItemClip() const;
 
+  //! whether the item opened by the last NextStream continues the playlist of the item before it
+  bool NextItemContinuesPlaylist() const { return m_nextItemInPlaylist; }
+
+  //! the title time (ms) the item opened by the last NextStream starts at, when a disc seek moved
+  //! it within its playlist
+  std::optional<int> GetNextItemSeekTime() const { return m_nextItemSeekTime; }
+
   void OverlayCallback(const BD_OVERLAY * const);
 #ifdef HAVE_LIBBLURAY_BDJ
   void OverlayCallbackARGB(const struct bd_argb_overlay_s * const);
@@ -379,6 +386,10 @@ protected:
     bool m_menuInput{false};
     bool m_itemAbandoned{false};
     bool m_nextClipKnown{false};
+    bool m_playlistLeft{false};
+    bool m_nextItemInPlaylist{false};
+    bool m_itemSeeked{false};
+    std::optional<int> m_nextItemSeekTime;
     std::vector<uint8_t> m_clipStart;
     size_t m_clipStartOffset{0};
     bool m_clipStartHeld{false};
