@@ -129,6 +129,8 @@ void CVideoPlayerAudio::OpenStream(CDVDStreamInfo& hints, std::unique_ptr<CDVDAu
     SwitchCodecIfNeeded();
 
   m_audioClock = 0;
+  m_overlapLag = 0.0;
+  m_overlapClock = false;
   m_stalled = m_messageQueue.GetPacketCount(CDVDMsg::DEMUXER_PACKET) == 0;
 
   m_prevsynctype = -1;
@@ -338,6 +340,8 @@ void CVideoPlayerAudio::Process()
         m_audioSink.Flush();
       }
       m_audioClock = pts + delay;
+      m_overlapLag = 0.0;
+      m_overlapClock = false;
       if (m_speed != DVD_PLAYSPEED_PAUSE)
         m_audioSink.Resume();
       m_syncState = IDVDStreamPlayer::SYNC_INSYNC;
@@ -350,6 +354,8 @@ void CVideoPlayerAudio::Process()
       m_audioSink.Flush();
       m_stalled = true;
       m_audioClock = 0;
+      m_overlapLag = 0.0;
+      m_overlapClock = false;
       audioframe.nb_frames = 0;
       m_syncState = IDVDStreamPlayer::SYNC_STARTING;
     }
@@ -359,6 +365,8 @@ void CVideoPlayerAudio::Process()
       m_audioSink.Flush();
       m_stalled = true;
       m_audioClock = 0;
+      m_overlapLag = 0.0;
+      m_overlapClock = false;
       audioframe.nb_frames = 0;
 
       if (sync)
@@ -481,7 +489,57 @@ bool CVideoPlayerAudio::ProcessDecoderOutput(DVDAudioFrame &audioframe)
     }
     else
     {
+      // a Blu-ray seamless join overlaps the next clip's audio by under two frames; a bitstream
+      // frame cannot be cut, so passthrough carries the lag; a step under one 90 kHz tick is
+      // rounding; only a clock that follows a frame's pts gives a step
+      const double step = m_audioClock - audioframe.pts;
+      if (m_overlapClock && m_streaminfo.bluray && m_syncState == IDVDStreamPlayer::SYNC_INSYNC &&
+          m_speed == DVD_PLAYSPEED_NORMAL && std::abs(step) >= DVD_TIME_BASE / 90000.0)
+      {
+        const unsigned int rate = audioframe.format.m_sampleRate;
+        if (!audioframe.passthrough && rate && step > 0 && step < 2 * audioframe.duration)
+        {
+          const unsigned int samples =
+              static_cast<unsigned int>(MathUtils::round_int(step * rate / DVD_TIME_BASE));
+          if (samples > 0)
+          {
+            CLog::Log(LOGDEBUG, LOGAUDIO,
+                      "CVideoPlayerAudio::{}: overlap trimmed pts:{:.3f} step:{:.3f} ms samples:{} of {}",
+                      __FUNCTION__, audioframe.pts / DVD_TIME_BASE, step * 1000 / DVD_TIME_BASE,
+                      samples, audioframe.nb_frames);
+            if (samples >= audioframe.nb_frames)
+            {
+              audioframe.nb_frames = 0;
+              return true;
+            }
+            for (unsigned int i = 0; i < audioframe.planes; i++)
+              audioframe.data[i] += samples * audioframe.framesize / audioframe.planes;
+            audioframe.nb_frames -= samples;
+            audioframe.pts += static_cast<double>(samples) * DVD_TIME_BASE / rate;
+            audioframe.duration = static_cast<double>(audioframe.nb_frames) * DVD_TIME_BASE / rate;
+          }
+        }
+        else if (audioframe.passthrough && m_streaminfo.codec != AV_CODEC_ID_TRUEHD &&
+                 m_synctype == SYNC_DISCON && std::abs(step) < 1.5 * audioframe.duration)
+        {
+          const double lag = m_overlapLag + step;
+          if (lag >= audioframe.duration / 2)
+          {
+            CLog::Log(LOGDEBUG, LOGAUDIO,
+                      "CVideoPlayerAudio::{}: overlap frame dropped pts:{:.3f} step:{:.3f} ms lag:{:.3f} ms",
+                      __FUNCTION__, audioframe.pts / DVD_TIME_BASE, step * 1000 / DVD_TIME_BASE,
+                      lag * 1000 / DVD_TIME_BASE);
+            m_overlapLag = lag - audioframe.duration;
+            // the next frame's step then holds only its own discontinuity
+            m_audioClock = audioframe.pts + audioframe.duration;
+            audioframe.nb_frames = 0;
+            return true;
+          }
+          m_overlapLag = lag;
+        }
+      }
       m_audioClock = audioframe.pts;
+      m_overlapClock = true;
     }
 
     if (audioframe.format.m_sampleRate && m_streaminfo.samplerate != (int) audioframe.format.m_sampleRate)
@@ -552,6 +610,7 @@ bool CVideoPlayerAudio::ProcessDecoderOutput(DVDAudioFrame &audioframe)
       {
         m_audioSink.SetSyncErrorCorrection(-correction);
         m_disconAdjustCounter++;
+        m_overlapLag = 0.0;
         CLog::Log(LOGDEBUG, LOGAUDIO, "CVideoPlayerAudio:: sync error correctiom:{:.3f}", correction / DVD_TIME_BASE);
       }
     }
@@ -676,6 +735,8 @@ bool CVideoPlayerAudio::SwitchCodecIfNeeded()
   }
 
   m_pAudioCodec = std::move(codec);
+  m_overlapLag = 0.0;
+  m_overlapClock = false;
 
   return true;
 }
