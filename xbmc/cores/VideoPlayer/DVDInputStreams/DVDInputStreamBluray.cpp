@@ -1903,7 +1903,9 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   // m_clip names the next item after a play item event, or after a seek within it
   bool clipKnown = false;
   bool clipLeft = false;
-  const auto processEvent = [this, &clipKnown, &clipLeft]
+  bool programJump = false;
+  bool programStop = false;
+  const auto processEvent = [this, &clipKnown, &clipLeft, &programJump, &programStop]
   {
     switch (m_event.event)
     {
@@ -1916,10 +1918,15 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
         break;
       case BD_EVENT_TITLE:
       case BD_EVENT_PLAYLIST:
+        programJump = true;
+        [[fallthrough]];
       case BD_EVENT_ANGLE:
       case BD_EVENT_END_OF_TITLE:
         clipKnown = false;
         clipLeft = true;
+        break;
+      case BD_EVENT_PLAYLIST_STOP:
+        programStop = programJump;
         break;
       default:
         break;
@@ -1958,6 +1965,27 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   if (HasGivenUpReading())
     return NEXTSTREAM_NONE;
 
+  // an HDMV program runs only in a read and stops at its first queued event; run it to its next
+  // suspension so the play item of the playlist it starts is known before the old stream closes;
+  // a playlist stopped after the jump (a menu call) closes without the hold
+  if (programJump && !clipKnown && m_title && !m_title->bdj && !m_titleEndWait &&
+      m_hold != HOLD_STILL && m_hold != HOLD_ERROR)
+  {
+    while (m_title && !m_title->bdj)
+    {
+      if (bd_read_ext(m_bd, nullptr, 0, &m_event) < 0)
+      {
+        m_hold = HOLD_ERROR;
+        return NEXTSTREAM_NONE;
+      }
+      if (m_event.event == BD_EVENT_NONE)
+        break;
+      processEvent();
+      if (m_hold == HOLD_ERROR || m_aborted)
+        return NEXTSTREAM_NONE;
+    }
+  }
+
   if (m_hold == HOLD_STILL || m_titleEndWait)
     return NEXTSTREAM_RETRY;
 
@@ -1966,7 +1994,7 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   m_menuInput = false;
   m_itemAbandoned = false;
   m_hold = HOLD_DATA;
-  m_nextClipKnown = clipKnown && m_clip;
+  m_nextClipKnown = clipKnown && m_clip && !programStop;
   m_nextItemInPlaylist = !m_playlistLeft;
   m_nextItemSeekTime.reset();
   if (m_nextItemInPlaylist && m_itemSeeked)
