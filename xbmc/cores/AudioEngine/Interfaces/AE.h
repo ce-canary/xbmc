@@ -267,6 +267,14 @@ public:
   virtual void KeepConfiguration(unsigned int millis) {}
 
   /*!
+   * \brief Instruct AE to keep the sink configuration of the last stream across gaps
+   * between streams until released
+   *
+   * \param hold true to hold the configuration, false to release it
+   */
+  virtual void HoldConfiguration(bool hold) {}
+
+  /*!
    * \brief Instruct AE to re-initialize, e.g. after ELD change event
    */
   virtual void DeviceChange() {}
