@@ -41,6 +41,7 @@ void CDVDStreamInfo::Clear()
   flags = 0;
   filename.clear();
   dvd = false;
+  bluray = false;
 
   extradata = {};
 
@@ -201,6 +202,7 @@ void CDVDStreamInfo::Assign(const CDVDStreamInfo& right, bool withextradata)
   flags = right.flags;
   filename = right.filename;
   dvd = right.dvd;
+  bluray = right.bluray;
 
   if (withextradata && right.extradata)
   {
