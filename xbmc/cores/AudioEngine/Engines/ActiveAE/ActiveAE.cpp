@@ -380,6 +380,11 @@ int AE_parentStates[] = {
 
 void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
 {
+  if (port == &m_controlPort && (signal == CActiveAEControlProtocol::DEVICECHANGE ||
+                                 signal == CActiveAEControlProtocol::DEFAULTDEVICECHANGE ||
+                                 signal == CActiveAEControlProtocol::DEVICECOUNTCHANGE))
+    m_extHoldFormat = AEAudioFormat();
+
   for (int state = m_state; ; state = AE_parentStates[state])
   {
     switch (state)
@@ -403,6 +408,12 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
           return;
         case CActiveAEControlProtocol::KEEPCONFIG:
           m_extKeepConfig = std::chrono::milliseconds(*reinterpret_cast<unsigned int*>(msg->data));
+          return;
+        case CActiveAEControlProtocol::HOLDCONFIG:
+          if (*reinterpret_cast<bool*>(msg->data))
+            m_extHoldConfig = true;
+          else
+            ReleaseHold();
           return;
         case CActiveAEControlProtocol::DISPLAYRESET:
           return;
@@ -570,6 +581,7 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
           }
           else
           {
+            ReleaseHold();
             m_state = AE_TOP_ERROR;
             m_extTimeout = ErrorRetryDelay(++m_extErrorRetries);
           }
@@ -667,7 +679,7 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
         {
         case CActiveAEControlProtocol::RECONFIGURE:
         {
-          if (m_streams.empty())
+          if (m_streams.empty() && !HoldsFormat())
           {
             streaming = false;
             m_sink.m_controlPort.SendOutMessage(CSinkControlProtocol::STREAMING, &streaming, sizeof(bool));
@@ -832,7 +844,8 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
           if (sound)
           {
             if (m_settings.guisoundmode == AE_SOUND_OFF ||
-               (m_settings.guisoundmode == AE_SOUND_IDLE && !m_streams.empty()))
+               (m_settings.guisoundmode == AE_SOUND_IDLE && !m_streams.empty()) ||
+               (m_mode == MODE_RAW && m_streams.empty() && HoldsFormat()))
               return;
 
             SoundState st = {sound, 0};
@@ -1220,7 +1233,9 @@ AEAudioFormat CActiveAE::GetInputFormat(AEAudioFormat *desiredFmt)
 {
   AEAudioFormat inputFormat;
 
-  if (m_streams.empty())
+  if (m_streams.empty() && HoldsFormat())
+    inputFormat = m_extHoldFormat;
+  else if (m_streams.empty())
   {
     inputFormat.m_dataFormat    = AE_FMT_FLOAT;
     inputFormat.m_sampleRate    = 48000;
@@ -1244,7 +1259,30 @@ AEAudioFormat CActiveAE::GetInputFormat(AEAudioFormat *desiredFmt)
     m_inputFormat = inputFormat;
   }
 
+  if (m_extHoldConfig && !m_streams.empty())
+    m_extHoldFormat = inputFormat;
+
   return inputFormat;
+}
+
+bool CActiveAE::HoldsFormat() const
+{
+  return m_extHoldConfig && m_extHoldFormat.m_dataFormat != AE_FMT_INVALID;
+}
+
+// drops the hold; a held sink with no stream drains like a stream end
+void CActiveAE::ReleaseHold()
+{
+  if (m_extHoldConfig && m_streams.empty())
+  {
+    AEDelayStatus status;
+    m_stats.GetDelay(status);
+    m_extDrainTimer.Set(std::chrono::milliseconds(static_cast<int>(status.GetDelay() * 1000)));
+    m_extDrain = true;
+    m_extTimeout = 0ms;
+  }
+  m_extHoldConfig = false;
+  m_extHoldFormat = AEAudioFormat();
 }
 
 void CActiveAE::Configure(AEAudioFormat *desiredFmt)
@@ -1302,7 +1340,7 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
   }
 
   // buffers for driving gui sounds if no streams are active
-  if (m_streams.empty())
+  if (m_streams.empty() && !HoldsFormat())
   {
     inputFormat = m_sinkFormat;
     if (m_sinkFormat.m_channelLayout.Count() > m_sinkRequestFormat.m_channelLayout.Count())
@@ -1828,7 +1866,7 @@ void CActiveAE::ApplySettingsToFormat(AEAudioFormat& format,
            settings.passthrough &&
            settings.ac3passthrough &&
            settings.ac3transcode &&
-           !m_streams.empty() &&
+           (!m_streams.empty() || HoldsFormat()) &&
            (format.m_channelLayout.Count() > 2 || settings.stereoupmix))
   {
     format.m_dataFormat = AE_FMT_RAW;
@@ -2881,6 +2919,10 @@ void CActiveAE::LoadSettings(AEAudioFormat *format)
   const std::shared_ptr<CSettings> settings = CServiceBroker::GetSettingsComponent()->GetSettings();
   int soc_id = aml_get_cpufamily_id();
 
+  // a held gap keeps the passthrough device of its format
+  if (!format && m_streams.empty() && HoldsFormat())
+    format = &m_extHoldFormat;
+
   m_settings.device = settings->GetString(CSettings::SETTING_AUDIOOUTPUT_AUDIODEVICE);
   m_settings.passthroughdevice = settings->GetString(CSettings::SETTING_AUDIOOUTPUT_PASSTHROUGHDEVICE);
 
@@ -3322,6 +3364,11 @@ void CActiveAE::KeepConfiguration(unsigned int millis)
 {
   unsigned int timeMs = millis;
   m_controlPort.SendOutMessage(CActiveAEControlProtocol::KEEPCONFIG, &timeMs, sizeof(unsigned int));
+}
+
+void CActiveAE::HoldConfiguration(bool hold)
+{
+  m_controlPort.SendOutMessage(CActiveAEControlProtocol::HOLDCONFIG, &hold, sizeof(bool));
 }
 
 void CActiveAE::DeviceChange()
