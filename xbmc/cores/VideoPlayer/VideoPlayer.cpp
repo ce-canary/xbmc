@@ -1860,9 +1860,11 @@ void CVideoPlayer::Process()
         m_pDemuxer->FillBuffer(fillBuffer);
     }
 
-    // if the queues are full, no need to read more
-    if ((!m_VideoPlayerAudio->AcceptsData() && m_CurrentAudio.id >= 0) ||
-        (!m_VideoPlayerVideo->AcceptsData() && m_CurrentVideo.id >= 0))
+    // if the queues are full, no need to read more; a held disc event goes to the read, which
+    // hands it on
+    if (((!m_VideoPlayerAudio->AcceptsData() && m_CurrentAudio.id >= 0) ||
+         (!m_VideoPlayerVideo->AcceptsData() && m_CurrentVideo.id >= 0)) &&
+        !PollBlurayEvents())
     {
       if (m_playSpeed == DVD_PLAYSPEED_PAUSE &&
           m_demuxerSpeed != DVD_PLAYSPEED_PAUSE)
@@ -1925,7 +1927,8 @@ void CVideoPlayer::Process()
       // when paused, demuxer could be be returning empty
       if (m_playSpeed == DVD_PLAYSPEED_PAUSE)
       {
-        if (m_navTail || IsBlurayTitleEndWait())
+        const bool held = PollBlurayEvents();
+        if (m_navTail || held)
           CThread::Sleep(10ms);
         continue;
       }
@@ -1959,6 +1962,7 @@ void CVideoPlayer::Process()
           m_State.menuType == MenuType::NATIVE &&
           (ShouldWaitForSync(std::chrono::steady_clock::now()) || PlayNavTail()))
       {
+        PollBlurayEvents();
         CThread::Sleep(10ms);
         continue;
       }
@@ -2461,6 +2465,21 @@ void CVideoPlayer::ReportBlurayPresented()
     return;
 
   bluray->SetPresentedTime(GetBlurayPresentedTime());
+#endif
+}
+
+// true once the read is held
+bool CVideoPlayer::PollBlurayEvents()
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  if (!bluray)
+    return false;
+
+  bluray->PollEvents();
+  return bluray->IsReadHeld();
+#else
+  return false;
 #endif
 }
 
