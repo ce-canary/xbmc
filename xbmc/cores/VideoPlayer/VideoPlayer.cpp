@@ -1878,8 +1878,9 @@ void CVideoPlayer::Process()
     };
 
     // If the queues are full, read only the subtitle file, unless the full queue belongs
-    // to a stream that replays: its replayed packets are dropped and never reach it
-    if (queuesFull())
+    // to a stream that replays: its replayed packets are dropped and never reach it. A held
+    // disc event goes to the read, which hands it on
+    if (queuesFull() && !PollBlurayEvents())
     {
       if (m_playSpeed == DVD_PLAYSPEED_PAUSE &&
           m_demuxerSpeed != DVD_PLAYSPEED_PAUSE)
@@ -1989,7 +1990,8 @@ void CVideoPlayer::Process()
       // when paused, demuxer could be be returning empty
       if (m_playSpeed == DVD_PLAYSPEED_PAUSE)
       {
-        if (m_navTail || IsBlurayTitleEndWait())
+        const bool held = PollBlurayEvents();
+        if (m_navTail || held)
           CThread::Sleep(10ms);
         continue;
       }
@@ -2023,6 +2025,7 @@ void CVideoPlayer::Process()
           m_State.menuType == MenuType::NATIVE &&
           (ShouldWaitForSync(std::chrono::steady_clock::now()) || PlayNavTail()))
       {
+        PollBlurayEvents();
         CThread::Sleep(10ms);
         continue;
       }
@@ -2557,6 +2560,21 @@ void CVideoPlayer::ReportBlurayPresented()
     return;
 
   bluray->SetPresentedTime(GetBlurayPresentedTime());
+#endif
+}
+
+// true once the read is held
+bool CVideoPlayer::PollBlurayEvents()
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  if (!bluray)
+    return false;
+
+  bluray->PollEvents();
+  return bluray->IsReadHeld();
+#else
+  return false;
 #endif
 }
 
