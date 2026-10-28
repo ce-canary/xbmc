@@ -748,6 +748,7 @@ void CDVDInputStreamBluray::ProcessEvent() {
     m_menu = false;
     m_isInMainMenu = false;
     m_playlistLeft = true;
+    m_pendingMenuRange.reset();
 
     if (m_event.param == BLURAY_TITLE_TOP_MENU)
     {
@@ -770,6 +771,7 @@ void CDVDInputStreamBluray::ProcessEvent() {
     ProcessItem(m_playlist);
     m_titleEndWait = false;
     m_playlistLeft = true;
+    m_pendingMenuRange.reset();
     break;
 
   case BD_EVENT_PLAYITEM:
@@ -780,7 +782,20 @@ void CDVDInputStreamBluray::ProcessEvent() {
       m_clip = &m_titleInfo->clips[m_event.param];
 #if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 5, 0))
       if (m_clip->video_stream_count > 0)
-        UpdateMenuRange(is_hdr_range(m_clip->video_streams[0].dynamic_range_type));
+      {
+        const bool hdr = is_hdr_range(m_clip->video_streams[0].dynamic_range_type);
+        // with notifications held the disc program draws the pages of the item once it is shown
+        if (m_notificationsHeld && m_title && m_title->bdj)
+        {
+          m_pendingMenuRange = hdr;
+          m_pendingMenuRangeStart = static_cast<int64_t>(m_clip->start_time);
+        }
+        else
+        {
+          m_pendingMenuRange.reset();
+          UpdateMenuRange(hdr);
+        }
+      }
 #endif
       UpdateClipInfo(m_event.param);
     }
@@ -1321,6 +1336,14 @@ void CDVDInputStreamBluray::UpdateMenuRange(bool hdr)
   if (changed && !m_planes[0].drawing && !m_planes[1].drawing)
     OverlayFlush(-1);
 #endif
+}
+
+void CDVDInputStreamBluray::UpdatePendingMenuRange(int64_t titleTime)
+{
+  if (!m_pendingMenuRange || titleTime < m_pendingMenuRangeStart)
+    return;
+  UpdateMenuRange(*m_pendingMenuRange);
+  m_pendingMenuRange.reset();
 }
 
 void CDVDInputStreamBluray::OverlayCallback(const BD_OVERLAY * const ov)
@@ -1963,6 +1986,8 @@ void CDVDInputStreamBluray::ReportPresented(int64_t titleTime)
 {
   if (!m_bd || !m_navmode)
     return;
+
+  UpdatePendingMenuRange(titleTime);
 
   // with notifications held, libbluray is asked again when one is due, after a read or when the
   // time becomes unknown; a pending start is released only after a read or once all data read
