@@ -1476,6 +1476,7 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
         m_discardBufferPools.push_back((*it)->m_processingBuffers->GetResampleBuffers());
         m_discardBufferPools.push_back((*it)->m_processingBuffers->GetAtempoBuffers());
         (*it)->m_processingBuffers.reset();
+        (*it)->m_syncState = CAESyncInfo::AESyncState::SYNC_START;
       }
       if (!(*it)->m_processingBuffers)
       {
