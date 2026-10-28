@@ -435,6 +435,7 @@ protected:
   bool PollBlurayEvents();
   double GetBlurayPresentedTime();
   void ReportBlurayPresented();
+  void CloseSubtitleForNextStream();
   bool PlayNavTail();
   bool DropInNavTail(CDVDMsg& msg);
   bool OpenStream(CCurrentStream& current, int64_t demuxerId, int iStream, int source, bool reset = true);
