@@ -435,6 +435,8 @@ protected:
   bool PollBlurayEvents();
   double GetBlurayPresentedTime();
   void ReportBlurayPresented();
+  void ReportBlurayReadPresented();
+  void ReportBlurayItemPlayedOut();
   void CloseSubtitleForNextStream();
   bool PlayNavTail();
   bool DropInNavTail(CDVDMsg& msg);
