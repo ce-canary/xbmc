@@ -389,6 +389,8 @@ void CRenderManager::FrameMove()
     m_bRenderGUI = true;
   }
 
+  m_overlays.PrepareMenu();
+
   m_playerPort->UpdateGuiRender(IsGuiLayer() || !m_pRenderer->VideoBypassesFramebuffer() ||
                                 firstFrame);
 

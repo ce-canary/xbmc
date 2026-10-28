@@ -106,6 +106,7 @@ struct SPlayerState
 
 class CDVDInputStream;
 class CDVDInputStreamBluray;
+class CDVDMenuPlane;
 
 class CDVDDemux;
 class CDemuxStreamVideo;
@@ -651,6 +652,8 @@ protected:
 
   CDVDClock m_clock;
   CDVDOverlayContainer m_overlayContainer;
+  // blu-ray menu page of a libbluray that holds it until its picture is shown
+  std::shared_ptr<CDVDMenuPlane> m_menuPlane;
 
   std::shared_ptr<CDVDInputStream> m_pInputStream;
   //! written on the player thread, read by SetVideoSettings from any thread
