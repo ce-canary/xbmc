@@ -54,6 +54,7 @@ public:
   int flags;
   std::string filename;
   bool dvd;
+  bool bluray;
   int codecOptions;
 
   // VIDEO

@@ -93,6 +93,8 @@ protected:
   CDVDStreamInfo m_streaminfo;
 
   double m_audioClock;
+  double m_overlapLag{0.0}; // lag of the audio behind its pts carried across seamless joins
+  bool m_overlapClock{false};
 
   CAudioSinkAE m_audioSink; // audio output device
   CDVDClock* m_pClock; // dvd master clock
