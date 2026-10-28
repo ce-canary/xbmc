@@ -1209,6 +1209,16 @@ void CDVDInputStreamBluray::OverlayCallback(const BD_OVERLAY * const ov)
     return;
   }
 
+  if (ov->cmd == BD_OVERLAY_DRAW &&
+      (ov->w == 0 || ov->h == 0 || ov->x >= plane.w || ov->y >= plane.h))
+  {
+    CLog::Log(
+        LOGWARNING,
+        "CDVDInputStreamBluray - invalid overlay rectangle {}x{} at {},{} on plane {} ({}x{})",
+        ov->w, ov->h, ov->x, ov->y, ov->plane, plane.w, plane.h);
+    return;
+  }
+
   if (ov->cmd == BD_OVERLAY_DRAW || ov->cmd == BD_OVERLAY_WIPE)
     OverlayClear(plane, ov->x, ov->y, ov->w, ov->h);
 
@@ -1228,11 +1238,18 @@ void CDVDInputStreamBluray::OverlayCallback(const BD_OVERLAY * const ov)
       overlay->palette.clear();
 
     const BD_PG_RLE_ELEM *rlep = ov->img;
-    size_t bytes = ov->w * ov->h;
+    const size_t bytes = static_cast<size_t>(ov->w) * ov->h;
     overlay->pixels.resize(bytes);
 
     for (size_t i = 0; i < bytes; i += rlep->len, rlep++)
+    {
+      if (rlep->len > bytes - i)
+      {
+        CLog::Log(LOGWARNING, "CDVDInputStreamBluray - invalid overlay RLE run");
+        return;
+      }
       memset(overlay->pixels.data() + i, rlep->color, rlep->len);
+    }
 
     overlay->linesize = ov->w;
     overlay->x = ov->x;
@@ -1241,6 +1258,10 @@ void CDVDInputStreamBluray::OverlayCallback(const BD_OVERLAY * const ov)
     overlay->width = ov->w;
     overlay->source_height = plane.h;
     overlay->source_width = plane.w;
+    if (ov->w > plane.w - ov->x || ov->h > plane.h - ov->y)
+      overlay = std::make_shared<CDVDOverlayImage>(*overlay, ov->x, ov->y,
+                                                   std::min<int>(ov->w, plane.w - ov->x),
+                                                   std::min<int>(ov->h, plane.h - ov->y));
     plane.o.push_back(overlay);
   }
 
@@ -1281,9 +1302,11 @@ void CDVDInputStreamBluray::OverlayCallbackARGB(const struct bd_argb_overlay_s *
     SOverlay overlay = std::make_shared<CDVDOverlayImage>();
 
     overlay->palette.clear();
-    size_t bytes = static_cast<size_t>(ov->stride * ov->h * 4);
-    overlay->pixels.resize(bytes);
-    memcpy(overlay->pixels.data(), ov->argb, bytes);
+    // the last row ends after w pixels, the next stride is not part of the source
+    const size_t stride = ov->stride;
+    overlay->pixels.assign(stride * ov->h * 4, 0);
+    if (ov->h > 0)
+      memcpy(overlay->pixels.data(), ov->argb, ((ov->h - 1) * stride + ov->w) * 4);
 
     overlay->linesize = ov->stride * 4;
     overlay->x = ov->x;
