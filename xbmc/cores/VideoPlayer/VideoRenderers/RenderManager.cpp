@@ -337,7 +337,12 @@ void CRenderManager::FrameMove()
     std::unique_lock lock(m_statelock);
 
     if (m_renderState == STATE_UNCONFIGURED)
+    {
+      lock.unlock();
+      // a Blu-ray menu page shows before the first video configures the renderer
+      m_overlays.PrepareMenu();
       return;
+    }
     else if (m_renderState == STATE_CONFIGURING)
     {
       lock.unlock();
@@ -389,6 +394,8 @@ void CRenderManager::FrameMove()
     m_playerPort->UpdateRenderBuffers(m_queued.size(), m_discard.size(), m_free.size());
     m_bRenderGUI = true;
   }
+
+  m_overlays.PrepareMenu();
 
   m_playerPort->UpdateGuiRender(IsGuiLayer() || !m_pRenderer->VideoBypassesFramebuffer() ||
                                 firstFrame);
@@ -770,8 +777,14 @@ void CRenderManager::Render(bool clear, DWORD flags, DWORD alpha, bool gui)
 
   {
     std::unique_lock lock(m_statelock);
+    // with no picture to present a Blu-ray menu page shows alone
     if (GuiSource() == -1 || (m_renderState != STATE_CONFIGURED))
+    {
+      lock.unlock();
+      if (gui)
+        m_overlays.RenderMenuPlane(CServiceBroker::GetWinSystem()->GetGfxContext().GetViewWindow());
       return;
+    }
   }
 
   if (!gui && m_pRenderer->IsGuiLayer())
