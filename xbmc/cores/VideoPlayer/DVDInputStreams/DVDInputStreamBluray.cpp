@@ -506,6 +506,8 @@ bool CDVDInputStreamBluray::Open()
   // Process any events that occurred during opening
   while (bd_get_event(m_bd, &m_event))
     ProcessEvent();
+  m_playlistLeft = false;
+  m_itemSeeked = false;
 
   OpenNextStream();
 
@@ -638,6 +640,7 @@ void CDVDInputStreamBluray::ProcessEvent() {
     //bd_read_skip_still(m_bd);
     //m_hold = HOLD_HELD;
     m_titleEndWait = false;
+    m_itemSeeked = true;
     break;
 
   case BD_EVENT_STILL_TIME:
@@ -678,6 +681,7 @@ void CDVDInputStreamBluray::ProcessEvent() {
   case BD_EVENT_END_OF_TITLE:
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_END_OF_TITLE {}", m_event.param);
     /* when a title ends, playlist WILL eventually change */
+    m_playlistLeft = true;
     if (m_navmode)
       ReleaseTitle();
     break;
@@ -689,6 +693,7 @@ void CDVDInputStreamBluray::ProcessEvent() {
 
     m_menu = false;
     m_isInMainMenu = false;
+    m_playlistLeft = true;
 
     if (m_event.param == BLURAY_TITLE_TOP_MENU)
     {
@@ -710,6 +715,7 @@ void CDVDInputStreamBluray::ProcessEvent() {
     m_playlist = m_event.param;
     ProcessItem(m_playlist);
     m_titleEndWait = false;
+    m_playlistLeft = true;
     break;
 
   case BD_EVENT_PLAYITEM:
@@ -1360,6 +1366,8 @@ bool CDVDInputStreamBluray::PosTime(int ms)
     ProcessEvent();
   while (bd_get_event(m_bd, &m_event))
     ProcessEvent();
+  // the player's own seek repositions an external subtitle
+  m_itemSeeked = false;
   OpenClipSpan();
 
   if (m_bMVCPlayback)
@@ -1413,6 +1421,8 @@ bool CDVDInputStreamBluray::SeekChapter(int ch)
     ProcessEvent();
   while (bd_get_event(m_bd, &m_event))
     ProcessEvent();
+  // the player's own seek repositions an external subtitle
+  m_itemSeeked = false;
   OpenClipSpan();
 
   if (m_bMVCPlayback)
@@ -1752,6 +1762,12 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   m_itemAbandoned = false;
   m_hold = HOLD_DATA;
   m_nextClipKnown = clipKnown && m_clip;
+  m_nextItemInPlaylist = !m_playlistLeft;
+  m_nextItemSeekTime.reset();
+  if (m_nextItemInPlaylist && m_itemSeeked)
+    m_nextItemSeekTime = static_cast<int>(bd_tell_time(m_bd) / 90);
+  m_playlistLeft = false;
+  m_itemSeeked = false;
   // the next demuxer reads on from m_readPos, so no lookup reaches the spans before its first one
   const auto span = std::ranges::upper_bound(m_clipSpans, m_readPos, {}, &ClipSpan::readPos);
   if (span != m_clipSpans.begin())
