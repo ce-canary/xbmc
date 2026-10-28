@@ -3785,8 +3785,6 @@ void CVideoPlayer::HandleMessages()
       // we need to reset the demuxer, probably because the streams have changed
       if(m_pDemuxer)
         m_pDemuxer->Reset();
-      if(m_pSubtitleDemuxer)
-        m_pSubtitleDemuxer->Reset();
     }
     else if (pMsg->IsType(CDVDMsg::PLAYER_SET_AUDIOSTREAM))
     {
