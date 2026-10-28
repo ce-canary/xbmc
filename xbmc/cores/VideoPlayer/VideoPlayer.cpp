@@ -1999,7 +1999,7 @@ void CVideoPlayer::Process()
         m_navStopped = false;
         m_CurrentAudio.Clear();
         m_CurrentVideo.Clear();
-        m_CurrentSubtitle.Clear();
+        CloseSubtitleForNextStream();
         continue;
       }
 
@@ -2418,6 +2418,39 @@ std::shared_ptr<CDVDInputStreamBluray> CVideoPlayer::GetBlurayInputStream() cons
   return nullptr;
 }
 #endif
+
+// an external subtitle file runs on title time, so it stays for the next item of its Blu-ray
+// playlist and closes when the next item starts another
+void CVideoPlayer::CloseSubtitleForNextStream()
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  if (bluray && (STREAM_SOURCE_MASK(m_CurrentSubtitle.source) == STREAM_SOURCE_DEMUX_SUB ||
+                 STREAM_SOURCE_MASK(m_CurrentSubtitle.source) == STREAM_SOURCE_TEXT))
+  {
+    if (bluray->NextItemContinuesPlaylist())
+    {
+      m_CurrentSubtitle.stream = nullptr;
+      // a disc seek moved the title time the file runs on
+      if (const auto seekTime = bluray->GetNextItemSeekTime())
+      {
+        if (STREAM_SOURCE_MASK(m_CurrentSubtitle.source) == STREAM_SOURCE_DEMUX_SUB &&
+            m_pSubtitleDemuxer && !m_pSubtitleDemuxer->SeekTime(*seekTime, true))
+          CLog::Log(LOGDEBUG, "{} - failed to seek subtitle demuxer to: {}", __FUNCTION__,
+                    *seekTime);
+        m_CurrentSubtitle.dts = DVD_NOPTS_VALUE;
+        m_VideoPlayerSubtitle->Flush();
+      }
+      return;
+    }
+    CloseStream(m_CurrentSubtitle, false);
+    // the disc's display flag was not applied while the external subtitle was current
+    m_VideoPlayerVideo->EnableSubtitle(bluray->IsPgEnabled());
+    return;
+  }
+#endif
+  m_CurrentSubtitle.Clear();
+}
 
 bool CVideoPlayer::IsBlurayTitleEnded() const
 {
