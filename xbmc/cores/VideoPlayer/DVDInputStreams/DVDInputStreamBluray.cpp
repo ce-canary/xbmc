@@ -24,7 +24,9 @@
 #include "settings/DisplaySettings.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
+#include "utils/AMLUtils.h"
 #include "utils/Geometry.h"
+#include "utils/HDRCapabilities.h"
 #include "utils/LanguageTag.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
@@ -33,6 +35,7 @@
 #include "video/VideoFileItemClassify.h"
 #include "video/VideoInfoTag.h"
 #include "windowing/GraphicContext.h"
+#include "windowing/WinSystem.h"
 
 #include <algorithm>
 #include <chrono>
@@ -114,6 +117,48 @@ void SetupStereoSettings(BLURAY* bd)
                         displayCap | BLURAY_DCAP_1080p_720p_3D);
   bd_set_player_setting(bd, BLURAY_PLAYER_SETTING_OUTPUT_PREFER,
                         prefer3D ? BLURAY_OUTPUT_PREFER_3D : BLURAY_OUTPUT_PREFER_2D);
+}
+
+// PSR 25 player and PSR 26 display UHD capability bits, libbluray leaves them unnamed
+constexpr uint32_t UHD_CAP_DOLBY_VISION = 0x02;
+constexpr uint32_t UHD_DCAP_2160P = 0x01;
+constexpr uint32_t UHD_DCAP_HDR = 0x02;
+constexpr uint32_t UHD_DCAP_DOLBY_VISION = 0x04;
+
+bool HasUHDMode()
+{
+  const CDisplaySettings& displaySettings = CDisplaySettings::GetInstance();
+  for (size_t i = RES_CUSTOM; i < displaySettings.ResolutionInfoSize(); ++i)
+  {
+    const RESOLUTION_INFO& res = displaySettings.GetResolutionInfo(i);
+    if (res.iScreenWidth >= 3840 && res.iScreenHeight >= 2160 &&
+        !(res.dwFlags & D3DPRESENTFLAG_INTERLACED))
+      return true;
+  }
+  return false;
+}
+
+// libbluray's UHD setup claims every capability, so a disc picks its menus for a sink it may not
+// have
+void SetupUHDSettings(BLURAY* bd)
+{
+  const CHDRCapabilities caps = CServiceBroker::GetWinSystem()->GetDisplayHDRCapabilities();
+  // PSR 25 b0 (player converts sRGB BD-J graphics to HDR) stays clear, Kodi shows them as drawn
+  uint32_t playerCap = 0;
+  uint32_t displayCap = 0;
+  if (HasUHDMode())
+    displayCap |= UHD_DCAP_2160P;
+  if (aml_dolby_vision_enabled())
+    playerCap |= UHD_CAP_DOLBY_VISION;
+  if (caps.SupportsHDR10())
+    displayCap |= UHD_DCAP_HDR;
+  if (caps.SupportsDolbyVision() != DolbyVisionFormat::DOLBYVISION_TYPE_NONE)
+    displayCap |= UHD_DCAP_DOLBY_VISION;
+  CLog::Log(LOGDEBUG,
+            "CDVDInputStreamBluray::Open - UHD capability (PSR 25) 0x{:x}, display (PSR 26) 0x{:x}",
+            playerCap, displayCap);
+  bd_set_player_setting(bd, BLURAY_PLAYER_SETTING_UHD_CAP, playerCap);
+  bd_set_player_setting(bd, BLURAY_PLAYER_SETTING_UHD_DISPLAY_CAP, displayCap);
 }
 #endif
 } // namespace
@@ -440,6 +485,7 @@ bool CDVDInputStreamBluray::Open()
   // libbluray's 3D setup assumes a 3D display with 3D output preferred
   if (disc_info->content_exist_3D)
     SetupStereoSettings(m_bd);
+  SetupUHDSettings(m_bd);
 #endif
 
   m_nTitles = bd_get_titles(m_bd, TITLES_RELEVANT, 0);
