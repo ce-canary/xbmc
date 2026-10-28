@@ -24,6 +24,7 @@
 #include "DVDInputStreams/DVDInputStreamNavigator.h"
 #include "DVDInputStreams/InputStreamPVRBase.h"
 #include "DVDMessage.h"
+#include "DVDSubtitles/DVDMenuPlane.h"
 #include "FileItem.h"
 #include "LangInfo.h"
 #include "ServiceBroker.h"
@@ -787,6 +788,8 @@ CVideoPlayer::CVideoPlayer(IPlayerCallback& callback)
     m_renderManager(m_clock, this)
 {
   m_players_created = false;
+  m_menuPlane = std::make_shared<CDVDMenuPlane>();
+  m_renderManager.SetMenuPlane(m_menuPlane);
 
   m_dvd.Clear();
   m_State.Clear();
@@ -1616,6 +1619,7 @@ void CVideoPlayer::Prepare()
   m_offset_pts = 0;
   m_CurrentAudio.lastdts = DVD_NOPTS_VALUE;
   m_CurrentVideo.lastdts = DVD_NOPTS_VALUE;
+  m_menuPlane->Clear();
 
   IPlayerCallback *cb = &m_callback;
   CFileItem fileItem = m_item;
@@ -3699,6 +3703,7 @@ void CVideoPlayer::OnExit()
   if (m_pInputStream.use_count() > 1)
     throw std::runtime_error("m_pInputStream reference count is greater than 1");
   m_pInputStream.reset();
+  m_menuPlane->Clear();
   m_blurayMenu = false;
 
   // clean up all selection streams
@@ -5635,8 +5640,7 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
     switch (iMessage)
     {
     case BD_EVENT_MENU_OVERLAY:
-      m_overlayContainer.ProcessAndAddOverlayIfValid(
-          *static_cast<std::shared_ptr<CDVDOverlay>*>(pData));
+      m_menuPlane->Set(*static_cast<std::shared_ptr<CDVDOverlay>*>(pData));
       break;
     case BD_EVENT_MENU:
       // Interactive menu visible?
