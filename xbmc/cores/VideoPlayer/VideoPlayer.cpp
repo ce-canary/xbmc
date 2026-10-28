@@ -952,6 +952,8 @@ bool CVideoPlayer::OpenInputStream()
       std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream)};
   m_blurayMenu = m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) && menus &&
                  menus->GetSupportedMenuType() == MenuType::NATIVE;
+  // menu mode closes and reopens the audio stream at every play item change
+  CServiceBroker::GetActiveAE()->HoldConfiguration(m_blurayMenu);
 #if defined(HAVE_LIBBLURAY)
   // a settings load before this point put the per-file subtitle state over the disc's
   if (m_blurayMenu)
@@ -3464,6 +3466,7 @@ void CVideoPlayer::OnExit()
 
   // a stop never closes the video under an arm, nor leaves a hold no decoder took
   aml_end_presentation(true);
+  CServiceBroker::GetActiveAE()->HoldConfiguration(false);
   CloseStream(m_CurrentAudio, !m_bAbortRequest);
   CloseStream(m_CurrentVideo, !m_bAbortRequest);
   CloseStream(m_CurrentTeletext,!m_bAbortRequest);
