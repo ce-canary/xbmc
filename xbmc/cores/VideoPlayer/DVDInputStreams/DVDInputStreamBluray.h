@@ -254,6 +254,7 @@ protected:
 
   void OverlayFlush(int64_t pts);
   void UpdateMenuRange(bool hdr);
+  void UpdatePendingMenuRange(int64_t titleTime);
   void OverlayClose();
   static void OverlayClear(SPlane& plane, int x, int y, int w, int h);
   static void OverlayInit (SPlane& plane, int w, int h);
@@ -392,6 +393,9 @@ protected:
     bool m_itemAbandoned{false};
     //! libbluray holds the BD-J notifications of the read until their picture is presented
     bool m_notificationsHeld{false};
+    //! the menu range of the last play item read with notifications held, from its title time
+    std::optional<bool> m_pendingMenuRange;
+    int64_t m_pendingMenuRangeStart{0};
     bool m_presentedLeft{false};
     bool m_readSinceReport{false};
     int64_t m_heldDue{-2};
