@@ -23,6 +23,7 @@
 
 typedef struct ass_image ASS_Image;
 
+class CDVDMenuPlane;
 class CDVDOverlay;
 class CDVDOverlayLibass;
 class CDVDOverlayImage;
@@ -129,6 +130,11 @@ namespace OVERLAY {
      */
     void PrepareOverlays(int idx);
 
+    void SetMenuPlane(std::shared_ptr<CDVDMenuPlane> menuPlane);
+
+    //! \brief Take a new Blu-ray menu page from the menu plane, on the GUI thread
+    void PrepareMenu();
+
     /*!
      * \brief Release resources
      */
@@ -194,6 +200,7 @@ namespace OVERLAY {
     };
 
     void Render(COverlay* o);
+    void RenderMenu(bool hdrOverlays);
     std::shared_ptr<COverlay> Convert(SElement& e);
     // Build a COverlay (cached or freshly created) from the libass output
     // already produced by PrepareOverlays. Does not call ass_render_frame.
@@ -264,5 +271,8 @@ namespace OVERLAY {
     // to detect arrival/disappearance transitions (image/SPU have no
     // per-frame change signal of their own, unlike libass detect_change).
     int m_prevImageSpuCount{0};
+    std::shared_ptr<CDVDMenuPlane> m_menuPlane;
+    std::vector<SElement> m_menu;
+    uint64_t m_menuSequence{0};
   };
 }
