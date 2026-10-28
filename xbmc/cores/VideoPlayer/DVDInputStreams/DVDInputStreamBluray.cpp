@@ -45,6 +45,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <libbluray/bluray-version.h>
@@ -903,6 +904,8 @@ void CDVDInputStreamBluray::ProcessEvent() {
     if (m_pMVCDemux == NULL)
       OpenNextStream();
   }
+
+  SelectPendingStreams();
 }
 
 void CDVDInputStreamBluray::DisableExtention()
@@ -1724,10 +1727,31 @@ bool CDVDInputStreamBluray::CanSelectStream() const
          m_event.event == BD_EVENT_NONE;
 }
 
+// a pick or toggle while the read is held is written once the read resumes, for the play item
+// libbluray then plays
+void CDVDInputStreamBluray::SelectPendingStreams()
+{
+  if ((!m_audioPidPending && !m_pgPidPending && !m_pgVisiblePending) || !CanSelectStream())
+    return;
+
+  if (const auto pid = std::exchange(m_audioPidPending, std::nullopt))
+    SetActiveAudioStream(*pid);
+  if (const auto pid = std::exchange(m_pgPidPending, std::nullopt))
+    SetActiveSubtitleStream(*pid, m_pgVisiblePending.value_or(m_pgEnabled));
+  else if (m_pgVisiblePending)
+    SetSubtitleVisible(*m_pgVisiblePending);
+}
+
 bool CDVDInputStreamBluray::SetActiveAudioStream(int pid)
 {
-  if (!CanSelectStream())
+  if (!m_bd || !m_navmode)
     return false;
+  if (!CanSelectStream())
+  {
+    m_audioPidPending = pid;
+    return true;
+  }
+  m_audioPidPending.reset();
 
   const unsigned int number{stream_number(pid, m_clip->audio_streams, m_clip->audio_stream_count)};
   if (number == 0)
@@ -1740,8 +1764,16 @@ bool CDVDInputStreamBluray::SetActiveAudioStream(int pid)
 
 bool CDVDInputStreamBluray::SetActiveSubtitleStream(int pid, bool visible)
 {
-  if (!CanSelectStream())
+  if (!m_bd || !m_navmode)
     return false;
+  if (!CanSelectStream())
+  {
+    m_pgPidPending = pid;
+    m_pgVisiblePending = visible;
+    return true;
+  }
+  m_pgPidPending.reset();
+  m_pgVisiblePending.reset();
 
   const unsigned int number{stream_number(pid, m_clip->pg_streams, m_clip->pg_stream_count)};
   if (number == 0)
@@ -1756,7 +1788,16 @@ bool CDVDInputStreamBluray::SetActiveSubtitleStream(int pid, bool visible)
 
 void CDVDInputStreamBluray::SetSubtitleVisible(bool visible)
 {
-  if (!CanSelectStream() || !CanToggleSubtitle() || m_pgStreamNumber == 0 ||
+  if (!m_bd || !m_navmode)
+    return;
+  if (!CanSelectStream())
+  {
+    m_pgVisiblePending = visible;
+    return;
+  }
+  m_pgVisiblePending.reset();
+
+  if (!CanToggleSubtitle() || m_pgStreamNumber == 0 ||
       m_pgStreamNumber > static_cast<uint32_t>(m_clip->pg_stream_count))
     return;
 
@@ -1894,6 +1935,7 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   m_playedItemEnd =
       !m_presentedLeft && m_nextClipKnown ? static_cast<int64_t>(m_clip->start_time) - 1 : -1;
   m_presentedLeft = false;
+  SelectPendingStreams();
   // the next demuxer reads on from m_readPos, so no lookup reaches the spans before its first one
   const auto span = std::ranges::upper_bound(m_clipSpans, m_readPos, {}, &ClipSpan::readPos);
   if (span != m_clipSpans.begin())

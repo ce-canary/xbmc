@@ -156,7 +156,7 @@ public:
    *        disc program and later play items keep it.
    * \param pid The packet identifier of the stream
    * \param visible Whether the subtitle stream is shown
-   * \return True if the play item presents the stream, false otherwise or while an event is held
+   * \return True if the play item presents the stream or the read is held, false otherwise
    */
   bool SetActiveAudioStream(int pid);
   bool SetActiveSubtitleStream(int pid, bool visible);
@@ -358,6 +358,7 @@ protected:
      */
     bool GetClipStreamLanguage(int pid, std::string& language) const;
     bool CanSelectStream() const;
+    void SelectPendingStreams();
     void OpenClipSpan();
 
     std::unique_ptr<CDVDInputStreamFile> m_pstream;
@@ -413,4 +414,7 @@ protected:
     uint32_t m_pgStreamNumber{0};
     uint32_t m_uoMask{0};
     bool m_pgEnabled{false};
+    std::optional<int> m_audioPidPending;
+    std::optional<int> m_pgPidPending;
+    std::optional<bool> m_pgVisiblePending;
 };
