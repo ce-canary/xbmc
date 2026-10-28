@@ -5085,6 +5085,8 @@ bool CVideoPlayer::OpenAudioStream(CDVDStreamInfo& hint, bool reset)
   if(player == nullptr)
     return false;
 
+  hint.bluray = m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY);
+
   if(m_CurrentAudio.id < 0 ||
      m_CurrentAudio.hint != hint)
   {
