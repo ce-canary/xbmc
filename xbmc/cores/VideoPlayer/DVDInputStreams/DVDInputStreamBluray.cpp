@@ -923,8 +923,11 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
           break;
 
         case BD_EVENT_STILL_TIME:
+          // an infinite still starts here, so later disc events reach the player through the read
           if(m_hold == HOLD_STILL)
             m_event.event = 0; /* Consume duplicate still event */
+          else if (m_event.param == 0)
+            ProcessEvent();
           else
             m_hold = HOLD_HELD;
           return result;
