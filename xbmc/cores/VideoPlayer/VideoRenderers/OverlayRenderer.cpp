@@ -18,6 +18,7 @@
 #include "cores/VideoPlayer/DVDCodecs/Overlay/DVDOverlayLibass.h"
 #include "cores/VideoPlayer/DVDCodecs/Overlay/DVDOverlaySpu.h"
 #include "cores/VideoPlayer/DVDCodecs/Overlay/DVDOverlayStereoUtils.h"
+#include "cores/VideoPlayer/DVDSubtitles/DVDMenuPlane.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
 #include "settings/DisplaySettings.h"
@@ -97,6 +98,10 @@ void CRenderer::Flush()
 
   for(std::vector<SElement>& buffer : m_buffers)
     Release(buffer);
+  if (!m_menu.empty())
+    MarkDirty();
+  Release(m_menu);
+  m_menuSequence = 0;
 
   ReleaseCache();
   Reset();
@@ -149,6 +154,14 @@ void CRenderer::ReleaseUnused()
       if (found)
         break;
     }
+    for (const SElement& e : m_menu)
+    {
+      if (e.overlay_dvd && e.overlay_dvd->m_textureid == it->first)
+      {
+        found = true;
+        break;
+      }
+    }
     if (!found)
     {
       it = m_textureCache.erase(it);
@@ -162,6 +175,7 @@ void CRenderer::Render(int idx, float depth)
 {
   std::unique_lock lock(m_section);
 
+  SetMenuAlone(false);
   CheckCompositeState();
 
   // during HDR composite the m_isHDROverlay overlays render via
@@ -187,6 +201,7 @@ void CRenderer::Render(int idx, float depth)
         Render(o.get());
     }
   }
+  RenderMenu(false);
 
   ReleaseUnused();
 }
@@ -202,6 +217,7 @@ void CRenderer::RenderHDROverlays(int idx)
 
   std::unique_lock lock(m_section);
 
+  SetMenuAlone(false);
   CheckCompositeState();
 
   const RenderStereoView stereoView =
@@ -228,10 +244,96 @@ void CRenderer::RenderHDROverlays(int idx)
       Render(o.get());
     }
   }
+  RenderMenu(true);
 
   gfxContext.SetRenderOrder(renderOrder);
 
   ReleaseUnused();
+}
+
+void CRenderer::SetMenuPlane(std::shared_ptr<CDVDMenuPlane> menuPlane)
+{
+  std::unique_lock lock(m_section);
+
+  m_menuPlane = std::move(menuPlane);
+}
+
+void CRenderer::PrepareMenu()
+{
+  std::unique_lock lock(m_section);
+  if (!m_menuPlane || m_menuPlane->GetSequence() == m_menuSequence)
+    return;
+
+  uint64_t sequence{0};
+  const std::shared_ptr<CDVDOverlay> page = m_menuPlane->Get(sequence);
+  m_menuSequence = sequence;
+  const bool shown = !m_menu.empty();
+  Release(m_menu);
+  if (page && page->IsOverlayType(DVDOVERLAY_TYPE_GROUP))
+  {
+    for (const std::shared_ptr<CDVDOverlay>& o : static_cast<CDVDOverlayGroup&>(*page).m_overlays)
+    {
+      SElement e;
+      e.overlay_dvd = o;
+      m_menu.push_back(e);
+    }
+  }
+  else if (page)
+  {
+    SElement e;
+    e.overlay_dvd = page;
+    m_menu.push_back(e);
+  }
+  if (shown || !m_menu.empty())
+    MarkDirty();
+}
+
+void CRenderer::RenderMenuPlane(const CRect& view)
+{
+  std::unique_lock lock(m_section);
+  if (m_menu.empty())
+    return;
+
+  CRect rect{view};
+  SetVideoRect(rect, rect, rect);
+  SetMenuAlone(true);
+  CheckCompositeState();
+  RenderMenu(false);
+  ReleaseUnused();
+}
+
+// cached textures keep the placement of the rects they were built for
+void CRenderer::SetMenuAlone(bool alone)
+{
+  if (m_menuAlone == alone)
+    return;
+
+  m_menuAlone = alone;
+  ReleaseCache();
+}
+
+// the HDR pass draws the HDR pages of an HDR composite, the GUI pass all others
+void CRenderer::RenderMenu(bool hdrOverlays)
+{
+  if (m_menu.empty())
+    return;
+
+  const bool hdrComposite = CServiceBroker::GetWinSystem()->IsHdrComposite();
+  const RenderStereoView stereoView =
+      CServiceBroker::GetWinSystem()->GetGfxContext().GetStereoView();
+
+  for (SElement& e : m_menu)
+  {
+    std::shared_ptr<COverlay> o = Convert(e);
+    if (!o || (hdrComposite && o->m_isHDROverlay) != hdrOverlays)
+      continue;
+
+    if (!KODI::VIDEO::SUBTITLES::ShouldRenderStereoOverlay(e.overlay_dvd->m_stereoView, stereoView,
+                                                           m_stereomode))
+      continue;
+
+    Render(o.get());
+  }
 }
 
 void CRenderer::Render(COverlay* o)
@@ -328,6 +430,9 @@ bool CRenderer::HasVisibleOverlay(int idx) const
   std::unique_lock lock(m_section);
   if (idx < 0 || idx >= NUM_BUFFERS)
     return false;
+
+  if (!m_menu.empty())
+    return true;
 
   for (const auto& e : m_buffers[idx])
   {
