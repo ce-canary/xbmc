@@ -11,11 +11,13 @@
 #include "DVDCodecs/Overlay/DVDOverlay.h"
 #include "DVDCodecs/Overlay/DVDOverlayImage.h"
 #include "DVDInputStreamFile.h"
+#include "DVDDemuxers/DVDDemuxUtils.h"
 #include "DVDDemuxers/DemuxMVC.h"
 #include "IVideoPlayer.h"
 #include "LangInfo.h"
 #include "ServiceBroker.h"
 #include "URL.h"
+#include "cores/VideoPlayer/Interface/TimingConstants.h"
 #include "filesystem/BlurayCallback.h"
 #include "filesystem/SpecialProtocol.h"
 #include "guilib/StereoscopicsManager.h"
@@ -47,6 +49,11 @@
 #include <libbluray/clpi_data.h>
 #include <libbluray/mpls_data.h>
 #include <libbluray/log_control.h>
+
+extern "C"
+{
+#include <libavutil/mathematics.h>
+}
 
 #define LIBBLURAY_BYTESEEK 0
 #define EMPTY_QUEUE(x) { while(!x.empty()) x.pop(); }
@@ -1700,6 +1707,17 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   if (span != m_clipSpans.begin())
     m_clipSpans.erase(m_clipSpans.begin(), std::prev(span));
   return NEXTSTREAM_OPEN;
+}
+
+void CDVDInputStreamBluray::SetPresentedTime(double time)
+{
+  if (!m_bd || !m_navmode)
+    return;
+
+  bd_presented(m_bd, time == DVD_NOPTS_VALUE
+                         ? -1
+                         : av_rescale_q(static_cast<int64_t>(time), AVRational{1, DVD_TIME_BASE},
+                                        CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE));
 }
 
 const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetNextItemClip() const

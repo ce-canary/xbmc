@@ -1837,6 +1837,8 @@ void CVideoPlayer::Process()
 
     HandleDynamicBufferLevel();
 
+    ReportBlurayPresented();
+
     // make sure we run subtitle process here
     m_VideoPlayerSubtitle->Process(m_clock.GetClock() + m_State.time_offset - m_VideoPlayerVideo->GetSubtitleDelay(), m_State.time_offset);
 
@@ -2429,6 +2431,36 @@ bool CVideoPlayer::TakeBlurayItemAbandoned()
   return bluray && bluray->TakeItemAbandoned();
 #else
   return false;
+#endif
+}
+
+double CVideoPlayer::GetBlurayPresentedTime()
+{
+  // the frame on the plane holds its title time before the streams are in sync, and the
+  // renderer releases frames a display latency ahead of the clock
+  double presented = m_CurrentVideo.id >= 0 ? m_renderManager.GetDisplayedPts() : DVD_NOPTS_VALUE;
+  if (presented == DVD_NOPTS_VALUE)
+  {
+    // the clock is on title time once every open stream plays in sync
+    const auto inSync = [](const CCurrentStream& current)
+    { return current.id < 0 || current.syncState == IDVDStreamPlayer::SYNC_INSYNC; };
+    const bool known = (m_CurrentAudio.id >= 0 || m_CurrentVideo.id >= 0) &&
+                       inSync(m_CurrentAudio) && inSync(m_CurrentVideo);
+    if (!known)
+      return DVD_NOPTS_VALUE;
+    presented = m_clock.GetClock();
+  }
+  return presented + m_offset_pts;
+}
+
+void CVideoPlayer::ReportBlurayPresented()
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  if (!bluray)
+    return;
+
+  bluray->SetPresentedTime(GetBlurayPresentedTime());
 #endif
 }
 
