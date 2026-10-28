@@ -1985,6 +1985,8 @@ void CVideoPlayer::Process()
         continue;
       }
 
+      ReportBlurayReadPresented();
+
       // if there is another stream available, reopen demuxer
       CDVDInputStream::ENextStream next = m_pInputStream->NextStream();
       if(next == CDVDInputStream::NEXTSTREAM_OPEN)
@@ -2000,6 +2002,7 @@ void CVideoPlayer::Process()
               std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)->GetNextItemClip());
 #endif
         CloseStream(m_CurrentVideo, true);
+        ReportBlurayItemPlayedOut();
 
         m_syncStartPtsWait.reset();
         m_navStop = false;
@@ -2516,6 +2519,34 @@ void CVideoPlayer::ReportBlurayPresented()
     return;
 
   bluray->SetPresentedTime(GetBlurayPresentedTime());
+#endif
+}
+
+// at the end of the data with no stream in sync the clock tells nothing
+void CVideoPlayer::ReportBlurayReadPresented()
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  const auto inSync = [](const CCurrentStream& current)
+  { return current.id >= 0 && current.syncState == IDVDStreamPlayer::SYNC_INSYNC; };
+  // a decoder that still holds pictures shows them once the clock starts, which an audio player
+  // still starting with nothing left to feed its sink never does
+  const bool clockCanStart = m_CurrentAudio.id < 0 ||
+                             m_CurrentAudio.syncState != IDVDStreamPlayer::SYNC_STARTING ||
+                             m_VideoPlayerAudio->HasData();
+  const bool videoLeft = m_CurrentVideo.id >= 0 && m_CurrentVideo.packets > 0 && clockCanStart &&
+                         (m_VideoPlayerVideo->HasData() || !m_VideoPlayerVideo->IsEOS());
+  if (bluray && !inSync(m_CurrentAudio) && !inSync(m_CurrentVideo) &&
+      !m_VideoPlayerAudio->HasData() && !videoLeft)
+    bluray->SetReadPresented();
+#endif
+}
+
+void CVideoPlayer::ReportBlurayItemPlayedOut()
+{
+#if defined(HAVE_LIBBLURAY)
+  if (const auto bluray = GetBlurayInputStream())
+    bluray->ReportItemPlayedOut();
 #endif
 }
 
@@ -5331,6 +5362,10 @@ void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
 {
   m_syncStartPtsWait.reset();
   m_navTail = false;
+#if defined(HAVE_LIBBLURAY)
+  if (const auto bluray = GetBlurayInputStream())
+    bluray->ResetPresentedLeft();
+#endif
   CLog::Log(LOGDEBUG, "CVideoPlayer::FlushBuffers - flushing buffers");
 
   double startpts;
