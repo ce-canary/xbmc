@@ -100,6 +100,7 @@ public:
     DISPLAYRESET,
     APPFOCUSED,
     KEEPCONFIG,
+    HOLDCONFIG,
     YIELDDEVICE,
     TIMEOUT,
   };
@@ -272,6 +273,7 @@ public:
   bool SupportsQualityLevel(enum AEQuality level) override;
   bool IsSettingVisible(const std::string &settingId) override;
   void KeepConfiguration(unsigned int millis) override;
+  void HoldConfiguration(bool hold) override;
   void DeviceChange() override;
   void DefaultDeviceChange() override;
   void DeviceCountChange(const std::string& driver) override;
@@ -326,6 +328,8 @@ protected:
                              int* mode = NULL);
   void Configure(AEAudioFormat *desiredFmt = NULL);
   AEAudioFormat GetInputFormat(AEAudioFormat *desiredFmt = NULL);
+  bool HoldsFormat() const;
+  void ReleaseHold();
   CActiveAEStream* CreateStream(MsgStreamNew *streamMsg);
   void DiscardStream(CActiveAEStream *stream);
   void SFlushStream(CActiveAEStream *stream);
@@ -360,6 +364,8 @@ protected:
   bool m_extDrain;
   XbmcThreads::EndTime<> m_extDrainTimer;
   std::chrono::milliseconds m_extKeepConfig;
+  bool m_extHoldConfig{false};
+  AEAudioFormat m_extHoldFormat;
   bool m_extDeferData;
   std::queue<time_t> m_extLastDeviceChange;
   bool m_extSuspended = false;
