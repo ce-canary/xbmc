@@ -201,6 +201,9 @@ public:
   //! and the title time of the player clock, DVD_NOPTS_VALUE while the clock is stopped
   void SetLastPictureTime(double time, double clockTime);
 
+  //! whether a seek while the read is held stays in the title being played out
+  bool IsTailInTitle() const;
+
   //! whether a menu action made the disc program leave the item being played out, reset by the call
   bool TakeItemAbandoned();
 
@@ -348,6 +351,8 @@ protected:
     void DropClipStartOnJump();
     bool TakeMenuJump(bool joinsInLine);
     bool AbandonsItem(bool menuJump, bool fromStill) const;
+    bool IsJoinHeld() const;
+    void DropClipStartOnSeek(bool joinHeld);
     const BLURAY_CLIP_INFO* GetClipAt(uint64_t titlePos) const;
 
     /*!
