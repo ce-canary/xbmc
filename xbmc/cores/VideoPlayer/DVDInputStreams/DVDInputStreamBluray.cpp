@@ -698,7 +698,26 @@ void CDVDInputStreamBluray::ProcessEvent() {
     //m_player->OnDVDNavResult(nullptr, 1);
     //bd_read_skip_still(m_bd);
     //m_hold = HOLD_HELD;
-    m_titleEndWait = false;
+    ResetTitleEnd();
+    // a disc program seek after the released title end plays the title again; a seek within the
+    // play item raises no play item event, so the seek time names the clip
+    if (!m_titleInfo && m_playlist <= MAX_PLAYLIST_ID)
+    {
+      FreeTitleInfo();
+      m_titleInfo = bd_get_playlist_info(m_bd, m_playlist, m_angle);
+      const uint64_t seekTime = static_cast<uint64_t>(m_event.param) * 2;
+      for (uint32_t i = 0; m_titleInfo && i < m_titleInfo->clip_count; i++)
+      {
+        if (m_titleInfo->clips[i].start_time > seekTime)
+          break;
+        m_clip = &m_titleInfo->clips[i];
+      }
+      if (m_clip)
+      {
+        UpdateClipInfo(static_cast<unsigned int>(m_clip - m_titleInfo->clips));
+        OpenClipSpan();
+      }
+    }
     m_itemSeeked = true;
     break;
 
@@ -741,7 +760,8 @@ void CDVDInputStreamBluray::ProcessEvent() {
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_END_OF_TITLE {}", m_event.param);
     /* when a title ends, playlist WILL eventually change */
     m_playlistLeft = true;
-    if (m_navmode)
+    // a held end keeps the title until its last picture is presented
+    if (m_navmode && !m_titleEndWait)
       ReleaseTitle();
     break;
 
@@ -749,6 +769,7 @@ void CDVDInputStreamBluray::ProcessEvent() {
   {
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_TITLE {}", m_event.param);
     const BLURAY_DISC_INFO* disc_info = bd_get_disc_info(m_bd);
+    m_titleEndWait = false;
 
     m_menu = false;
     m_isInMainMenu = false;
@@ -781,7 +802,7 @@ void CDVDInputStreamBluray::ProcessEvent() {
 
   case BD_EVENT_PLAYITEM:
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_PLAYITEM {}", m_event.param);
-    m_titleEndWait = false;
+    ResetTitleEnd();
     if (m_titleInfo && m_event.param < m_titleInfo->clip_count)
     {
       m_clip = &m_titleInfo->clips[m_event.param];
@@ -1036,8 +1057,9 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
           return result;
 
         case BD_EVENT_END_OF_TITLE:
-          // a data read here ends the playlist for the disc program while the player still plays it
-          if (m_hold != HOLD_DATA && m_title && m_title->bdj)
+          // a held title end stops the reads until the player has presented it; an end that
+          // libbluray did not hold has already gone to the BD-J program, whose next act ends it
+          if (m_event.param || (m_title && m_title->bdj))
             m_titleEndWait = true;
           break;
 
@@ -1529,6 +1551,8 @@ bool CDVDInputStreamBluray::PosTime(int ms)
   if(bd_seek_time(m_bd, ms * 90) < 0)
     return false;
 
+  ResetTitleEnd();
+
   m_clipStart.clear();
   EMPTY_QUEUE(m_clipQueue);
   // a held still belongs to the position the seek left
@@ -1583,6 +1607,8 @@ bool CDVDInputStreamBluray::SeekChapter(int ch)
 {
   if(m_titleInfo && bd_seek_chapter(m_bd, ch-1) < 0)
     return false;
+
+  ResetTitleEnd();
 
   m_clipStart.clear();
   EMPTY_QUEUE(m_clipQueue);
@@ -1894,6 +1920,17 @@ void CDVDInputStreamBluray::OpenClipSpan()
   m_clipSpans.push_back(span);
 }
 
+// a seek before the held end plays the title on, so its end is read and raised again
+void CDVDInputStreamBluray::ResetTitleEnd()
+{
+  if (!m_titleEndWait)
+    return;
+
+  m_titleEndWait = false;
+  m_playlistLeft = false;
+  m_lastPictureTime = -1;
+}
+
 CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
 {
   m_nextClip = nullptr;
@@ -1952,22 +1989,41 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   processEvent();
 
   // the old item has entered the decoders, so the disc program may learn the playlist ended
+  // once its last picture is presented; after that the wait only takes events
   if (m_titleEndWait)
   {
-    std::vector<uint8_t> buf(GetBlockSize());
-    const int result = bd_read_ext(m_bd, buf.data(), static_cast<int>(buf.size()), &m_event);
-    m_readSinceReport = true;
-    if (result < 0)
+    while (bd_get_event(m_bd, &m_event))
+      processEvent();
+    // the disc program leaves the title once its last picture is on screen or, when the picture
+    // is dropped or shown under another pts, once the clock passes it; a time not known leaves
+    // it to the other one
+    if (IsTitleEndHeld())
     {
-      m_hold = HOLD_ERROR;
-      return NEXTSTREAM_NONE;
+      if (m_lastPictureTime >= 0 && (m_presentedTime >= 0 || m_clockTime >= 0) &&
+          m_presentedTime < m_lastPictureTime && m_clockTime < m_lastPictureTime)
+        return NEXTSTREAM_RETRY;
+
+      ReleaseTitle();
+
+      // libbluray delivers the BD-J end or resumes the HDMV program, which runs in the polls
+      ReportPresented(BD_PRESENTED_ALL);
+      while (true)
+      {
+        if (bd_read_ext(m_bd, nullptr, 0, &m_event) < 0)
+        {
+          m_hold = HOLD_ERROR;
+          return NEXTSTREAM_NONE;
+        }
+        if (m_event.event == BD_EVENT_NONE)
+          break;
+        processEvent();
+        if (m_hold == HOLD_ERROR || m_aborted)
+          return NEXTSTREAM_NONE;
+      }
+      // an HDMV program has run to its next suspension
+      if (m_title && !m_title->bdj)
+        m_titleEndWait = false;
     }
-    if (result > 0)
-    {
-      HoldClipStart(buf.data(), result);
-      m_titleEndWait = false;
-    }
-    processEvent();
   }
 
   /* process all queued up events */
@@ -2007,6 +2063,8 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   m_menuInput = false;
   m_itemAbandoned = false;
   m_hold = HOLD_DATA;
+  // a title end before the next stream reports a picture waits for none of the old one
+  m_lastPictureTime = -1;
   m_nextClip = clipKnown && m_clip && !programStop ? (joinClip ? joinClip : m_clip) : nullptr;
   m_nextItemInPlaylist = !m_playlistLeft;
   m_nextItemSeekTime.reset();
@@ -2046,10 +2104,26 @@ void CDVDInputStreamBluray::CheckPresentedLeft()
 
 void CDVDInputStreamBluray::SetPresentedTime(double time)
 {
-  ReportPresented(time == DVD_NOPTS_VALUE || m_presentedLeft
-                      ? -1
-                      : av_rescale_q(static_cast<int64_t>(time), AVRational{1, DVD_TIME_BASE},
-                                     CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE));
+  const int64_t titleTime =
+      time == DVD_NOPTS_VALUE || m_presentedLeft
+          ? -1
+          : av_rescale_q(static_cast<int64_t>(time), AVRational{1, DVD_TIME_BASE},
+                         CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE);
+  m_presentedTime = titleTime;
+  ReportPresented(titleTime);
+}
+
+void CDVDInputStreamBluray::SetLastPictureTime(double time, double clockTime)
+{
+  const auto toClipTime = [](double value)
+  {
+    return value == DVD_NOPTS_VALUE
+               ? -1
+               : av_rescale_q(static_cast<int64_t>(value), AVRational{1, DVD_TIME_BASE},
+                              CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE);
+  };
+  m_lastPictureTime = toClipTime(time);
+  m_clockTime = toClipTime(clockTime);
 }
 
 void CDVDInputStreamBluray::SetReadPresented()
@@ -2152,7 +2226,7 @@ void CDVDInputStreamBluray::PollEvents()
         break;
 
       case BD_EVENT_END_OF_TITLE:
-        if (m_hold != HOLD_DATA && m_title && m_title->bdj)
+        if (m_event.param || (m_title && m_title->bdj))
           m_titleEndWait = true;
         break;
 
