@@ -143,6 +143,7 @@ private:
   DllLibAmCodec   *m_dll;
   std::atomic<bool> m_opened;
   bool             m_drain = false;
+  bool             m_setUp{false};
   am_private_t    *am_private;
   CDVDStreamInfo   m_hints;
   int              m_speed;
