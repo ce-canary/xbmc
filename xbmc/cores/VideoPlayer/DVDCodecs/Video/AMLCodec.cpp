@@ -2203,6 +2203,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL, StreamHdrType
   m_tp_last_frame = std::chrono::system_clock::now();
   m_decoder_timeout = CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_videoDecoderTimeout;
   m_buffer_level_ready = false;
+  m_setUp = true;
 
   if (!OpenAmlVideo(hints))
   {
@@ -2713,6 +2714,10 @@ void CAMLCodec::CloseDecoder()
   int dolby_vision_policy = AmlDisplay->aml_get_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC);
   bool dv_enabled(AmlDisplay->aml_get_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC));
   CLog::Log(LOGDEBUG, "CAMLCodec::CloseDecoder");
+
+  // the device and the output belong to the last decoder that opened
+  if (!m_setUp)
+    return;
 
   SetPollDevice(-1);
   // the vsync presenter reads no clock sync phase until a picture is queued or released again

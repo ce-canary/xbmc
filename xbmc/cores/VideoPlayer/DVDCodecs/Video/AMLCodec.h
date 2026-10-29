@@ -152,6 +152,7 @@ private:
   std::atomic<bool> m_opened;
   bool             m_drain = false;
   std::atomic<double> m_presentHold{0.0};
+  bool             m_setUp{false};
   am_private_t    *am_private;
   CDVDStreamInfo   m_hints;
   int              m_speed;
