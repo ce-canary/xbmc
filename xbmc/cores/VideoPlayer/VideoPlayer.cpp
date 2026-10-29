@@ -1798,6 +1798,9 @@ void CVideoPlayer::Process()
           !m_SelectionStreams.m_Streams.empty())
         OpenDefaultStreams();
 
+      if (m_SelectionStreams.CountType(StreamType::VIDEO) == 0)
+        aml_end_presentation(false);
+
       UpdatePlayState(0);
     }
 
@@ -1919,6 +1922,8 @@ void CVideoPlayer::Process()
         SetCaching(CACHESTATE_DONE);
         CLog::Log(LOGINFO, "VideoPlayer: next stream, wait for old streams to be finished");
         CloseStream(m_CurrentAudio, true);
+        if (m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) && !m_bAbortRequest)
+          aml_continue_presentation();
         CloseStream(m_CurrentVideo, true);
 
         m_syncStartPtsWait.reset();
@@ -2624,6 +2629,9 @@ void CVideoPlayer::HandlePlaySpeed()
         FlushBuffers(DVD_NOPTS_VALUE, true, true);
       }
     }
+
+    if (m_CurrentVideo.id < 0 && m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_INSYNC)
+      aml_end_presentation(false);
   }
   else
     m_syncStartPtsWait.reset();
@@ -3210,6 +3218,8 @@ void CVideoPlayer::OnExit()
       break;
   }
 
+  // a stop never closes the video under an arm, nor leaves a hold no decoder took
+  aml_end_presentation(true);
   CloseStream(m_CurrentAudio, !m_bAbortRequest);
   CloseStream(m_CurrentVideo, !m_bAbortRequest);
   CloseStream(m_CurrentTeletext,!m_bAbortRequest);
@@ -3315,6 +3325,7 @@ void CVideoPlayer::HandleMessages()
         m_callback.OnPlayBackStarted(m_item);
       });
 
+      aml_end_presentation(true);
       FlushBuffers(DVD_NOPTS_VALUE, true, true);
       m_renderManager.Flush(false, false);
       m_pDemuxer.reset();
@@ -4611,6 +4622,8 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
       else if (aml_convert_to_hdr(hint.hdrType))
         hint.hdrType = StreamHdrType::HDR_TYPE_HDR10;
       res = OpenVideoStream(hint, reset);
+      // a presentation kept for this stream ends when no AML decoder claimed it
+      aml_end_presentation(false);
       // Set the m_bFullScreenVideo flag now, before streamsReady, so the
       // renderer's Configure() sees a valid viewport via GetViewWindow().
       // The WINDOW_FULLSCREEN_VIDEO skin activation is deferred to
