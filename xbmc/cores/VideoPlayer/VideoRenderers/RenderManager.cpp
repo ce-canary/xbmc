@@ -993,6 +993,9 @@ void CRenderManager::UpdateResolution()
           CServiceBroker::GetWinSystem()->GetGfxContext().SetHDRType(m_picture.hdrType);
           RESOLUTION res = CResolutionUtils::ChooseBestResolution(
               m_fps, m_picture.iWidth, m_picture.iHeight, !m_picture.stereoMode.empty());
+          // a mode set before the first frame of the next decoder would show the kept picture
+          if (res != CServiceBroker::GetWinSystem()->GetGfxContext().GetVideoResolution())
+            aml_drop_kept_picture(true);
           CServiceBroker::GetWinSystem()->GetGfxContext().SetVideoResolution(res, false);
           UpdateLatencyTweak();
           if (m_pRenderer)
