@@ -2120,6 +2120,28 @@ static inline int calc_chunk_size(int size)
   return (size + need_padding_size);
 }
 
+namespace
+{
+
+// whether OpenDecoder runs the Dolby Vision core for `hints`
+bool RunsDolbyVision(const CDVDStreamInfo& hints)
+{
+  const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+  const bool dv2sdr = settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2SDR);
+  const bool dv2hdr = settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2HDR);
+  const bool displaySupportDv = static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())
+                                    ->GetAmlDisplay()
+                                    ->aml_display_support_dv();
+  return aml_support_dolby_vision() &&
+         !settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE) &&
+         ((hints.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION &&
+           (displaySupportDv || hints.dovi.dv_profile == 5)) ||
+          ((hints.hdrType != StreamHdrType::HDR_TYPE_NONE && dv2sdr) ||
+           (hints.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && dv2hdr)));
+}
+
+} // namespace
+
 /*************************************************************************/
 CAMLCodec::CAMLCodec(CProcessInfo &processInfo)
   : m_opened(false)
@@ -2343,10 +2365,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
   bool dv2hdr(settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2HDR));
   bool display_support_dv(static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay()->aml_display_support_dv());
   bool user_dv_disable(settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE));
-  bool dv_enable(device_support_dv && !user_dv_disable &&
-      ((hints.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && (display_support_dv || hints.dovi.dv_profile == 5)) ||
-      ((hints.hdrType != StreamHdrType::HDR_TYPE_NONE && dv2sdr) ||
-       (hints.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && dv2hdr))));
+  bool dv_enable(RunsDolbyVision(hints));
   CLog::Log(LOGINFO, "CAMLCodec::OpenDecoder Amlogic device {} support DV, DV is {} by user, display {} support DV, DV system is {}",
     device_support_dv ? "does" : "does not", user_dv_disable ? "disabled" : "enabled",
     display_support_dv ? "does" : "does not", dv_enable ? "enabled" : "disabled");
@@ -2720,20 +2739,32 @@ void CAMLCodec::CloseDecoder()
 
   // return tsync to default so external apps work
   CSysfsPath("/sys/class/tsync/enable", 1);
+  CloseOutput(dv_enabled, dolby_vision_policy, m_decoder_timeout);
+
+  ShowMainVideo(false);
+
+  CloseAmlVideo();
+}
+
+void CAMLCodec::CloseOutput(bool dvEnabled, int dvPolicy, int decoderTimeout)
+{
+  auto* AmlDisplay =
+      static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+
   // disable Dolby Vision driver
-  if (dv_enabled)
+  if (dvEnabled)
   {
     // the transition needs a few display frames before the core powers down
     std::chrono::time_point<std::chrono::system_clock> now(std::chrono::system_clock::now());
     while (AmlDisplay->aml_get_drmProperty("dv_status", DRM_MODE_OBJECT_CRTC) != 0 &&
-           (std::chrono::system_clock::now() - now) < std::chrono::seconds(m_decoder_timeout))
+           (std::chrono::system_clock::now() - now) < std::chrono::seconds(decoderTimeout))
       usleep(10000); // wait 10ms
 
     while (AmlDisplay->aml_get_drmProperty("dv_video_on", DRM_MODE_OBJECT_CRTC) == 1 &&
-           (std::chrono::system_clock::now() - now) < std::chrono::seconds(m_decoder_timeout))
+           (std::chrono::system_clock::now() - now) < std::chrono::seconds(decoderTimeout))
       usleep(10000); // wait 10ms
 
-    if (dolby_vision_policy == AMDV_FORCE_OUTPUT_MODE)
+    if (dvPolicy == AMDV_FORCE_OUTPUT_MODE)
       AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FOLLOW_SOURCE);
     else
       AmlDisplay->aml_set_drmProperty("enable_hdr10plus", DRM_MODE_OBJECT_CRTC, 1);
@@ -2748,13 +2779,17 @@ void CAMLCodec::CloseDecoder()
     AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, FORCE_OUTPUT_BT709);
   }
 
+  CloseLayers();
+}
+
+void CAMLCodec::CloseLayers()
+{
+  auto* AmlDisplay =
+      static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+
   AmlDisplay->aml_set_drmProperty("dv_debug", DRM_MODE_OBJECT_CRTC, "enable_fel 0");
   AmlDisplay->aml_set_drmProperty("dv_debug", DRM_MODE_OBJECT_CRTC, "enable_mel 0");
   AmlDisplay->aml_set_drmProperty("dv_debug", DRM_MODE_OBJECT_CRTC, "force_unmap");
-
-  ShowMainVideo(false);
-
-  CloseAmlVideo();
 }
 
 void CAMLCodec::CloseAmlVideo()
