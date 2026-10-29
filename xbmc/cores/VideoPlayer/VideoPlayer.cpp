@@ -2536,6 +2536,10 @@ void CVideoPlayer::HandlePlaySpeed()
     }
     else if (video && audio && !deferNoPts)
     {
+      // the clock starts without video, so a kept picture no decoder took goes
+      if (m_CurrentVideo.id >= 0 && m_CurrentVideo.syncState != IDVDStreamPlayer::SYNC_WAITSYNC)
+        aml_drop_kept_picture(false);
+
       double clock = 0;
       if (m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_WAITSYNC)
         CLog::Log(LOGDEBUG, "VideoPlayer::Sync - Audio - pts: {:.3f}, cache: {:.3f}, totalcache: {:.3f}, packets:{:d} level:{:d}",
@@ -5123,6 +5127,8 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
         m_messenger.Put(std::make_shared<CDVDMsg>(CDVDMsg::GENERAL_FLUSH));
       else
         m_VideoPlayerSubtitle->Flush();
+      // the disc program may start another playlist, so only the kept picture goes
+      aml_drop_kept_picture(true);
       break;
     case BD_EVENT_AUDIO_STREAM:
       m_dvd.iSelectedAudioStream = *static_cast<int*>(pData);
