@@ -433,6 +433,7 @@ protected:
   bool IsBlurayTitleEnded() const;
   bool IsBlurayTitleEndWait() const;
   bool IsBlurayTitleEndHeld() const;
+  bool IsBlurayTailInTitle() const;
   bool TakeBlurayItemAbandoned();
   bool PollBlurayEvents();
   double GetBlurayPresentedTime();

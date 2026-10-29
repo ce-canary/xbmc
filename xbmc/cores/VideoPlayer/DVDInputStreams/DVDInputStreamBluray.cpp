@@ -1508,14 +1508,45 @@ int CDVDInputStreamBluray::GetTime()
   return m_dispTimeBeforeRead;
 }
 
+// a read held at a discontinuity of the playlist, with the start of the next clip intact
+bool CDVDInputStreamBluray::IsJoinHeld() const
+{
+  return m_navmode && m_hold == HOLD_HELD && m_event.event == BD_EVENT_DISCONTINUITY &&
+         !m_clipStart.empty() && m_heldClip;
+}
+
+bool CDVDInputStreamBluray::IsTailInTitle() const
+{
+  if (IsTitleEndHeld())
+    return true;
+  return IsJoinHeld();
+}
+
+// a seek back before the held clip plays on in the same demuxer; a seek into the held clip or past
+// it keeps the discontinuity, whose reset the demuxer probed on the old clip needs
+void CDVDInputStreamBluray::DropClipStartOnSeek(bool joinHeld)
+{
+  const BLURAY_CLIP_INFO* clip = joinHeld ? GetClipAt(bd_tell(m_bd)) : nullptr;
+  if (clip && clip < m_heldClip)
+  {
+    m_event.event = BD_EVENT_NONE;
+    m_hold = HOLD_NONE;
+  }
+
+  m_clipStart.clear();
+  m_clipStartHeld = false;
+  m_heldClip = nullptr;
+}
+
 bool CDVDInputStreamBluray::PosTime(int ms)
 {
+  const bool joinHeld = IsJoinHeld();
   if(bd_seek_time(m_bd, ms * 90) < 0)
     return false;
 
   ResetTitleEnd();
 
-  m_clipStart.clear();
+  DropClipStartOnSeek(joinHeld);
   EMPTY_QUEUE(m_clipQueue);
   // a held still belongs to the position the seek left
   if (m_event.event != BD_EVENT_NONE && m_event.event != BD_EVENT_STILL_TIME)
@@ -1567,12 +1598,13 @@ void CDVDInputStreamBluray::GetChapterName(std::string& name, int ch)
 
 bool CDVDInputStreamBluray::SeekChapter(int ch)
 {
+  const bool joinHeld = IsJoinHeld();
   if(m_titleInfo && bd_seek_chapter(m_bd, ch-1) < 0)
     return false;
 
   ResetTitleEnd();
 
-  m_clipStart.clear();
+  DropClipStartOnSeek(joinHeld);
   EMPTY_QUEUE(m_clipQueue);
   // a held still belongs to the position the seek left
   if (m_event.event != BD_EVENT_NONE && m_event.event != BD_EVENT_STILL_TIME)
