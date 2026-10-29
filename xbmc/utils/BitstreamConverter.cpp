@@ -886,7 +886,7 @@ bool CBitstreamConverter::Convert(uint8_t *pData_bl, int iSize_bl, uint8_t *pDat
       buf += 4;
       nal_type = (buf[0] >> 1) & 0x3f;
 
-      if (nal_type != AVC_NAL_END_SEQUENCE)
+      if (nal_type != HEVC_NAL_EOS_NUT || end - (buf + size) > 4)
         BitstreamAllocAndCopy(&m_convertBuffer, &offset, buf, size, nal_type);
       else
       {
