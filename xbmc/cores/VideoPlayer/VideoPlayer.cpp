@@ -2517,6 +2517,16 @@ bool CVideoPlayer::IsBlurayTitleEndHeld() const
 #endif
 }
 
+bool CVideoPlayer::IsBlurayTailInTitle() const
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  return bluray && bluray->IsTailInTitle();
+#else
+  return false;
+#endif
+}
+
 bool CVideoPlayer::TakeBlurayItemAbandoned()
 {
 #if defined(HAVE_LIBBLURAY)
@@ -2643,15 +2653,27 @@ bool CVideoPlayer::PlayNavTail()
   return true;
 }
 
-// seeks in the tail are dropped, as they would act on the next item; a disc audio or subtitle
-// pick goes to the disc, whose stream registers carry it into the next item; video and program
-// picks have no disc register and are dropped
+// seeks in the tail are dropped, as they would act on the next item, unless the read is held in
+// the title; a disc audio or subtitle pick goes to the disc, whose stream registers carry it into
+// the next item; video and program picks have no disc register and are dropped
 bool CVideoPlayer::DropInNavTail(CDVDMsg& msg)
 {
+  // a released title end drops seeks before the play state shows it
+  if (IsBlurayTitleEndWait() && !IsBlurayTitleEndHeld())
+  {
+    if (msg.IsType(CDVDMsg::PLAYER_SEEK))
+    {
+      m_processInfo->SetStateSeeking(false);
+      return true;
+    }
+    if (msg.IsType(CDVDMsg::PLAYER_SEEK_CHAPTER))
+      return true;
+  }
   if (!m_navTail)
     return false;
 
-  if (msg.IsType(CDVDMsg::PLAYER_SEEK))
+  const bool seekable = IsBlurayTailInTitle();
+  if (msg.IsType(CDVDMsg::PLAYER_SEEK) && !seekable)
   {
     m_processInfo->SetStateSeeking(false);
     return true;
@@ -2674,8 +2696,8 @@ bool CVideoPlayer::DropInNavTail(CDVDMsg& msg)
     SelectDiscStream(st);
     return true;
   }
-  return msg.IsType(CDVDMsg::PLAYER_SEEK_CHAPTER) || msg.IsType(CDVDMsg::PLAYER_SET_VIDEOSTREAM) ||
-         msg.IsType(CDVDMsg::PLAYER_SET_PROGRAM);
+  return (msg.IsType(CDVDMsg::PLAYER_SEEK_CHAPTER) && !seekable) ||
+         msg.IsType(CDVDMsg::PLAYER_SET_VIDEOSTREAM) || msg.IsType(CDVDMsg::PLAYER_SET_PROGRAM);
 }
 
 // passes a pick of a disc stream to the disc, false when the disc does not allow the change; in a
@@ -6692,7 +6714,7 @@ void CVideoPlayer::UpdatePlayState(double timeout)
 
   // the ended title keeps its duration for pause, a seek after it or in the tail would act on the
   // next item
-  if (IsBlurayTitleEnded() || m_navTail)
+  if (IsBlurayTitleEnded() || (m_navTail && !IsBlurayTailInTitle()))
     state.canseek = false;
 
   m_processInfo->SetPlayTimes(state.startTime, state.time, state.timeMin, state.timeMax);
