@@ -143,8 +143,8 @@ public:
   //! a decoder claimed but did not take
   static void   EndPresentation(bool stop);
   //! Blanks a kept picture still on screen, one a next decoder took only with `taken`; the
-  //! output stays set up for the next decoder, and an HDR10 picture leaves the forced HDR output
-  //! to the hold or the decoder that took it
+  //! output stays set up for the next decoder, and a picture under a held HDR10 or Dolby Vision
+  //! output leaves that forced output to the hold or the decoder that took it
   static void   DropKeptPicture(bool taken);
   //! Makes this decoder the newest, and the one that takes or ends a held output no decoder
   //! claimed
@@ -177,7 +177,7 @@ private:
   static void   CloseOutput(bool dvEnabled, int dvPolicy, int decoderTimeout);
   static void   CloseLayers();
   Hold          HoldOnClose(bool dvEnabled, int& dvPolicy);
-  bool          TakeHold(const CDVDStreamInfo& hints);
+  bool          TakeHold(const CDVDStreamInfo& hints, bool doviIsFEL);
   void          EndHold(bool failed);
   void          HandBack();
   static void   ReleaseKept();
