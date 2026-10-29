@@ -372,6 +372,8 @@ typedef struct hdr_buf {
 #define FORCE_OUTPUT_BT2100_IPT            (unsigned int)(6)
 #define FORCE_OUTPUT_BT_BYPASS             (unsigned int)(7)
 
+#define HDR_MODULE_ON           (1)
+
 typedef struct am_packet {
     AVPacket      avpkt;
     uint64_t      avpts;
@@ -2203,6 +2205,25 @@ bool PlaysHdr10Output(const CDVDStreamInfo& hints, bool hdr10Plus)
          (!hdr10Plus || !hdrCap.SupportsHDR10Plus());
 }
 
+// whether `module` runs on a video frame, with the state read in `gate`, -1 for a failed read
+bool OutputOnVideo(CAMLCodec::OutputModule module, int& gate)
+{
+  auto* AmlDisplay =
+      static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+  if (module == CAMLCodec::OutputModule::DV)
+  {
+    gate = AmlDisplay->aml_get_drmProperty("dv_video_on", DRM_MODE_OBJECT_CRTC);
+    return gate == 1;
+  }
+  if (module != CAMLCodec::OutputModule::HDR)
+    return false;
+
+  // the first value is VD1
+  CSysfsPath status{"/sys/module/aml_media/parameters/video_process_status"};
+  gate = status.Exists() ? status.Get<int>().value_or(-1) : -1;
+  return gate == HDR_MODULE_ON;
+}
+
 } // namespace
 
 /*************************************************************************/
@@ -2466,6 +2487,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
       AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FORCE_OUTPUT_MODE);
       m_outputModule = OutputModule::NONE;
       m_ownOutput = true;
+      m_handback = false;
       if (!dv2sdr && !dv2hdr)
       {
         if (settings->GetInt(CSettings::SETTING_COREELEC_AMLOGIC_DV_LED) == AML_DV_PLAYER_LED)
@@ -2508,6 +2530,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
       AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, forceOutput);
       m_outputModule = OutputModule::NONE;
       m_ownOutput = true;
+      m_handback = false;
     }
   }
 
@@ -2988,13 +3011,18 @@ void CAMLCodec::ClaimHold()
 // the armed close of an open decoder keeps its last picture and its output for a next decoder of
 // the same format, or hands its output on to the next decoder; a decoder that closes before it
 // took the hold it claimed passes the hold on unclaimed
-CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int dvPolicy)
+CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
 {
   std::lock_guard<std::mutex> lock(holdMutex);
+  auto* AmlDisplay =
+      static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+  // a handback changes the policy under holdMutex
+  dvPolicy = AmlDisplay->aml_get_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC);
   // a stream change the video thread runs closes a decoder the join did not arm
   const bool armed = armGen == m_holdGen && armThread == std::this_thread::get_id();
   if (armed)
     armGen = 0;
+  m_handback = false;
   m_keptPicture = false;
   bool dropped = false;
   if (holdOwner == m_holdGen)
@@ -3033,8 +3061,6 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int dvPolicy)
     hold = Hold::PICTURE;
   }
 
-  auto* AmlDisplay =
-      static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
   if (dvEnabled && (!armNext || armNext->hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION))
   {
     // the core keeps a forced mode over the gap without video, where it follows the source to
@@ -3094,8 +3120,9 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int dvPolicy)
 }
 
 // a decoder set up for the held format shows its first frame over the kept picture; a decoder
-// that plays the format of a held output plays under it, and its close ends the hold or hands it
-// on; any other ends the hold before it sets up its own output
+// that plays the format of a held output plays under it until the module runs on its video, or
+// else to its close, which ends the hold or hands it on; any other ends the hold before it sets
+// up its own output
 bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints)
 {
   std::lock_guard<std::mutex> lock(holdMutex);
@@ -3119,14 +3146,20 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints)
   }
 
   m_outputModule = heldModule;
+  m_handbackFrame = false;
   if (heldPicture)
   {
+    // the module runs on the kept picture until the first frame of this decoder replaces it
+    m_handback = m_outputModule != OutputModule::NONE;
+    m_handbackOff = false;
     m_keptPicture = true;
     pictureTaken = true;
     pictureHdr10 = PlaysHdr10Output(hints, m_processInfo.GetIsHdr10Plus());
     return true;
   }
 
+  m_handback = m_outputModule != OutputModule::NONE;
+  m_handbackOff = true;
   holdKept = false;
   holdOwner = 0;
   return false;
@@ -3144,7 +3177,11 @@ void CAMLCodec::EndHold(bool failed)
     pictureTaken = false;
     // a decoder that set up its own output mapping keeps it
     if (pictureDropped && !m_ownOutput)
+    {
       m_outputModule = OutputModule::HDR;
+      m_handback = true;
+      m_handbackOff = true;
+    }
     pictureDropped = false;
     if (failed)
       ShowMainVideo(false);
@@ -3153,7 +3190,59 @@ void CAMLCodec::EndHold(bool failed)
   {
     RestoreOutput(m_outputModule, m_decoder_timeout);
     m_outputModule = OutputModule::NONE;
+    m_handback = false;
   }
+}
+
+// a taken output follows the source again once its module runs on a frame of this decoder, so
+// the title plays and closes as one that never took a held output
+void CAMLCodec::HandBack()
+{
+  std::lock_guard<std::mutex> lock(holdMutex);
+  if (!m_handback)
+    return;
+
+  int gate = -1;
+  if (!m_handbackFrame)
+  {
+    m_handbackFrame = true;
+    // a taken output must read off over the gap at the first frame, or a later met read is not
+    // the module running on this decoder's video
+    if (m_handbackOff && (OutputOnVideo(m_outputModule, gate) || gate < 0))
+      m_handback = false;
+    return;
+  }
+
+  if (!OutputOnVideo(m_outputModule, gate))
+  {
+    if (gate < 0)
+      m_handback = false;
+    return;
+  }
+
+  // the module can run on frames before the layer shows, and a module that follows the source
+  // with the layer off outputs sdr
+  CSysfsPath layer{"/sys/class/video/video_layer1_state"};
+  const int layerOn = layer.Exists() ? layer.Get<int>().value_or(-1) : -1;
+  if (layerOn != 1)
+  {
+    if (layerOn < 0)
+      m_handback = false;
+    return;
+  }
+
+  auto* AmlDisplay =
+      static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+  if (m_outputModule == OutputModule::DV)
+    AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FOLLOW_SOURCE);
+  else
+  {
+    AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, HDR_FOLLOW_SOURCE);
+    AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, FORCE_OUTPUT_DISABLED);
+  }
+  CLog::Log(LOGDEBUG, "CAMLCodec::{}: hands the output back, gate {}", __FUNCTION__, gate);
+  m_outputModule = OutputModule::NONE;
+  m_handback = false;
 }
 
 // under holdMutex
@@ -3622,11 +3711,20 @@ int CAMLCodec::ReleaseFrame(const uint32_t index, bool drop)
 
   // the kernel frees the kept picture when it shows this frame; the hold ends before the frame is
   // queued, so a drop of the picture cannot turn the layer off under it
-  if (!drop && m_keptPicture)
+  const bool endsHold = !drop && m_keptPicture;
+  if (endsHold)
     EndHold(false);
 
   if ((ret = amlVideoFile->IOControl(VIDIOC_QBUF, &vbuf)) < 0)
     CLog::Log(LOGERROR, "CAMLCodec::ReleaseFrame - VIDIOC_QBUF failed: {}", strerror(errno));
+  else if (endsHold)
+  {
+    // a dropped picture leaves a held output, so this frame is the handback mark
+    if (m_handbackOff)
+      HandBack();
+  }
+  else if (!drop && m_handback)
+    HandBack();
   return ret;
 }
 
