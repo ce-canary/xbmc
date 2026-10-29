@@ -126,7 +126,30 @@ public:
   //! device, missed vsyncs): the caller then waits for the vblank itself
   static bool   WaitPresentStep(uint64_t& seen, int fenceFd);
 
+  //! The next close of the newest decoder, on this thread, hands its output on to the decoder of
+  //! the next item, which plays under it if it plays the same format
+  static void   ContinuePresentation();
+  //! Ends a hold that no decoder claimed; a `stop` also disarms the next close and ends a hold
+  //! a decoder claimed but did not take
+  static void   EndPresentation(bool stop);
+  //! Makes this decoder the newest, and the one that takes or ends a held output no decoder
+  //! claimed
+  void          ClaimHold();
+
+  //! The module whose forced output a decoder plays under
+  enum class OutputModule
+  {
+    NONE,
+    DV,
+  };
+
 private:
+  enum class Hold
+  {
+    NONE,
+    OUTPUT_DV,
+  };
+
   static void   ShowMainVideo(const bool show);
   void          SetVideoZoom(const float zoom);
   void          SetVideoContrast(const int contrast);
@@ -136,6 +159,11 @@ private:
   void          CloseAmlVideo();
   static void   CloseOutput(bool dvEnabled, int dvPolicy, int decoderTimeout);
   static void   CloseLayers();
+  Hold          HoldOnClose(bool dvEnabled, int dvPolicy);
+  void          TakeHold(const CDVDStreamInfo& hints);
+  void          EndHold(bool failed);
+  static void   ReleaseKept();
+  static void   RestoreOutput(int decoderTimeout);
   std::string   GetVfmMap(const std::string &name);
   void          SetVfmMap(const std::string &name, const std::string &map);
   int           DequeueBuffer();
@@ -146,6 +174,8 @@ private:
   std::atomic<bool> m_opened;
   bool             m_drain = false;
   bool             m_setUp{false};
+  uint64_t         m_holdGen{0};
+  OutputModule     m_outputModule{OutputModule::NONE};
   am_private_t    *am_private;
   CDVDStreamInfo   m_hints;
   int              m_speed;
