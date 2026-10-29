@@ -16,6 +16,8 @@ extern "C"
 }
 
 class CDVDStreamInfo;
+struct bd_clip;
+using BLURAY_CLIP_INFO = bd_clip;
 
 enum AML_SUPPORT_H264_4K2K
 {
@@ -86,7 +88,8 @@ struct AMLVideoOutput
 };
 AMLVideoOutput aml_video_output(const CDVDStreamInfo& source);
 bool aml_video_started();
-void aml_continue_presentation();
+// `next` is the clip of the next item, nullptr when unknown
+void aml_continue_presentation(const BLURAY_CLIP_INFO* next);
 void aml_end_presentation(bool stop);
 // `taken` also drops a picture a next decoder took before its first frame
 void aml_drop_kept_picture(bool taken);
