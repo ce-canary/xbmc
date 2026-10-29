@@ -6438,6 +6438,23 @@ void CVideoPlayer::UpdatePlayState(double timeout)
     CDVDInputStream::ITimes::Times times;
     const bool haveTimes = pTimes && pTimes->GetTimes(times);
 
+    // the read position runs ahead of the picture, and packets carry the title time
+    const bool bluray = pDisplayTime && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY);
+    const auto blurayTime = [this, pDisplayTime]() -> double
+    {
+      double presented = GetBlurayPresentedTime();
+      if (presented == DVD_NOPTS_VALUE)
+      {
+        if (m_CurrentVideo.startpts != DVD_NOPTS_VALUE)
+          presented = m_CurrentVideo.startpts + m_offset_pts;
+        else if (m_CurrentAudio.startpts != DVD_NOPTS_VALUE)
+          presented = m_CurrentAudio.startpts + m_offset_pts;
+        else
+          return pDisplayTime->GetTime();
+      }
+      return DVD_TIME_TO_MSEC(presented);
+    };
+
     // Raw (pre-EDL) upper bound of the stream, needed below to tell whether the last
     // chapter is fully contained within a trailing EDL cut.
     std::chrono::milliseconds rawStreamEnd{std::chrono::milliseconds::max()};
@@ -6486,6 +6503,12 @@ void CVideoPlayer::UpdatePlayState(double timeout)
       state.timeMin = (times.ptsBegin - times.ptsStart) * 1000 / DVD_TIME_BASE;
       state.time_offset = -times.ptsStart;
     }
+    else if (bluray && pDisplayTime->GetTotalTime() > 0)
+    {
+      state.time_offset = m_offset_pts;
+      state.time = blurayTime();
+      state.timeMax = pDisplayTime->GetTotalTime();
+    }
     else if (pDisplayTime && pDisplayTime->GetTotalTime() > 0)
     {
       if (state.dts != DVD_NOPTS_VALUE)
@@ -6522,7 +6545,7 @@ void CVideoPlayer::UpdatePlayState(double timeout)
       }
       else if (IsInMenuInternal())
       {
-        state.time = pDisplayTime->GetTime();
+        state.time = bluray ? blurayTime() : pDisplayTime->GetTime();
         state.isInMenu = true;
         if (!pMenu->CanSeek())
           state.time_offset = 0;
