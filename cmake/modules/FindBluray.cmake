@@ -226,7 +226,9 @@ if(NOT TARGET ${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME})
       set(CMAKE_REQUIRED_LIBRARIES ${${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME}_LINK_LIBRARIES})
       foreach(symbol bd_presented
                      bd_set_presentation_hold
-                     BD_PRESENTED_ALL)
+                     BD_PRESENTED_ALL
+                     BD_SEEK_REARMS_PLAYLIST_END
+                     BD_PRESENTED_TITLE_END)
         check_symbol_exists(${symbol} libbluray/bluray.h LIBBLURAY_HAS_${symbol})
         if(NOT LIBBLURAY_HAS_${symbol})
           message(FATAL_ERROR "libbluray lacks ${symbol} of the CoreELEC presentation hold API")

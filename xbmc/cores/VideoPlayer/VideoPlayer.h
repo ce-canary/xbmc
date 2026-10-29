@@ -432,6 +432,7 @@ protected:
   std::shared_ptr<CDVDInputStreamBluray> GetBlurayInputStream() const;
   bool IsBlurayTitleEnded() const;
   bool IsBlurayTitleEndWait() const;
+  bool IsBlurayTitleEndHeld() const;
   bool TakeBlurayItemAbandoned();
   bool PollBlurayEvents();
   double GetBlurayPresentedTime();
@@ -698,6 +699,8 @@ protected:
 
   std::optional<std::chrono::steady_clock::time_point> m_syncWait;
   bool m_navTail{false};
+  //! title time of the last video picture read since the last seek or next stream
+  double m_lastVideoTitleTime{DVD_NOPTS_VALUE};
   bool m_navStop{false};
   bool m_navStopped{false};
 
