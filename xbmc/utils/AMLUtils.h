@@ -8,6 +8,9 @@
 
 #include "utils/StreamDetails.h"
 
+struct bd_clip;
+using BLURAY_CLIP_INFO = bd_clip;
+
 enum AML_SUPPORT_H264_4K2K
 {
   AML_SUPPORT_H264_4K2K_UNINIT = -1,
@@ -65,7 +68,8 @@ bool aml_convert_to_sdr_by_vs_engine(StreamHdrType hdrType);
 bool aml_convert_to_hdr_by_vs_engine(StreamHdrType hdrType);
 bool aml_convert_to_dv_by_vs_engine(StreamHdrType hdrType);
 bool aml_video_started();
-void aml_continue_presentation();
+// `next` is the clip of the next item, nullptr when unknown
+void aml_continue_presentation(const BLURAY_CLIP_INFO* next);
 void aml_end_presentation(bool stop);
 // `taken` also drops a picture a next decoder took before its first frame
 void aml_drop_kept_picture(bool taken);
