@@ -193,6 +193,12 @@ public:
   bool IsClipStartHeld() const { return !m_navmode && m_clipStartHeld && !m_clipStart.empty(); }
   bool IsTitleEnded() const { return m_endedTitleTime > 0; }
   bool IsTitleEndWait() const { return m_titleEndWait; }
+  //! whether a held title end still waits for its last picture to be presented
+  bool IsTitleEndHeld() const { return m_titleEndWait && m_titleInfo != nullptr; }
+
+  //! tell the disc program the title time of the last picture read, DVD_NOPTS_VALUE without one,
+  //! and the title time of the player clock, DVD_NOPTS_VALUE while the clock is stopped
+  void SetLastPictureTime(double time, double clockTime);
 
   //! whether a menu action made the disc program leave the item being played out, reset by the call
   bool TakeItemAbandoned();
@@ -361,6 +367,7 @@ protected:
     bool CanSelectStream() const;
     void SelectPendingStreams();
     void OpenClipSpan();
+    void ResetTitleEnd();
 
     std::unique_ptr<CDVDInputStreamFile> m_pstream;
     std::string m_rootPath;
@@ -391,6 +398,9 @@ protected:
     bool m_hasMVCExtension{false};
     int m_endedTitleTime{0};
     bool m_titleEndWait{false};
+    int64_t m_lastPictureTime{-1};
+    int64_t m_presentedTime{-1};
+    int64_t m_clockTime{-1};
     bool m_menuInput{false};
     bool m_itemAbandoned{false};
     //! libbluray holds the BD-J notifications of the read until their picture is presented
