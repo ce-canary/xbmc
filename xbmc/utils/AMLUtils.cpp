@@ -26,6 +26,9 @@
 #include "windowing/WinSystem.h"
 
 #include <amcodec/codec.h>
+#if defined(HAVE_LIBBLURAY)
+#include <libbluray/bluray.h>
+#endif
 
 int aml_get_cpufamily_id()
 {
@@ -439,9 +442,85 @@ bool aml_display_last_vblank(std::chrono::steady_clock::time_point& time)
   return true;
 }
 
-void aml_continue_presentation()
+#if defined(HAVE_LIBBLURAY)
+namespace
 {
-  CAMLCodec::ContinuePresentation(std::nullopt);
+AVCodecID GetClipVideoCodec(uint8_t codingType)
+{
+  switch (codingType)
+  {
+    case BLURAY_STREAM_TYPE_VIDEO_MPEG1:
+    case BLURAY_STREAM_TYPE_VIDEO_MPEG2:
+      return AV_CODEC_ID_MPEG2VIDEO;
+    case BLURAY_STREAM_TYPE_VIDEO_VC1:
+      return AV_CODEC_ID_VC1;
+    case BLURAY_STREAM_TYPE_VIDEO_H264:
+      return AV_CODEC_ID_H264;
+    case BLURAY_STREAM_TYPE_VIDEO_HEVC:
+      return AV_CODEC_ID_HEVC;
+    default:
+      return AV_CODEC_ID_NONE;
+  }
+}
+
+bool IsInterlacedClipVideo(uint8_t format)
+{
+  return format == BLURAY_VIDEO_FORMAT_480I || format == BLURAY_VIDEO_FORMAT_576I ||
+         format == BLURAY_VIDEO_FORMAT_1080I;
+}
+
+// the hdr type the decoder of a stream of the demuxer's `hdrType` puts out
+StreamHdrType GetOpenedHdrType(StreamHdrType hdrType)
+{
+  CDVDStreamInfo source;
+  source.hdrType = hdrType;
+  return aml_video_output(source).hdrType;
+}
+
+// the format the decoder will be opened with for the video of `clip`
+std::optional<NextVideoFormat> GetClipVideoFormat(const BLURAY_CLIP_INFO& clip)
+{
+  NextVideoFormat next;
+  if (clip.video_stream_count == 0)
+    return next;
+
+  const BLURAY_STREAM_INFO& video = clip.video_streams[0];
+  next.codec = GetClipVideoCodec(video.coding_type);
+  next.interlaced = IsInterlacedClipVideo(video.format);
+  // the demuxer shows a dual layer item as Dolby Vision only while Dolby Vision is enabled
+  if (clip.dv_stream_count > 0 && aml_dolby_vision_enabled())
+  {
+    next.hdrType = GetOpenedHdrType(StreamHdrType::HDR_TYPE_DOLBYVISION);
+    return next;
+  }
+
+  switch (video.dynamic_range_type)
+  {
+    case BLURAY_DYNAMIC_RANGE_SDR:
+      break;
+    case BLURAY_DYNAMIC_RANGE_HDR10:
+      next.hdrType = StreamHdrType::HDR_TYPE_HDR10;
+      break;
+    case BLURAY_DYNAMIC_RANGE_DOLBY_VISION:
+      next.hdrType = StreamHdrType::HDR_TYPE_DOLBYVISION;
+      break;
+    default:
+      return std::nullopt;
+  }
+  next.hdrType = GetOpenedHdrType(next.hdrType);
+  return next;
+}
+} // namespace
+#endif
+
+void aml_continue_presentation(const BLURAY_CLIP_INFO* next)
+{
+  std::optional<NextVideoFormat> format;
+#if defined(HAVE_LIBBLURAY)
+  if (next)
+    format = GetClipVideoFormat(*next);
+#endif
+  CAMLCodec::ContinuePresentation(format);
 }
 
 void aml_end_presentation(bool stop)

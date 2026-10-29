@@ -16,6 +16,8 @@ extern "C"
 }
 
 class CDVDStreamInfo;
+struct bd_clip;
+using BLURAY_CLIP_INFO = bd_clip;
 
 enum AML_SUPPORT_H264_4K2K
 {
@@ -90,7 +92,8 @@ bool aml_video_started();
 // the time of the last vblank of the display, on CLOCK_MONOTONIC as the steady clock; false while
 // the output is off
 bool aml_display_last_vblank(std::chrono::steady_clock::time_point& time);
-void aml_continue_presentation();
+// `next` is the clip of the next item, nullptr when unknown
+void aml_continue_presentation(const BLURAY_CLIP_INFO* next);
 void aml_end_presentation(bool stop);
 // `taken` also drops a picture a next decoder took before its first frame
 void aml_drop_kept_picture(bool taken);
