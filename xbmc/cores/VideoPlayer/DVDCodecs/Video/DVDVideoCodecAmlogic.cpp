@@ -403,6 +403,7 @@ bool CDVDVideoCodecAmlogic::Open(CDVDStreamInfo &hints, CDVDCodecOptions &option
   }
 
   m_Codec->SetDoviZeroLevel5(zeroLevel5);
+  m_Codec->ClaimHold();
   if (m_bitstream)
     m_bitstream->SetDoviZeroLevel5(zeroLevel5);
 
