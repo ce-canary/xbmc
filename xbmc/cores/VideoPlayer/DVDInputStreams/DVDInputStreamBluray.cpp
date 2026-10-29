@@ -1486,15 +1486,43 @@ void CDVDInputStreamBluray::OpenClipSpan()
 
 CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
 {
+  m_nextClipKnown = false;
   if (!m_navmode || m_aborted || m_hold == HOLD_ERROR || HasGivenUpReading())
     return NEXTSTREAM_NONE;
 
+  // m_clip names the next item after a play item event, or after a seek within it
+  bool clipKnown = false;
+  bool clipLeft = false;
+  const auto processEvent = [this, &clipKnown, &clipLeft]
+  {
+    switch (m_event.event)
+    {
+      case BD_EVENT_PLAYITEM:
+        clipKnown = true;
+        break;
+      case BD_EVENT_SEEK:
+      case BD_EVENT_DISCONTINUITY:
+        clipKnown = clipKnown || !clipLeft;
+        break;
+      case BD_EVENT_TITLE:
+      case BD_EVENT_PLAYLIST:
+      case BD_EVENT_ANGLE:
+      case BD_EVENT_END_OF_TITLE:
+        clipKnown = false;
+        clipLeft = true;
+        break;
+      default:
+        break;
+    }
+    ProcessEvent();
+  };
+
   /* process any current event */
-  ProcessEvent();
+  processEvent();
 
   /* process all queued up events */
   while(bd_get_event(m_bd, &m_event))
-    ProcessEvent();
+    processEvent();
 
   // The last read error can be queued with the events of a clip boundary
   if (HasGivenUpReading())
@@ -1504,7 +1532,15 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
     return NEXTSTREAM_RETRY;
 
   m_hold = HOLD_DATA;
+  m_nextClipKnown = clipKnown && m_clip;
   return NEXTSTREAM_OPEN;
+}
+
+const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetNextItemClip() const
+{
+  if (!m_nextClipKnown || m_bMVCPlayback || m_hasMVCExtension)
+    return nullptr;
+  return m_clip;
 }
 
 void CDVDInputStreamBluray::UserInput(bd_vk_key_e vk)

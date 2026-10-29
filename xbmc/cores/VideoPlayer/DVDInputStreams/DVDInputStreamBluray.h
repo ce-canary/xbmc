@@ -181,6 +181,9 @@ public:
   void ReleaseClipStart() { m_clipStartHeld = false; }
   bool IsClipStartHeld() const { return !m_navmode && m_clipStartHeld && !m_clipStart.empty(); }
 
+  //! the clip the item opened by the last NextStream starts with, when its events named it
+  const BLURAY_CLIP_INFO* GetNextItemClip() const;
+
   void OverlayCallback(const BD_OVERLAY * const);
 #ifdef HAVE_LIBBLURAY_BDJ
   void OverlayCallbackARGB(const struct bd_argb_overlay_s * const);
@@ -338,6 +341,7 @@ protected:
     uint64_t m_readPos{0};
     std::vector<ClipSpan> m_clipSpans;
     bool m_hasMVCExtension{false};
+    bool m_nextClipKnown{false};
     std::vector<uint8_t> m_clipStart;
     size_t m_clipStartOffset{0};
     bool m_clipStartHeld{false};
