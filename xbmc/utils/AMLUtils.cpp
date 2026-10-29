@@ -16,6 +16,7 @@
 #include "utils/log.h"
 #include "utils/StringUtils.h"
 #include "ServiceBroker.h"
+#include "cores/VideoPlayer/DVDCodecs/Video/AMLCodec.h"
 #include "utils/RegExp.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
@@ -321,6 +322,16 @@ bool aml_video_started()
 {
   CSysfsPath videostarted{"/sys/class/tsync/videostarted"};
   return (StringUtils::EqualsNoCase(videostarted.Get<std::string>().value_or("0x0"), "0x1"));
+}
+
+void aml_continue_presentation()
+{
+  CAMLCodec::ContinuePresentation();
+}
+
+void aml_end_presentation(bool stop)
+{
+  CAMLCodec::EndPresentation(stop);
 }
 
 int aml_amdv_wait(StreamHdrType hdrType)
