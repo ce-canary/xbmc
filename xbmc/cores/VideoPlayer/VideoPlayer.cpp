@@ -1025,6 +1025,9 @@ bool CVideoPlayer::OpenDemuxStream()
     }
     else if(!m_pDemuxer && m_pInputStream->NextStream() != CDVDInputStream::NEXTSTREAM_NONE)
     {
+      // a released BD-J title end has no data until the disc program acts
+      if (IsBlurayTitleEndWait())
+        break;
       CLog::Log(LOGDEBUG, "{} - New stream available from input, retry open", __FUNCTION__);
       continue;
     }
@@ -1033,7 +1036,8 @@ bool CVideoPlayer::OpenDemuxStream()
 
   if (!m_pDemuxer)
   {
-    CLog::Log(LOGERROR, "{} - Error creating demuxer", __FUNCTION__);
+    if (!IsBlurayTitleEndWait())
+      CLog::Log(LOGERROR, "{} - Error creating demuxer", __FUNCTION__);
     return false;
   }
 
@@ -1822,8 +1826,15 @@ void CVideoPlayer::Process()
     // should we open a new demuxer?
     if (!m_pDemuxer)
     {
-      if (m_pInputStream->NextStream() == CDVDInputStream::NEXTSTREAM_NONE)
+      const CDVDInputStream::ENextStream next = m_pInputStream->NextStream();
+      if (next == CDVDInputStream::NEXTSTREAM_NONE)
         break;
+      // no demuxer opens while the disc program has a released title end to act on
+      if (next == CDVDInputStream::NEXTSTREAM_RETRY && IsBlurayTitleEndWait())
+      {
+        CThread::Sleep(10ms);
+        continue;
+      }
       m_navStop = false;
       m_navStopped = false;
 
@@ -1832,6 +1843,8 @@ void CVideoPlayer::Process()
 
       if (OpenDemuxStream() == false)
       {
+        if (IsBlurayTitleEndWait())
+          continue;
         m_bAbortRequest = true;
         break;
       }
@@ -2007,6 +2020,7 @@ void CVideoPlayer::Process()
 #endif
         CloseStream(m_CurrentVideo, true);
         ReportBlurayItemPlayedOut();
+        m_lastVideoTitleTime = DVD_NOPTS_VALUE;
 
         m_syncStartPtsWait.reset();
         m_navStop = false;
@@ -2017,8 +2031,9 @@ void CVideoPlayer::Process()
         continue;
       }
 
-      // input stream asked us to just retry
-      if(next == CDVDInputStream::NEXTSTREAM_RETRY)
+      // input stream asked us to just retry; a held title end is the end of the data until the
+      // disc program leaves the title
+      if (next == CDVDInputStream::NEXTSTREAM_RETRY && !IsBlurayTitleEndHeld())
       {
         // a BD-J title end waits on the disc program, which acts on its own thread
         CThread::Sleep(IsBlurayTitleEndWait() ? 10ms : 100ms);
@@ -2039,6 +2054,12 @@ void CVideoPlayer::Process()
 
       // if we are caching, start playing it again
       SetCaching(CACHESTATE_DONE);
+
+      if (next == CDVDInputStream::NEXTSTREAM_RETRY)
+      {
+        CThread::Sleep(10ms);
+        continue;
+      }
 
       // while players are still playing, keep going to allow seekbacks
       if (m_VideoPlayerAudio->HasData() ||
@@ -2245,6 +2266,11 @@ void CVideoPlayer::ProcessVideoData(CDemuxStream* pStream, DemuxPacket* pPacket)
 
   if (!drop)
     m_CurrentVideo.packets++;
+  // the last picture shown is the one with the latest pts, not the last one read
+  if (!drop && pPacket->pts != DVD_NOPTS_VALUE &&
+      (m_lastVideoTitleTime == DVD_NOPTS_VALUE ||
+       pPacket->pts + m_offset_pts > m_lastVideoTitleTime))
+    m_lastVideoTitleTime = pPacket->pts + m_offset_pts;
 }
 
 void CVideoPlayer::ProcessSubData(CDemuxStream* pStream, DemuxPacket* pPacket)
@@ -2486,6 +2512,16 @@ bool CVideoPlayer::IsBlurayTitleEndWait() const
 #endif
 }
 
+bool CVideoPlayer::IsBlurayTitleEndHeld() const
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  return bluray && bluray->IsTitleEndHeld();
+#else
+  return false;
+#endif
+}
+
 bool CVideoPlayer::TakeBlurayItemAbandoned()
 {
 #if defined(HAVE_LIBBLURAY)
@@ -2543,6 +2579,16 @@ void CVideoPlayer::ReportBlurayReadPresented()
   if (bluray && !inSync(m_CurrentAudio) && !inSync(m_CurrentVideo) &&
       !m_VideoPlayerAudio->HasData() && !videoLeft)
     bluray->SetReadPresented();
+  // a held title end waits for its last picture; the clock tells the time only with a stream in
+  // sync, and with none in sync and nothing left to play the wait is over
+  if (bluray)
+  {
+    const bool clockRuns = inSync(m_CurrentAudio) || inSync(m_CurrentVideo);
+    const bool drained = !clockRuns && !m_VideoPlayerAudio->HasData() &&
+                         !m_VideoPlayerVideo->HasData();
+    bluray->SetLastPictureTime(drained ? DVD_NOPTS_VALUE : m_lastVideoTitleTime,
+                               clockRuns ? m_clock.GetClock() + m_offset_pts : DVD_NOPTS_VALUE);
+  }
 #endif
 }
 
@@ -5397,6 +5443,7 @@ void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
 {
   m_syncStartPtsWait.reset();
   m_navTail = false;
+  m_lastVideoTitleTime = DVD_NOPTS_VALUE;
 #if defined(HAVE_LIBBLURAY)
   if (const auto bluray = GetBlurayInputStream())
     bluray->ResetPresentedLeft();
