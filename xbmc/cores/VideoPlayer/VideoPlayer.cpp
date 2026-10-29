@@ -1927,8 +1927,11 @@ void CVideoPlayer::Process()
         SetCaching(CACHESTATE_DONE);
         CLog::Log(LOGINFO, "VideoPlayer: next stream, wait for old streams to be finished");
         CloseStream(m_CurrentAudio, true);
+#if defined(HAVE_LIBBLURAY)
         if (m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) && !m_bAbortRequest)
-          aml_continue_presentation();
+          aml_continue_presentation(
+              std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)->GetNextItemClip());
+#endif
         CloseStream(m_CurrentVideo, true);
 
         m_syncStartPtsWait.reset();
