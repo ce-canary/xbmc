@@ -3095,8 +3095,7 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   // for a dual layer item where it could hold the dv output; the enhancement layer type shows only
   // in the RPU, so the next open takes the picture or else that output
   const bool dualLayers = dvEnabled && m_hints.dovi.el_present_flag != 0 &&
-                          m_hints.dovi.dv_profile == DOVI_DUAL_LAYER_PROFILE && dvOutputHold &&
-                          !m_processInfo.GetDoviIsFEL();
+                          m_hints.dovi.dv_profile == DOVI_DUAL_LAYER_PROFILE && dvOutputHold;
   if (!dropped && (!dvEnabled || dualLayers) && !format.interlaced && !format.mvc &&
       NextPlays(format))
   {
@@ -3184,12 +3183,12 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, bool doviIsFEL)
                   : (heldModule == OutputModule::DV && RunsDolbyVision(hints)) ||
                         (heldModule == OutputModule::HDR &&
                          PlaysHdr10Output(hints, m_processInfo.GetIsHdr10Plus()));
-  // the core runs a kept picture with the enhancement layer type of its open; a minimum layer goes
-  // to a minimum one
+  // the core runs a kept picture with the enhancement layer type of its open; a full layer goes
+  // only to a full one, a minimum layer to either
   const bool dualLayer =
       hints.dovi.el_present_flag != 0 && hints.dovi.dv_profile == DOVI_DUAL_LAYER_PROFILE;
   const bool fullLayer = dualLayer && doviIsFEL;
-  const bool convert = take && heldPicture && pictureDv && (pictureFEL || !dualLayer || fullLayer);
+  const bool convert = take && heldPicture && pictureDv && !(pictureFEL ? fullLayer : dualLayer);
   const bool takes = take && (!convert || RunsDolbyVision(hints));
   CLog::Log(LOGDEBUG, "CAMLCodec::{}: {} the held {}", __FUNCTION__, takes ? "takes" : "releases",
             heldPicture ? "picture" : "output");
