@@ -3835,6 +3835,15 @@ CDVDVideoCodec::VCReturn CAMLCodec::GetPicture(VideoPicture *pVideoPicture)
   }
   else if (m_drain && m_buffer_level_ready && (queued_frames == 0))
     return CDVDVideoCodec::VC_EOF;
+  else if (m_drain && m_buffer_level_ready && m_speed != DVD_PLAYSPEED_PAUSE &&
+           std::chrono::system_clock::now() - std::max(m_tp_drain, m_tp_last_frame) >
+               std::chrono::seconds(m_decoder_timeout))
+  {
+    CLog::Log(LOGWARNING, "CAMLCodec::GetPicture: drain ends without frame, {} queued",
+              queued_frames);
+    m_tp_drain = std::chrono::system_clock::now();
+    return CDVDVideoCodec::VC_EOF;
+  }
   else if ((m_drain && m_buffer_level_ready) || (buffer_level > (streambuffer ? 100.0f : 10.0f)))
     return CDVDVideoCodec::VC_NONE;
   else if (ret != EAGAIN || elapsed_since_last_frame > std::chrono::seconds(m_decoder_timeout))
@@ -3846,6 +3855,18 @@ CDVDVideoCodec::VCReturn CAMLCodec::GetPicture(VideoPicture *pVideoPicture)
   }
 
   return CDVDVideoCodec::VC_BUFFER;
+}
+
+void CAMLCodec::SetDrain(bool drain)
+{
+  // a held picture is not decoder silence, but a drain that times out counts up to its timeout
+  const auto now = std::chrono::system_clock::now();
+  if (drain && !m_drain)
+    m_tp_drain = now;
+  else if (!drain && m_drain)
+    m_tp_last_frame += now - std::max(m_tp_drain, m_tp_last_frame);
+
+  m_drain = drain;
 }
 
 void CAMLCodec::SetSpeed(int speed)

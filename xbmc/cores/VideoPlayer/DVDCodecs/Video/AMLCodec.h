@@ -85,7 +85,7 @@ public:
   CDVDVideoCodec::VCReturn GetPicture(VideoPicture* pVideoPicture);
 
   void          SetSpeed(int speed);
-  void          SetDrain(bool drain){m_drain = drain;};
+  void          SetDrain(bool drain);
   void          SetDoviZeroLevel5(bool value);
   void          SetVideoRect(const CRect &SrcRect, const CRect &DestRect);
   void          SetVideoRate(int videoRate);
@@ -233,6 +233,7 @@ private:
   CProcessInfo &m_processInfo;
   int m_decoder_timeout;
   std::chrono::time_point<std::chrono::system_clock> m_tp_last_frame;
+  std::chrono::time_point<std::chrono::system_clock> m_tp_drain;
 
   bool            m_buffer_level_ready;
   float           m_minimum_buffer_level;
