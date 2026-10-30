@@ -551,6 +551,14 @@ void CVideoPlayerVideo::Process()
         m_pVideoCodec->SetCodecControl(DVD_CODEC_CTRL_DRAIN);
         if (!ProcessDecoderOutput(frametime, pts))
           break;
+
+        // a picture dropped in the drain is never rendered, and a decoder that drains until its
+        // frames come back needs its buffer now, not at the next picture
+        if (m_outputSate == OUTPUT_DROPPED && m_picture.videoBuffer)
+        {
+          m_picture.videoBuffer->Release();
+          m_picture.videoBuffer = nullptr;
+        }
       }
     }
     else if (pMsg->IsType(CDVDMsg::GENERAL_PAUSE))
