@@ -1787,19 +1787,11 @@ void CDVDInputStreamBluray::UserInput(bd_vk_key_e vk)
   if (vk == BD_VK_ENTER || vk == BD_VK_POPUP || vk == BD_VK_ROOT_MENU ||
       (vk >= BD_VK_0 && vk <= BD_VK_9))
     m_menuInput = true;
+  // the events of the key reach the player thread through its next read
   int ret = bd_user_input(m_bd, -1, vk);
   if (ret < 0)
   {
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray::UserInput - user input failed");
-  }
-  else
-  {
-    // an event the input stream still holds for the player came first
-    if (m_event.event != BD_EVENT_NONE)
-      ProcessEvent();
-    /* process all queued up events */
-    while (bd_get_event(m_bd, &m_event))
-      ProcessEvent();
   }
 }
 
