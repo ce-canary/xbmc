@@ -5113,8 +5113,14 @@ void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
   if (m_playSpeed == DVD_PLAYSPEED_NORMAL || m_playSpeed == DVD_PLAYSPEED_PAUSE ||
       m_processInfo->IsTempoAllowed(static_cast<float>(m_playSpeed) / DVD_PLAYSPEED_NORMAL))
   {
-    // make sure players are properly flushed, should put them in stalled state
-    auto msg = std::make_shared<CDVDMsgGeneralSynchronize>(1s, SYNCSOURCE_AUDIO | SYNCSOURCE_VIDEO);
+    // make sure players are properly flushed, should put them in stalled state; a player that is
+    // not open never answers
+    unsigned int sources = 0;
+    if (m_VideoPlayerAudio->IsInited())
+      sources |= SYNCSOURCE_AUDIO;
+    if (m_VideoPlayerVideo->IsInited())
+      sources |= SYNCSOURCE_VIDEO;
+    auto msg = std::make_shared<CDVDMsgGeneralSynchronize>(1s, sources);
     m_VideoPlayerAudio->SendMessage(msg, 1);
     m_VideoPlayerVideo->SendMessage(msg, 1);
     msg->Wait(m_bStop, 0);
