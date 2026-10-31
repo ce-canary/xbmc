@@ -311,6 +311,7 @@ inline void CVideoPlayerVideo::SendMessageBack(const std::shared_ptr<CDVDMsg>& p
 
 inline void CVideoPlayerVideo::FlushMessages()
 {
+  m_messageQueue.Flush(CDVDMsg::VIDEO_DRAIN);
   m_messageQueue.Flush();
   m_processInfo.SetLevelVQ(m_messageQueue.GetLevel());
 }
