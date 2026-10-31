@@ -1590,8 +1590,28 @@ void CVideoPlayer::CheckBetterStream(CCurrentStream& current, CDemuxStream* stre
   if (!IsValidStream(current) && (player == NULL || player->IsStalled()))
     CloseStream(current, true);
 
+  if (&current == &m_CurrentAudio && TakeDiscAudioPick(stream))
+    return;
+
   if (IsBetterStream(current, stream))
     OpenStream(current, stream->demuxerId, stream->uniqueId, stream->source);
+}
+
+// a disc program pick of the playing audio starts from the presented picture, like an OSD pick,
+// unless the title cannot seek there
+bool CVideoPlayer::TakeDiscAudioPick(CDemuxStream* stream)
+{
+  if (!m_discAudioPick || stream->type != StreamType::AUDIO ||
+      stream->dvdNavId != m_dvd.iSelectedAudioStream)
+    return false;
+
+  m_discAudioPick = false;
+  if (m_CurrentAudio.id < 0 || !m_State.canseek || IsBlurayTitleEnded() ||
+      (m_navTail && !IsBlurayTailInTitle()) || !IsBetterStream(m_CurrentAudio, stream))
+    return false;
+
+  SwitchAudioStream(stream->demuxerId, stream->uniqueId, stream->source);
+  return true;
 }
 
 void CVideoPlayer::Prepare()
@@ -1612,6 +1632,7 @@ void CVideoPlayer::Prepare()
   m_navTail = false;
   m_navStop = false;
   m_navStopped = false;
+  m_discAudioPick = false;
   m_offset_pts = 0;
   m_CurrentAudio.lastdts = DVD_NOPTS_VALUE;
   m_CurrentVideo.lastdts = DVD_NOPTS_VALUE;
@@ -1803,6 +1824,16 @@ void CVideoPlayer::Process()
 
     if (m_bAbortRequest)
       break;
+
+    // the read may not reach the picked stream before the item ends
+    if (m_discAudioPick && m_pDemuxer)
+    {
+      for (auto stream : m_pDemuxer->GetStreams())
+      {
+        if (TakeDiscAudioPick(stream))
+          break;
+      }
+    }
 
     // a playlist stop flushes the old item once it is taken, by a message or by the read, and a
     // packet read with it belongs to that item
@@ -5606,8 +5637,12 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
       aml_drop_kept_picture(true);
       break;
     case BD_EVENT_AUDIO_STREAM:
+    {
       m_dvd.iSelectedAudioStream = *static_cast<int*>(pData);
+      const auto bluray = GetBlurayInputStream();
+      m_discAudioPick = bluray && bluray->IsAudioStreamPick();
       break;
+    }
 
     case BD_EVENT_PG_TEXTST_STREAM:
       m_dvd.iSelectedSPUStream = *static_cast<int*>(pData);
