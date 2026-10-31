@@ -461,6 +461,7 @@ protected:
   */
   void AdaptForcedSubtitles();
   bool CloseStream(CCurrentStream& current, bool bWaitForBuffers);
+  void SwitchAudioStream(int64_t demuxerId, int iStream, int source);
 
   bool CheckIsCurrent(const CCurrentStream& current, CDemuxStream* stream, DemuxPacket* pkg);
   bool IsReplayedPacket(CDemuxStream* stream, DemuxPacket* packet);
