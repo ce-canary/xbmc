@@ -162,6 +162,8 @@ void SetupUHDSettings(BLURAY* bd)
   bd_set_player_setting(bd, BLURAY_PLAYER_SETTING_UHD_DISPLAY_CAP, displayCap);
 }
 #endif
+
+constexpr uint64_t SOURCE_PACKET_SIZE = 192;
 } // namespace
 
 static int read_blocks(void* handle, void* buf, int lba, int num_blocks)
@@ -598,6 +600,8 @@ void CDVDInputStreamBluray::FreeTitleInfo()
 
   m_titleInfo = nullptr;
   m_clip = nullptr;
+  m_nextClip = nullptr;
+  m_heldClip = nullptr;
   m_endedTitleTime = 0;
   FreeClipInfo();
 }
@@ -1095,6 +1099,7 @@ void CDVDInputStreamBluray::HoldClipStart(const uint8_t* buf, int size)
   m_clipStartOffset = 0;
   m_clipStartHeld = true;
   m_clipStartEnd = bd_tell(m_bd);
+  m_heldClip = GetClipAt(m_clipStartEnd - size);
   CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - holding {} bytes of the new clip", size);
 }
 
@@ -1853,7 +1858,7 @@ void CDVDInputStreamBluray::OpenClipSpan()
 
 CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
 {
-  m_nextClipKnown = false;
+  m_nextClip = nullptr;
   if(!m_navmode || m_hold == HOLD_EXIT || m_hold == HOLD_ERROR)
     return NEXTSTREAM_NONE;
 
@@ -1867,16 +1872,24 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   bool clipLeft = false;
   bool programJump = false;
   bool programStop = false;
-  const auto processEvent = [this, &clipKnown, &clipLeft, &programJump, &programStop]
+  // the clip a discontinuity opened is the one its held read is in
+  const BLURAY_CLIP_INFO* joinClip = nullptr;
+  const auto processEvent = [this, &clipKnown, &clipLeft, &programJump, &programStop, &joinClip]
   {
     switch (m_event.event)
     {
       case BD_EVENT_PLAYITEM:
         clipKnown = true;
+        joinClip = nullptr;
         break;
       case BD_EVENT_SEEK:
+        clipKnown = clipKnown || !clipLeft;
+        joinClip = nullptr;
+        break;
       case BD_EVENT_DISCONTINUITY:
         clipKnown = clipKnown || !clipLeft;
+        if (!clipLeft && !m_clipStart.empty())
+          joinClip = m_heldClip;
         break;
       case BD_EVENT_TITLE:
       case BD_EVENT_PLAYLIST:
@@ -1952,7 +1965,7 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   m_menuInput = false;
   m_itemAbandoned = false;
   m_hold = HOLD_DATA;
-  m_nextClipKnown = clipKnown && m_clip && !programStop;
+  m_nextClip = clipKnown && m_clip && !programStop ? (joinClip ? joinClip : m_clip) : nullptr;
   m_nextItemInPlaylist = !m_playlistLeft;
   m_nextItemSeekTime.reset();
   if (m_nextItemInPlaylist && m_itemSeeked)
@@ -1961,7 +1974,7 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   m_itemSeeked = false;
   // a join within the title plays the old item out to the start of the new one
   m_playedItemEnd =
-      !m_presentedLeft && m_nextClipKnown ? static_cast<int64_t>(m_clip->start_time) - 1 : -1;
+      !m_presentedLeft && m_nextClip ? static_cast<int64_t>(m_nextClip->start_time) - 1 : -1;
   m_presentedLeft = false;
   SelectPendingStreams();
   // the next demuxer reads on from m_readPos, so no lookup reaches the spans before its first one
@@ -2113,9 +2126,25 @@ void CDVDInputStreamBluray::PollEvents()
 
 const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetNextItemClip() const
 {
-  if (!m_nextClipKnown || m_bMVCPlayback || m_hasMVCExtension)
+  if (m_bMVCPlayback || m_hasMVCExtension)
     return nullptr;
-  return m_clip;
+  return m_nextClip;
+}
+
+// the clip of the playlist a title byte position is in, from the packet counts of its angle as
+// libbluray lays the clips out
+const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetClipAt(uint64_t titlePos) const
+{
+  if (!m_titleInfo)
+    return nullptr;
+  uint64_t clipEnd = 0;
+  for (uint32_t i = 0; i < m_titleInfo->clip_count; ++i)
+  {
+    clipEnd += m_titleInfo->clips[i].pkt_count * SOURCE_PACKET_SIZE;
+    if (titlePos < clipEnd)
+      return &m_titleInfo->clips[i];
+  }
+  return nullptr;
 }
 
 // the disc program answers an activation key with its next seek, play item, playlist or title
