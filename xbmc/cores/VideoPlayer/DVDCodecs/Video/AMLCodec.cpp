@@ -3092,10 +3092,11 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
       (dvPolicy == AMDV_FOLLOW_SOURCE &&
        (dvMode == AMDV_OUTPUT_MODE_IPT || dvMode == AMDV_OUTPUT_MODE_IPT_TUNNEL));
   // the keeper does not keep deinterlaced or MVC frames; a running core keeps its own close, except
-  // for a dual layer item where it could hold the dv output; the enhancement layer type shows only
-  // in the RPU, so the next open takes the picture or else that output
+  // for a dual layer item where it could hold the dv output or runs a VS10 mapping; the enhancement
+  // layer type shows only in the RPU, so the next open takes the picture or else that output
   const bool dualLayers = dvEnabled && m_hints.dovi.el_present_flag != 0 &&
-                          m_hints.dovi.dv_profile == DOVI_DUAL_LAYER_PROFILE && dvOutputHold;
+                          m_hints.dovi.dv_profile == DOVI_DUAL_LAYER_PROFILE &&
+                          (dvOutputHold || dvPolicy == AMDV_FORCE_OUTPUT_MODE);
   if (!dropped && (!dvEnabled || dualLayers) && !format.interlaced && !format.mvc &&
       NextPlays(format))
   {
