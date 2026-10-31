@@ -447,6 +447,7 @@ protected:
   void ReportBlurayItemPlayedOut();
   void CloseSubtitleForNextStream();
   bool SelectDiscStream(const SelectionStream& st);
+  bool TakeDiscAudioPick(CDemuxStream* stream);
   bool OpenStream(CCurrentStream& current, int64_t demuxerId, int iStream, int source, bool reset = true);
   bool OpenAudioStream(CDVDStreamInfo& hint, bool reset = true);
   bool OpenVideoStream(CDVDStreamInfo& hint, bool reset = true);
@@ -460,6 +461,7 @@ protected:
   */
   void AdaptForcedSubtitles();
   bool CloseStream(CCurrentStream& current, bool bWaitForBuffers);
+  void SwitchAudioStream(int64_t demuxerId, int iStream, int source);
 
   bool CheckIsCurrent(const CCurrentStream& current, CDemuxStream* stream, DemuxPacket* pkg);
   bool IsReplayedPacket(CDemuxStream* stream, DemuxPacket* packet);
@@ -716,6 +718,7 @@ protected:
   double m_lastVideoTitleTime{DVD_NOPTS_VALUE};
   bool m_navStop{false};
   bool m_navStopped{false};
+  bool m_discAudioPick{false};
 
   CEdl m_Edl;
   bool m_SkipCommercials;
