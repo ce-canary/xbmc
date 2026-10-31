@@ -342,6 +342,7 @@ protected:
     void DropClipStartOnJump();
     bool TakeMenuJump(bool joinsInLine);
     bool AbandonsItem(bool menuJump, bool fromStill) const;
+    const BLURAY_CLIP_INFO* GetClipAt(uint64_t titlePos) const;
 
     /*!
      * \brief Whether so many reads in a row have failed that the disc is taken to have gone.
@@ -415,7 +416,7 @@ protected:
     int64_t m_heldDue{-2};
     int64_t m_reportedTime{-1};
     int64_t m_playedItemEnd{-1};
-    bool m_nextClipKnown{false};
+    const BLURAY_CLIP_INFO* m_nextClip{nullptr};
     bool m_playlistLeft{false};
     bool m_nextItemInPlaylist{false};
     bool m_itemSeeked{false};
@@ -424,6 +425,7 @@ protected:
     size_t m_clipStartOffset{0};
     bool m_clipStartHeld{false};
     uint64_t m_clipStartEnd{0};
+    const BLURAY_CLIP_INFO* m_heldClip{nullptr};
     uint32_t m_pgStreamNumber{0};
     uint32_t m_uoMask{0};
     bool m_pgEnabled{false};
