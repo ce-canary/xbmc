@@ -173,6 +173,10 @@ public:
   //! the presentation graphic display flag libbluray last reported
   bool IsPgEnabled() const { return m_pgEnabled; }
 
+  //! whether the audio stream libbluray last reported changed from a stream of the playing clip, as
+  //! a pick by the disc program or the user does; not set for a play item that lacks the stream
+  bool IsAudioStreamPick() const { return m_audioStreamPick; }
+
   struct ClipTime
   {
     uint64_t inTime{0};
@@ -429,6 +433,8 @@ protected:
     uint64_t m_clipStartEnd{0};
     const BLURAY_CLIP_INFO* m_heldClip{nullptr};
     uint32_t m_pgStreamNumber{0};
+    uint32_t m_audioStreamNumber{0};
+    bool m_audioStreamPick{false};
     uint32_t m_uoMask{0};
     bool m_pgEnabled{false};
     std::optional<int> m_audioPidPending;

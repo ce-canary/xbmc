@@ -832,6 +832,10 @@ void CDVDInputStreamBluray::ProcessEvent() {
     if (m_titleInfo && m_clip && static_cast<uint32_t>(m_clip->audio_stream_count) > (m_event.param - 1))
       pid = m_clip->audio_streams[m_event.param - 1].pid;
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_AUDIO_STREAM {} {}", m_event.param, pid);
+    m_audioStreamPick = pid >= 0 && m_event.param != m_audioStreamNumber && m_titleInfo && m_clip &&
+                        m_audioStreamNumber > 0 &&
+                        m_audioStreamNumber <= static_cast<uint32_t>(m_clip->audio_stream_count);
+    m_audioStreamNumber = m_event.param;
     m_player->OnDiscNavResult(static_cast<void*>(&pid), BD_EVENT_AUDIO_STREAM);
     break;
 
