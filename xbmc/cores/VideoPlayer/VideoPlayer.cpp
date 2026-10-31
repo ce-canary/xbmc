@@ -4011,17 +4011,8 @@ void CVideoPlayer::HandleMessages()
           if (!SelectDiscStream(st))
             continue;
 #endif
-          CloseStream(m_CurrentAudio, false);
-          OpenStream(m_CurrentAudio, st.demuxerId, st.id, st.source);
+          SwitchAudioStream(st.demuxerId, st.id, st.source);
           AdaptForcedSubtitles();
-
-          CDVDMsgPlayerSeek::CMode mode;
-          mode.time = (int)GetUpdatedTime();
-          mode.backward = true;
-          mode.accurate = true;
-          mode.trickplay = true;
-          mode.sync = true;
-          m_messenger.Put(std::make_shared<CDVDMsgPlayerSeek>(mode));
         }
       }
     }
@@ -5459,6 +5450,21 @@ bool CVideoPlayer::CloseStream(CCurrentStream& current, bool bWaitForBuffers)
 
   current.Clear();
   return true;
+}
+
+// drops the queued audio and plays the new stream from the presented time
+void CVideoPlayer::SwitchAudioStream(int64_t demuxerId, int iStream, int source)
+{
+  CloseStream(m_CurrentAudio, false);
+  OpenStream(m_CurrentAudio, demuxerId, iStream, source);
+
+  CDVDMsgPlayerSeek::CMode mode;
+  mode.time = (int)GetUpdatedTime();
+  mode.backward = true;
+  mode.accurate = true;
+  mode.trickplay = true;
+  mode.sync = true;
+  m_messenger.Put(std::make_shared<CDVDMsgPlayerSeek>(mode));
 }
 
 void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
