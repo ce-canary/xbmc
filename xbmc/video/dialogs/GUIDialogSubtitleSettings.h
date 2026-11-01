@@ -28,6 +28,7 @@ public:
 
   // specialization of CGUIWindow
   void FrameMove() override;
+  void OnDeinitWindow(int nextWindowID) override;
 
   static std::string BrowseForSubtitle();
 
@@ -52,6 +53,7 @@ private:
 
   int m_subtitleStream;
   bool m_subtitleVisible;
+  bool m_subtitleDelayChanged{false};
   std::shared_ptr<CSettingInt> m_subtitleStreamSetting;
 
   std::vector<IPlayerSubtitleCaps> m_subtitleCapabilities;

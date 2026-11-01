@@ -607,7 +607,8 @@
   },
   "Player.SetAudioDelay": {
     "type": "method",
-    "description": "Set the audio delay for the current playback",
+    "description":
+        "Set the audio delay for the current playback. A numeric offset, increment and decrement all end the change and send Player.OnPropertyChangeFinished.",
     "transport": "Response",
     "permission": "ControlPlayback",
     "params": [

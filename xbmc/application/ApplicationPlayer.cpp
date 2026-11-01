@@ -824,7 +824,18 @@ void CApplicationPlayer::CommitAVDelay()
 {
   std::shared_ptr<IPlayer> player = GetInternal();
   if (player)
+  {
     player->CommitAVDelay();
+    AnnounceDelay("OnPropertyChangeFinished", "audiodelay", GetVideoSettings().m_AudioDelay);
+  }
+}
+
+void CApplicationPlayer::CommitSubTitleDelay()
+{
+  if (!HasPlayer())
+    return;
+
+  AnnounceDelay("OnPropertyChangeFinished", "subtitledelay", GetVideoSettings().m_SubtitleDelay);
 }
 
 void CApplicationPlayer::SetDynamicRangeCompression(long drc)
