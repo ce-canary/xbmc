@@ -1420,7 +1420,7 @@ double CRenderManager::GetReleaseLead()
 {
   std::unique_lock lock(m_statelock);
 
-  if (m_renderState != STATE_CONFIGURED || !m_pRenderer)
+  if (m_renderState != STATE_CONFIGURED || !m_pRenderer || m_pRenderer->GetPresentLatency() < 0)
     return UNKNOWN_RELEASE_LEAD_MS;
 
   return CalcReleaseLead();
