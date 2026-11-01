@@ -24,6 +24,8 @@ public:
 
   double GetClock(bool interpolated = true);
   double GetClock(double& absolute, bool interpolated = true);
+  //! The clock plus the vsync adjust, read together
+  double GetClockWithVsyncAdjust();
 
   double ErrorAdjust(double error, const char* log);
   void Discontinuity(double clock, double absolute);
@@ -51,7 +53,6 @@ public:
 
   bool GetClockInfo(int& MissedVblanks, double& ClockSpeed, double& RefreshRate) const;
   void SetVsyncAdjust(double adjustment);
-  double GetVsyncAdjust();
 
   void Pause(bool pause);
   bool IsPaused() const;

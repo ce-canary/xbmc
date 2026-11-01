@@ -80,16 +80,18 @@ double CDVDClock::GetClock(double& absolute, bool interpolated /*= true*/)
   return SystemToPlaying(current);
 }
 
+double CDVDClock::GetClockWithVsyncAdjust()
+{
+  std::unique_lock lock(m_critSection);
+
+  const double clock = GetClock();
+  return clock + m_vSyncAdjust;
+}
+
 void CDVDClock::SetVsyncAdjust(double adjustment)
 {
   std::unique_lock lock(m_critSection);
   m_vSyncAdjust = adjustment;
-}
-
-double CDVDClock::GetVsyncAdjust()
-{
-  std::unique_lock lock(m_critSection);
-  return m_vSyncAdjust;
 }
 
 void CDVDClock::Pause(bool pause)
