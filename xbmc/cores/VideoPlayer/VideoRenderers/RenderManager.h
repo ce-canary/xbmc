@@ -193,6 +193,8 @@ protected:
   void StartPresentThread();
   void StopPresentThread();
   void PresentFromVsync();
+  //! Vsync thread: reads the clock sync phase once the vsync step decided its release
+  void ReadVsyncPhase(bool released);
   int GuiSource() const { return m_presenting ? m_guiPresentSource : m_presentsource; }
 
   CBaseRenderer *m_pRenderer = nullptr;
@@ -286,6 +288,7 @@ protected:
     int m_errCount;
     double m_syncOffset;
     bool m_enabled;
+    double m_phasePeriod;
   };
   CClockSync m_clockSync;
 
@@ -307,4 +310,9 @@ protected:
   //! Vsync thread, under m_presentlock: the pts of m_planeSource once it is a new frame
   double m_displayedPts{DVD_NOPTS_VALUE};
   int m_offTimelineSource{-1};
+  //! Under m_presentlock: the clock and its epoch of the last release decision, and whether
+  //! the current vsync step made one
+  double m_releaseClock{0.0};
+  int m_releaseClockEpoch{0};
+  bool m_releaseClockTaken{false};
 };

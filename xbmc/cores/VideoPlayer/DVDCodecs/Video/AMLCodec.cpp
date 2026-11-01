@@ -2832,6 +2832,9 @@ void CAMLCodec::CloseDecoder()
   }
 
   SetPollDevice(-1);
+  // the vsync presenter reads no clock sync phase until a picture is queued or released again
+  if (m_hints.pClock)
+    m_hints.pClock->GetVsyncPhase().EndVsyncPhase();
 
   // never leave vcodec ff/rw or paused.
   if (m_speed != DVD_PLAYSPEED_NORMAL)
