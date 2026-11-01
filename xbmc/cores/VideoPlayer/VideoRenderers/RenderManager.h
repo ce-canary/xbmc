@@ -159,7 +159,7 @@ public:
 
   /**
    * The time in ms from the release of a frame to its scan-out, without the video delay;
-   * 100 until a renderer is configured
+   * 100 until a renderer is configured or when it does not know its present latency
    */
   double GetReleaseLead();
 
