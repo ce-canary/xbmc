@@ -99,6 +99,7 @@ public:
   int           ReleaseFrame(const uint32_t index, bool bDrop = false);
   bool          IsOpen() const { return m_opened; }
   bool          IsRealtimeStream() const { return m_processInfo.IsRealtimeStream(); }
+  double        GetPresentHold() const { return m_presentHold; }
 
   static int    PollFrame();
   static void   SetPollDevice(int device);
@@ -201,6 +202,7 @@ private:
   bool             m_handbackOff{false};
   std::atomic<bool> m_lowerLayers{false};
   bool             m_drainPrebuffer{false};
+  std::atomic<double> m_presentHold{0.0};
   am_private_t    *am_private;
   CDVDStreamInfo   m_hints;
   AMLVideoOutput   m_output;
