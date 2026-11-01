@@ -769,7 +769,9 @@
       "live",
       "currentvideostream",
       "videostreams",
-      "cachepercentage"
+      "cachepercentage",
+      "audiodelay",
+      "subtitledelay"
     ]
   },
   "Player.Property.Value": {
@@ -861,6 +863,12 @@
       },
       "cachepercentage": {
         "$ref": "Player.Position.Percentage"
+      },
+      "audiodelay": {
+        "type": "number"
+      },
+      "subtitledelay": {
+        "type": "number"
       }
     }
   },

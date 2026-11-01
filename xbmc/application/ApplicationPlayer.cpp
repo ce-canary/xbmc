@@ -8,6 +8,7 @@
 
 #include "ApplicationPlayer.h"
 
+#include "PlayListPlayer.h"
 #include "ServiceBroker.h"
 #include "cores/DataCacheCore.h"
 #include "cores/IPlayer.h"
@@ -15,14 +16,28 @@
 #include "cores/playercorefactory/PlayerCoreFactory.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
+#include "interfaces/AnnouncementManager.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/SettingsComponent.h"
+#include "utils/Variant.h"
 #include "video/VideoFileItemClassify.h"
 
 #include <mutex>
 
 using namespace KODI;
 using namespace std::chrono_literals;
+
+namespace
+{
+void AnnounceDelay(const std::string& message, const std::string& property, float value)
+{
+  CVariant data;
+  data["player"]["playerid"] =
+      static_cast<int>(CServiceBroker::GetPlaylistPlayer().GetCurrentPlaylist());
+  data["property"][property] = value;
+  CServiceBroker::GetAnnouncementManager()->Announce(ANNOUNCEMENT::Player, message, data);
+}
+} // namespace
 
 std::shared_ptr<const IPlayer> CApplicationPlayer::GetInternal() const
 {
@@ -789,14 +804,20 @@ void CApplicationPlayer::SetSubTitleDelay(float fValue)
 {
   std::shared_ptr<IPlayer> player = GetInternal();
   if (player)
+  {
     player->SetSubTitleDelay(fValue);
+    AnnounceDelay("OnPropertyChanged", "subtitledelay", fValue);
+  }
 }
 
 void CApplicationPlayer::SetAVDelay(float fValue)
 {
   std::shared_ptr<IPlayer> player = GetInternal();
   if (player)
+  {
     player->SetAVDelay(fValue);
+    AnnounceDelay("OnPropertyChanged", "audiodelay", fValue);
+  }
 }
 
 void CApplicationPlayer::CommitAVDelay()
