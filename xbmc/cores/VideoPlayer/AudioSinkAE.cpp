@@ -108,6 +108,7 @@ unsigned int CAudioSinkAE::AddPackets(const DVDAudioFrame &audioframe)
     if (newTime != m_syncErrorTime)
     {
       m_startSyncError = m_syncErrorTime == 0;
+      m_startSyncErrorExact = m_startSyncError && info.exactStart;
       m_syncErrorTime = info.errortime;
       m_syncError = info.error / 1000 * DVD_TIME_BASE;
       m_resampleRatio = info.rr;
@@ -118,6 +119,7 @@ unsigned int CAudioSinkAE::AddPackets(const DVDAudioFrame &audioframe)
     m_syncErrorTime = 0;
     m_syncError = 0.0;
     m_startSyncError = false;
+    m_startSyncErrorExact = false;
   }
 
   // Use wall-clock deadline independent of playback speed (fixes dimensional error
@@ -231,6 +233,7 @@ void CAudioSinkAE::Flush()
   m_syncError = 0.0;
   m_syncErrorTime = 0;
   m_startSyncError = false;
+  m_startSyncErrorExact = false;
   m_startCut = 0.0;
 }
 
@@ -315,10 +318,12 @@ void CAudioSinkAE::SetSyncErrorCorrection(double correction)
   m_syncError += correction;
 }
 
-bool CAudioSinkAE::TakeStartSyncError()
+bool CAudioSinkAE::TakeStartSyncError(bool& exact)
 {
   const bool startSyncError{m_startSyncError};
+  exact = m_startSyncError && m_startSyncErrorExact;
   m_startSyncError = false;
+  m_startSyncErrorExact = false;
   return startSyncError;
 }
 

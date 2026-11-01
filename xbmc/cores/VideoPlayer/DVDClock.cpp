@@ -177,7 +177,7 @@ double CDVDClock::GetSpeedAdjust() const
   return m_speedAdjust;
 }
 
-double CDVDClock::ErrorAdjust(double error, const char* log)
+double CDVDClock::ErrorAdjust(double error, const char* log, bool exact /* = false */)
 {
   std::unique_lock lock(m_critSection);
 
@@ -186,14 +186,14 @@ double CDVDClock::ErrorAdjust(double error, const char* log)
 
   // skip minor updates while speed adjust is active
   // -> adjusting buffer levels
-  if (m_speedAdjust != 0 && error < DVD_MSEC_TO_TIME(100))
+  if (!exact && m_speedAdjust != 0 && error < DVD_MSEC_TO_TIME(100))
   {
     return 0;
   }
 
   adjustment = error;
 
-  if (m_vSyncAdjust != 0)
+  if (!exact && m_vSyncAdjust != 0)
   {
     // Audio ahead is more noticeable then audio behind video.
     // Correct if aufio is more than 20ms ahead or more then
