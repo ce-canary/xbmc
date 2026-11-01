@@ -187,7 +187,7 @@ struct MsgStreamFFmpegInfo
 class CEngineStats
 {
 public:
-  void Reset(unsigned int sampleRate, bool pcm);
+  void Reset(unsigned int sampleRate, bool pcm, bool keepSinkDelay = false);
   void UpdateSinkDelay(const AEDelayStatus& status, int samples, int pauseMs = 0);
   void AddSamples(int samples, const std::list<CActiveAEStream*>& streams, int pauseMs = 0);
   void GetDelay(AEDelayStatus& status);
