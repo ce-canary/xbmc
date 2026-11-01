@@ -80,6 +80,19 @@ void CGUIDialogSubtitleSettings::FrameMove()
   CGUIDialogSettingsManualBase::FrameMove();
 }
 
+void CGUIDialogSubtitleSettings::OnDeinitWindow(int nextWindowID)
+{
+  if (m_subtitleDelayChanged)
+  {
+    auto& components = CServiceBroker::GetAppComponents();
+    const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+    appPlayer->CommitSubTitleDelay();
+    m_subtitleDelayChanged = false;
+  }
+
+  CGUIDialogSettingsManualBase::OnDeinitWindow(nextWindowID);
+}
+
 bool CGUIDialogSubtitleSettings::OnMessage(CGUIMessage& message)
 {
   if (message.GetMessage() == GUI_MSG_SUBTITLE_DOWNLOADED)
@@ -113,6 +126,8 @@ void CGUIDialogSubtitleSettings::OnSettingChanged(const std::shared_ptr<const CS
   else if (settingId == SETTING_SUBTITLE_DELAY)
   {
     float value = static_cast<float>(std::static_pointer_cast<const CSettingNumber>(setting)->GetValue());
+    if (value != appPlayer->GetVideoSettings().m_SubtitleDelay)
+      m_subtitleDelayChanged = true;
     appPlayer->SetSubTitleDelay(value);
   }
   else if (settingId == SETTING_SUBTITLE_STREAM)
