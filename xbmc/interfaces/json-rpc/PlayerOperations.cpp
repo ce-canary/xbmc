@@ -2259,6 +2259,44 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
   }
   else if (property == "live")
     result = IsPVRChannel();
+  else if (property == "audiodelay")
+  {
+    switch (player)
+    {
+      case Video:
+      {
+        auto& components = CServiceBroker::GetAppComponents();
+        const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+        result = appPlayer->GetVideoSettings().m_AudioDelay;
+        break;
+      }
+
+      case Audio:
+      case Picture:
+      default:
+        result = 0.0;
+        break;
+    }
+  }
+  else if (property == "subtitledelay")
+  {
+    switch (player)
+    {
+      case Video:
+      {
+        auto& components = CServiceBroker::GetAppComponents();
+        const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+        result = appPlayer->GetVideoSettings().m_SubtitleDelay;
+        break;
+      }
+
+      case Audio:
+      case Picture:
+      default:
+        result = 0.0;
+        break;
+    }
+  }
   else
     return InvalidParams;
 
