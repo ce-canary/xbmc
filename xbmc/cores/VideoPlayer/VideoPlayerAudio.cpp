@@ -621,8 +621,8 @@ bool CVideoPlayerAudio::ProcessDecoderOutput(DVDAudioFrame &audioframe)
 
     if (startSyncError || std::abs(syncerror) > DVD_MSEC_TO_TIME(m_disconAdjustTimeMs))
     {
-      double correction =
-          m_pClock->ErrorAdjust(syncerror, "CVideoPlayerAudio::OutputPacket", exactStart);
+      double correction = m_pClock->ErrorAdjust(syncerror, "CVideoPlayerAudio::OutputPacket",
+                                                exactStart, startSyncError);
       if (correction != 0)
       {
         m_audioSink.SetSyncErrorCorrection(-correction);
