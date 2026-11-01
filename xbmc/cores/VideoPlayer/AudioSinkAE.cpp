@@ -231,6 +231,7 @@ void CAudioSinkAE::Flush()
   m_syncError = 0.0;
   m_syncErrorTime = 0;
   m_startSyncError = false;
+  m_startCut = 0.0;
 }
 
 void CAudioSinkAE::AbortAddPackets()
@@ -321,6 +322,11 @@ bool CAudioSinkAE::TakeStartSyncError()
   return startSyncError;
 }
 
+void CAudioSinkAE::SetStartCut(double cut)
+{
+  m_startCut = cut;
+}
+
 double CAudioSinkAE::GetResampleRatio()
 {
   return m_resampleRatio;
@@ -349,6 +355,11 @@ double CAudioSinkAE::GetClockSpeed()
     return m_pClock->GetClockSpeed();
   else
     return 1.0;
+}
+
+double CAudioSinkAE::TakeStartCut()
+{
+  return m_startCut.exchange(0.0) / DVD_TIME_BASE * 1000;
 }
 
 CAEStreamInfo::DataType CAudioSinkAE::GetPassthroughStreamType(AVCodecID codecId,
