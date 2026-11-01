@@ -276,6 +276,7 @@ bool CRenderManager::Configure()
     m_dvdClock.SetVsyncAdjust(0);
     m_overlays.Reset();
     m_overlays.SetStereoMode(m_picture.stereoMode);
+    UpdateLatencyTweak();
 
     m_renderState = STATE_CONFIGURED;
 
@@ -286,7 +287,8 @@ bool CRenderManager::Configure()
 
   m_pConfigPicture.reset();
 
-  m_stateEvent.Set();
+  if (!result)
+    m_stateEvent.Set();
   m_playerPort->VideoParamsChange();
   return result;
 }
@@ -348,8 +350,9 @@ void CRenderManager::FrameMove()
       StopPresentThread();
       if (!Configure())
         return;
-      UpdateLatencyTweak();
       StartPresentThread();
+      // the release lead a waiter reads depends on whether the vsync presenter runs
+      m_stateEvent.Set();
       threadLock.unlock();
       firstFrame = true;
       FrameWait(50ms);
