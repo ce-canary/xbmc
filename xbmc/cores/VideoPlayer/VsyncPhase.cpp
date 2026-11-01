@@ -90,6 +90,30 @@ double CVsyncPhase::ApplyVsyncPhaseReading(double reading, int epoch, bool resta
   return -m_clock.m_vSyncAdjust;
 }
 
+bool CVsyncPhase::ShiftVsyncPhase(double delay, double& phase)
+{
+  std::unique_lock lock(m_clock.m_critSection);
+
+  if (m_state != State::PUBLISHED || m_phasePeriod <= 0 || m_clock.m_speedAdjust != 0 ||
+      m_clock.m_systemUsed != m_clock.m_systemFrequency)
+    return false;
+
+  // the video moves by whole periods, so what the audio has not followed stays within half of one
+  const double owed = m_shift - m_shiftFollowed;
+  const double shift =
+      owed + delay - m_phasePeriod * std::floor((owed + delay) / m_phasePeriod + 0.5) - owed;
+  if (shift != 0)
+  {
+    m_shift += shift;
+    m_generation++;
+    SetVsyncPhase(-m_clock.m_vSyncAdjust - shift);
+  }
+  CLog::Log(LOGDEBUG, "CVsyncPhase::ShiftVsyncPhase - delay:{:.3f} video:{:.3f} shift:{:.3f}",
+            delay / DVD_TIME_BASE, (delay - shift) / DVD_TIME_BASE, shift / DVD_TIME_BASE);
+  phase = -m_clock.m_vSyncAdjust;
+  return true;
+}
+
 void CVsyncPhase::SetVsyncPhase(double vsyncPhase)
 {
   // a wrap moves the clock by a period so the clock minus the phase stays put
