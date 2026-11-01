@@ -188,6 +188,33 @@
     ],
     "returns": null
   },
+  "Player.OnPropertyChangeFinished": {
+    "type": "notification",
+    "description":
+        "An interactive change of a property of the playing item has finished. The property holds its final value.",
+    "params": [
+      {
+        "name": "sender",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "data",
+        "type": "object",
+        "required": true,
+        "properties": {
+          "property": {
+            "$ref": "Player.Property.Value"
+          },
+          "player": {
+            "$ref": "Player.Notifications.Player",
+            "required": true
+          }
+        }
+      }
+    ],
+    "returns": null
+  },
   "Playlist.OnAdd": {
     "type": "notification",
     "description": "A playlist item has been added.",

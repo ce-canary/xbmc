@@ -64,5 +64,6 @@ private:
 
   int m_sliderAction = 0; ///< \brief set to the action id for a slider being displayed \sa ShowSlider
   bool m_audioDelayChanged{false};
+  bool m_subtitleDelayChanged{false};
   KODI::UTILS::MOVING_SPEED::CMovingSpeed m_movingSpeed;
 };
