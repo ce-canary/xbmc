@@ -375,6 +375,11 @@ int CAudioSinkAE::GetSyncPhaseId(double& shift, double& period)
   return id;
 }
 
+bool CAudioSinkAE::TakeSyncShiftCommit()
+{
+  return m_pClock && m_pClock->GetVsyncPhase().TakeVsyncShiftCommit();
+}
+
 double CAudioSinkAE::TakeStartCut()
 {
   return m_startCut.exchange(0.0) / DVD_TIME_BASE * 1000;
