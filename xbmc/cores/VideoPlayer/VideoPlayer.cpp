@@ -4799,6 +4799,11 @@ void CVideoPlayer::SetAVDelay(float fValue)
   m_renderManager.SetDelay(static_cast<int>(std::lround(fValue * 1000.0f)));
 }
 
+void CVideoPlayer::CommitAVDelay()
+{
+  m_renderManager.CommitDelay();
+}
+
 float CVideoPlayer::GetAVDelay()
 {
   return static_cast<float>(m_renderManager.GetDelay()) / 1000.0f;
