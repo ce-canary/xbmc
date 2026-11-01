@@ -348,6 +348,8 @@ protected:
   bool RunStages();
   bool HasWork();
   CSampleBuffer* SyncStream(CActiveAEStream *stream);
+  // takes up to `ms` from the front of `buf`, returns the ms taken
+  double SkipSyncSamples(CActiveAEStream* stream, CSampleBuffer* buf, double ms);
 
   void ResampleSounds();
   bool ResampleSound(CActiveAESound *sound);
