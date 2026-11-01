@@ -379,7 +379,8 @@ void CVideoPlayerVideo::Process()
     MsgQueueReturnCode ret = GetMessage(pMsg, timeout, iPriority);
 
     const bool drainPending = drainWait;
-    onlyPrioMsgs = false;
+    // a packet decoded over a held picture releases it unrendered
+    onlyPrioMsgs = m_outputSate == OUTPUT_AGAIN && m_picture.videoBuffer;
     drainWait = false;
 
     if (MSGQ_IS_ERROR(ret))
