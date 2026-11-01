@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "VsyncPhase.h"
 #include "threads/CriticalSection.h"
 
 #include <memory>
@@ -53,6 +54,7 @@ public:
 
   bool GetClockInfo(int& MissedVblanks, double& ClockSpeed, double& RefreshRate) const;
   void SetVsyncAdjust(double adjustment);
+  CVsyncPhase& GetVsyncPhase() { return m_vsyncPhase; }
 
   void Pause(bool pause);
   bool IsPaused() const;
@@ -85,4 +87,7 @@ protected:
 
   double m_maxspeedadjust;
   CCriticalSection m_speedsection;
+
+  friend class CVsyncPhase;
+  CVsyncPhase m_vsyncPhase{*this};
 };
