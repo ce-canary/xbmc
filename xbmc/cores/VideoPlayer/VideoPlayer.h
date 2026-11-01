@@ -710,6 +710,8 @@ protected:
   XbmcThreads::EndTime<> m_syncTimer;
 
   std::optional<std::chrono::steady_clock::time_point> m_syncStartPtsWait;
+  // set by the seek and chapter handlers after their flush, cleared by every flush and open
+  bool m_seekStart{false};
 
   std::optional<std::chrono::steady_clock::time_point> m_syncWait;
   bool m_navTail{false};
