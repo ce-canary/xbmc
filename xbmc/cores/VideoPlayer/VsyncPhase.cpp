@@ -21,14 +21,6 @@ void CVsyncPhase::SetPhasePeriod(double period)
   m_phasePeriod = period;
 }
 
-double CVsyncPhase::GetPhasePeriod() const
-{
-  std::unique_lock lock(m_clock.m_critSection);
-  if (m_state == State::NONE || m_clock.m_speedAdjust != 0)
-    return 0.0;
-  return m_phasePeriod;
-}
-
 void CVsyncPhase::SetVsyncPhasePending()
 {
   std::unique_lock lock(m_clock.m_critSection);
@@ -147,4 +139,14 @@ int CVsyncPhase::GetVsyncPhaseId()
   if (m_state == State::PENDING || m_epoch != m_clock.m_clockEpoch || m_clock.m_bReset)
     return -1;
   return m_generation;
+}
+
+int CVsyncPhase::FollowVsyncPhase(double& shift, double& period)
+{
+  std::unique_lock lock(m_clock.m_critSection);
+
+  m_shiftFollowed = m_shift;
+  shift = m_shift;
+  period = m_state == State::NONE || m_clock.m_speedAdjust != 0 ? 0.0 : m_phasePeriod;
+  return GetVsyncPhaseId();
 }
