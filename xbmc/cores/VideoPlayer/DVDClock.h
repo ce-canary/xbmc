@@ -28,7 +28,8 @@ public:
   //! The clock plus the vsync adjust, read together
   double GetClockWithVsyncAdjust();
 
-  double ErrorAdjust(double error, const char* log);
+  //! An `exact` error is moved by in full, as the audio engine already quantised it
+  double ErrorAdjust(double error, const char* log, bool exact = false);
   void Discontinuity(double clock, double absolute);
   void Discontinuity(double clock = 0LL)
   {
