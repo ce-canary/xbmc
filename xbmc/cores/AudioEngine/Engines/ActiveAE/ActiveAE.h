@@ -231,6 +231,7 @@ protected:
     unsigned int m_errorTime;
     CAESyncInfo::AESyncState m_syncState;
     bool m_lateStartHandedOver{false};
+    bool m_exactStart;
   };
   std::vector<StreamStats> m_streamStats;
 };
@@ -348,6 +349,8 @@ protected:
   bool RunStages();
   bool HasWork();
   CSampleBuffer* SyncStream(CActiveAEStream *stream);
+  // makes `buf` a pause of up to `ms`, returns the ms it holds
+  double FillSyncPad(CActiveAEStream* stream, CSampleBuffer* buf, double ms);
   // takes up to `ms` from the front of `buf`, returns the ms taken
   double SkipSyncSamples(CActiveAEStream* stream, CSampleBuffer* buf, double ms);
 
