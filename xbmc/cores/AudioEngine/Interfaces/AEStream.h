@@ -48,6 +48,8 @@ public:
     SYNC_ADJUST
   };
   AESyncState state;
+  //! The start error is in whole phase periods, for the clock to move by in full
+  bool exactStart{false};
 };
 
 /**
