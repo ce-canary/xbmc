@@ -2614,12 +2614,6 @@ bool CActiveAE::HasWork()
   return false;
 }
 
-bool CActiveAE::IsTrueHDPassthrough() const
-{
-  return m_mode == MODE_RAW &&
-         m_sinkFormat.m_streamInfo.m_type == CAEStreamInfo::STREAM_TYPE_TRUEHD;
-}
-
 CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
 {
   CSampleBuffer *ret = NULL;
@@ -2670,9 +2664,8 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
 
   // Without resampling, the player moves its clock to the audio once the error exceeds its own
   // limit. Audio starting late is therefore left to the player, as skipping it would lose the
-  // start of the audio. The errors of TrueHD passthrough are scaled down, so they do not tell how
-  // late the audio is.
-  const bool clockFollowsAudio{!stream->m_resampleMode && !IsTrueHDPassthrough()};
+  // start of the audio.
+  const bool clockFollowsAudio{!stream->m_resampleMode};
   const auto keepAudible = [&](double syncError)
   {
     return fabs(syncError) <= threshold ||
