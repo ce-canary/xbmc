@@ -2183,10 +2183,6 @@ bool CActiveAE::RunStages()
     }
   }
 
-  // TrueHD is very jumpy, meaning the frames don't come in equidistantly. They are only smoothed
-  // at the end when the IEC packing happens. Therefore adjust earlier.
-  const bool isTrueHDPassthrough{IsTrueHDPassthrough()};
-
   if (m_settings.lowLatencyMode)
   {
     // m_targetBufferLevel grows progressively from ~20ms (virtual zero buffer and zero latency)
@@ -2199,7 +2195,7 @@ bool CActiveAE::RunStages()
   // The buffer level "GetWaterLevel()" always tries to follow m_targetBufferLevel because when it
   // is lower, audio samples are added, and when it is higher, audio samples stop being added
   // and the level goes down.
-  if ((m_stats.GetWaterLevel() < m_targetBufferLevel || isTrueHDPassthrough) &&
+  if (m_stats.GetWaterLevel() < m_targetBufferLevel &&
       (m_mode != MODE_TRANSCODE || (m_encoderBuffers && !m_encoderBuffers->m_freeSamples.empty())))
   {
     // calculate sync error
