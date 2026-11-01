@@ -127,4 +127,7 @@ private:
   AMLFrameMetadataPtr m_lastMeta;
   AMLFrameMetadataPtr m_frameMeta;
   CAMLFrameMetadataSequencer m_metadataSequencer;
+  double m_dropStartDts{DVD_NOPTS_VALUE};
+  double m_dropEndDts{DVD_NOPTS_VALUE};
+  bool m_pictureSinceReset{false};
 };
