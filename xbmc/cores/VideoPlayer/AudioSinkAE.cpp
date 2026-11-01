@@ -357,6 +357,14 @@ double CAudioSinkAE::GetClockSpeed()
     return 1.0;
 }
 
+double CAudioSinkAE::GetPhasePeriod()
+{
+  if (m_pClock)
+    return m_pClock->GetVsyncPhase().GetPhasePeriod() / DVD_TIME_BASE * 1000;
+  else
+    return 0.0;
+}
+
 double CAudioSinkAE::TakeStartCut()
 {
   return m_startCut.exchange(0.0) / DVD_TIME_BASE * 1000;
