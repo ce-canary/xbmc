@@ -3005,7 +3005,9 @@ void CVideoPlayer::HandlePlaySpeed()
       m_CurrentAudio.syncState = IDVDStreamPlayer::SYNC_INSYNC;
       m_CurrentAudio.avsync = CCurrentStream::AV_SYNC_NONE;
       m_VideoPlayerAudio->SendMessage(
-          std::make_shared<CDVDMsgDouble>(CDVDMsg::GENERAL_RESYNC, m_clock.GetClock()), 1);
+          std::make_shared<CDVDMsgType<SResyncMsg>>(CDVDMsg::GENERAL_RESYNC,
+                                                    SResyncMsg{m_clock.GetClock(), false}),
+          1);
     }
     else if (syncVideo)
     {
@@ -3073,8 +3075,10 @@ void CVideoPlayer::HandlePlaySpeed()
       m_CurrentVideo.syncState = IDVDStreamPlayer::SYNC_INSYNC;
       m_CurrentVideo.avsync = CCurrentStream::AV_SYNC_NONE;
       m_CurrentVideo.starttimePending = false;
-      m_VideoPlayerAudio->SendMessage(
-          std::make_shared<CDVDMsgDouble>(CDVDMsg::GENERAL_RESYNC, clock), 1);
+      m_VideoPlayerAudio->SendMessage(std::make_shared<CDVDMsgType<SResyncMsg>>(
+                                          CDVDMsg::GENERAL_RESYNC, SResyncMsg{clock, m_seekStart}),
+                                      1);
+      m_seekStart = false;
       m_VideoPlayerVideo->SendMessage(
           std::make_shared<CDVDMsgDouble>(CDVDMsg::GENERAL_RESYNC, clock), 1);
       SetCaching(CACHESTATE_DONE);
@@ -3922,6 +3926,7 @@ void CVideoPlayer::HandleMessages()
         m_State.lastSeek = m_clock.GetAbsoluteClock();
 
         FlushBuffers(start, accurate, msg.GetSync());
+        m_seekStart = msg.GetSync();
         CLog::Log(LOGDEBUG, LOGVIDEO, "CVideoPlayer::HandleMessages: flush buffers: dts:{:.3f} lastSeek:{:.3f} clock:{:.3f}", start / 1000000., m_State.lastSeek / 1000000.0, m_clock.GetClock() / 1000000.0);
       }
       else if (m_pDemuxer)
@@ -3934,6 +3939,7 @@ void CVideoPlayer::HandleMessages()
         m_State.dts = start;
 
         FlushBuffers(start, false, true);
+        m_seekStart = true;
         if (m_playSpeed != DVD_PLAYSPEED_PAUSE)
         {
           SetPlaySpeed(DVD_PLAYSPEED_NORMAL);
@@ -3970,6 +3976,7 @@ void CVideoPlayer::HandleMessages()
       const auto FinishChapterSeek = [this, &offset, &start, &newChapter, &seekDone, beforeSeek]()
       {
         FlushBuffers(start, true, true);
+        m_seekStart = true;
         if (start != DVD_NOPTS_VALUE)
         {
           const int64_t targetTime{
@@ -5538,6 +5545,7 @@ void CVideoPlayer::SwitchAudioStream(int64_t demuxerId, int iStream, int source)
 void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
 {
   m_syncStartPtsWait.reset();
+  m_seekStart = false;
   m_navTail = false;
   m_lastVideoTitleTime = DVD_NOPTS_VALUE;
 #if defined(HAVE_LIBBLURAY)
