@@ -82,10 +82,11 @@ bool IsPreferredDeviceAvailable(const AESinkDevice& configured, const AESinkDevi
 }
 } // unnamed namespace
 
-void CEngineStats::Reset(unsigned int sampleRate, bool pcm)
+void CEngineStats::Reset(unsigned int sampleRate, bool pcm, bool keepSinkDelay)
 {
   std::unique_lock lock(m_lock);
-  m_sinkDelay.SetDelay(0.0);
+  if (!keepSinkDelay)
+    m_sinkDelay.SetDelay(0.0);
   m_sinkSampleRate = sampleRate;
   m_bufferedSamples = 0;
   m_bufferedPauseMs = 0;
@@ -1750,7 +1751,8 @@ void CActiveAE::FlushEngine(bool discardOutput)
     CLog::Log(LOGERROR, "ActiveAE::{} - failed to flush", __FUNCTION__);
     m_extError = true;
   }
-  m_stats.Reset(m_sinkFormat.m_sampleRate, m_mode == MODE_PCM);
+  // the sink stored the delay of its device at the flush
+  m_stats.Reset(m_sinkFormat.m_sampleRate, m_mode == MODE_PCM, true);
 }
 
 void CActiveAE::ClearDiscardedBuffers()
