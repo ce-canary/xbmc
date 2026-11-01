@@ -2859,6 +2859,15 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
   // While the error is averaged, samples that will not be skipped stay audible.
   double errorSoFar{0.0};
   const bool audible{stream->m_syncError.GetSoFar(errorSoFar) && keepAudible(errorSoFar)};
+  if (stream->m_syncState == CAESyncInfo::AESyncState::SYNC_MUTE && audible && m_mode == MODE_RAW &&
+      stream->m_silentSinceSyncStart && errorSoFar > 0)
+  {
+    stream->m_syncState = CAESyncInfo::AESyncState::SYNC_INSYNC;
+    stream->m_startPad = errorSoFar;
+    stream->m_syncError.Flush(1000ms);
+    CLog::Log(LOGDEBUG, LOGAUDIO, "ActiveAE::SyncStream - error of {:f}, padded before audible",
+              errorSoFar);
+  }
   if (stream->m_syncState == CAESyncInfo::AESyncState::SYNC_MUTE && audible)
     stream->m_silentSinceSyncStart = false;
   if (stream->m_syncState == CAESyncInfo::AESyncState::SYNC_MUTE && !audible)
@@ -2942,7 +2951,9 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
                 delayed, stream->m_startPad);
       if (delayed > 0)
       {
-        stream->m_startPad -= delayed;
+        // the last pause overshoots by at most half the format step, which is not skipped
+        stream->m_startPad = std::max(stream->m_startPad - delayed, 0.0);
+        stream->m_silentSinceSyncStart = stream->m_silentSinceSyncStart && stream->m_startPad > 0.0;
         // a shift padded over several passes leaves no average of the samples before its end
         if (!stream->m_lateStartHandedOver)
           stream->m_syncError.SetErrorInterval(stream->GetErrorInterval());
