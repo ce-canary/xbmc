@@ -1496,6 +1496,9 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
         m_discardBufferPools.push_back((*it)->m_processingBuffers->GetResampleBuffers());
         m_discardBufferPools.push_back((*it)->m_processingBuffers->GetAtempoBuffers());
         (*it)->m_processingBuffers.reset();
+        // a start cut was measured against the flushed buffers
+        if ((*it)->m_pClock)
+          (*it)->m_pClock->TakeStartCut();
         (*it)->m_syncState = CAESyncInfo::AESyncState::SYNC_START;
       }
       if (!(*it)->m_processingBuffers)
@@ -2701,8 +2704,20 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
     stream->m_lateStartHandedOver = false;
     stream->m_pauseBurstCarry = 0.0;
     stream->m_silentSinceSyncStart = true;
+    stream->m_startCut = stream->m_pClock->TakeStartCut();
     stream->m_syncSinkReports = m_stats.GetSinkReports();
     CLog::Log(LOGDEBUG,"ActiveAE - start sync of audio stream");
+  }
+
+  if (stream->m_syncState == CAESyncInfo::AESyncState::SYNC_MUTE && stream->m_startCut > 0)
+  {
+    CSampleBuffer* buf = stream->m_processingBuffers->m_outputSamples.front();
+    const double skipped = SkipSyncSamples(stream, buf, stream->m_startCut);
+    stream->m_startCut = skipped > 0 ? stream->m_startCut - skipped : 0.0;
+    stream->m_syncError.Flush(100ms);
+    CLog::Log(LOGDEBUG, LOGAUDIO, "ActiveAE::SyncStream - start cut, skip {:.3f}ms", skipped);
+    if (buf->pkt->nb_samples == 0)
+      return ret;
   }
 
   double error;
