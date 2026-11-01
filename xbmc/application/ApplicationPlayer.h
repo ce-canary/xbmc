@@ -154,7 +154,8 @@ public:
   void SetAVDelay(float fValue = 0.0f);
 
   /*!
-   * \brief Ends an interactive change of the audio delay: the player applies it
+   * \brief Ends an interactive change of the audio delay: the player applies it and its final
+   * value is announced
    */
   void CommitAVDelay();
 
@@ -164,6 +165,12 @@ public:
   bool SetPlayerState(const std::string& state);
   void SetSubtitle(int iStream);
   void SetSubTitleDelay(float fValue = 0.0f);
+
+  /*!
+   * \brief Ends an interactive change of the subtitle delay and announces its final value
+   */
+  void CommitSubTitleDelay();
+
   void SetSubtitleVisible(bool bVisible);
 
   /*!

@@ -49,6 +49,12 @@ bool IsAudioDelayAction(int action)
   return action == ACTION_AUDIO_DELAY || action == ACTION_AUDIO_DELAY_MIN ||
          action == ACTION_AUDIO_DELAY_PLUS;
 }
+
+bool IsSubtitleDelayAction(int action)
+{
+  return action == ACTION_SUBTITLE_DELAY || action == ACTION_SUBTITLE_DELAY_MIN ||
+         action == ACTION_SUBTITLE_DELAY_PLUS;
+}
 } // namespace
 
 CPlayerController::CPlayerController()
@@ -202,6 +208,8 @@ bool CPlayerController::OnAction(const CAction &action)
         vs.m_SubtitleDelay -= videoSubsDelayStep;
         if (vs.m_SubtitleDelay < -videoSubsDelayRange)
           vs.m_SubtitleDelay = -videoSubsDelayRange;
+        if (vs.m_SubtitleDelay != appPlayer->GetVideoSettings().m_SubtitleDelay)
+          m_subtitleDelayChanged = true;
         appPlayer->SetSubTitleDelay(vs.m_SubtitleDelay);
 
         ShowSlider(action.GetID(), 22006, appPlayer->GetVideoSettings().m_SubtitleDelay,
@@ -218,6 +226,8 @@ bool CPlayerController::OnAction(const CAction &action)
         vs.m_SubtitleDelay += videoSubsDelayStep;
         if (vs.m_SubtitleDelay > videoSubsDelayRange)
           vs.m_SubtitleDelay = videoSubsDelayRange;
+        if (vs.m_SubtitleDelay != appPlayer->GetVideoSettings().m_SubtitleDelay)
+          m_subtitleDelayChanged = true;
         appPlayer->SetSubTitleDelay(vs.m_SubtitleDelay);
 
         ShowSlider(action.GetID(), 22006, appPlayer->GetVideoSettings().m_SubtitleDelay,
@@ -656,7 +666,8 @@ bool CPlayerController::NextAudioStream()
 void CPlayerController::ShowSlider(int action, int label, float value, float min, float delta, float max, bool modal)
 {
   // the open dialog takes the new slider without a close, which ends the change of the old one
-  if (IsAudioDelayAction(action) != IsAudioDelayAction(m_sliderAction))
+  if (IsAudioDelayAction(action) != IsAudioDelayAction(m_sliderAction) ||
+      IsSubtitleDelayAction(action) != IsSubtitleDelayAction(m_sliderAction))
     OnSliderClose(nullptr);
   m_sliderAction = action;
   if (modal)
@@ -718,6 +729,8 @@ void CPlayerController::OnSliderChange(void *data, CGUISliderControl *slider)
     }
     else if (m_sliderAction == ACTION_SUBTITLE_DELAY)
     {
+      if (slider->GetFloatValue() != appPlayer->GetVideoSettings().m_SubtitleDelay)
+        m_subtitleDelayChanged = true;
       appPlayer->SetSubTitleDelay(slider->GetFloatValue());
     }
     else if (m_sliderAction == ACTION_VOLAMP)
@@ -736,5 +749,10 @@ void CPlayerController::OnSliderClose(void* data)
   {
     m_audioDelayChanged = false;
     appPlayer->CommitAVDelay();
+  }
+  else if (IsSubtitleDelayAction(m_sliderAction) && m_subtitleDelayChanged)
+  {
+    m_subtitleDelayChanged = false;
+    appPlayer->CommitSubTitleDelay();
   }
 }
