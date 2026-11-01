@@ -64,6 +64,7 @@ public:
   double GetClockSpeed() override;
   double TakeStartCut() override;
   double GetPhasePeriod() override;
+  int GetSyncPhaseId() override;
 
   CAEStreamInfo::DataType GetPassthroughStreamType(AVCodecID codecId, int samplerate, int profile);
 
