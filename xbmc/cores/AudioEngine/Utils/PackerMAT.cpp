@@ -140,6 +140,11 @@ TrueHDMajorSyncInfo ParseTrueHDMajorSyncHeaders(const uint8_t* p, int buffsize)
 
   return info;
 }
+
+int GetSampleRate(int ratebits)
+{
+  return (ratebits & 8 ? 44100 : 48000) << (ratebits & 7);
+}
 } // namespace
 
 CPackerMAT::CPackerMAT()
@@ -155,7 +160,7 @@ CPackerMAT::CPackerMAT()
 // case they'll be preceded by smaller frames to keep the average bitrate constant.
 // A constant padding to 2560 bytes can work (this is how the ffmpeg spdifenc module works), however
 // high-bitrate streams can overshoot this size and therefor require proper handling of dynamic padding.
-bool CPackerMAT::PackTrueHD(const uint8_t* data, int size)
+bool CPackerMAT::PackTrueHD(const uint8_t* data, int size, std::optional<double> pts)
 {
   // discard too small packets (cannot be valid)
   if (size < 10)
@@ -304,6 +309,17 @@ bool CPackerMAT::PackTrueHD(const uint8_t* data, int size)
     }
   }
 
+  // the unit is laid out at its input timing and presented at its output timing
+  m_state.lastUnitPts.reset();
+  if (pts && m_state.outputTimingValid)
+  {
+    const int16_t delay = static_cast<int16_t>(m_state.outputTiming - frameSamples - frameTime);
+    const double offset = delay + static_cast<double>(GetCount()) / (64 >> (m_state.ratebits & 7));
+    m_state.lastUnitPts = *pts - offset / GetSampleRate(m_state.ratebits);
+    if (!m_state.bufferPts)
+      m_state.bufferPts = m_state.lastUnitPts;
+  }
+
   // write actual audio data to the buffer
   int remaining = FillDataBuffer(data, size, Type::DATA);
 
@@ -333,15 +349,15 @@ bool CPackerMAT::PackTrueHD(const uint8_t* data, int size)
   return !m_outputQueue.empty();
 }
 
-std::vector<uint8_t> CPackerMAT::GetOutputFrame()
+CPackerMAT::OutputFrame CPackerMAT::GetOutputFrame()
 {
   if (m_outputQueue.empty())
     return {};
 
-  std::vector<uint8_t> buffer = std::move(m_outputQueue.front());
+  OutputFrame frame = std::move(m_outputQueue.front());
   m_outputQueue.pop_front();
 
-  return buffer;
+  return frame;
 }
 
 void CPackerMAT::Reset()
@@ -490,8 +506,18 @@ void CPackerMAT::FlushPacket()
   assert(GetCount() == MAT_BUFFER_SIZE);
 
   // push MAT packet to output queue
-  m_outputQueue.emplace_back(std::move(m_buffer));
+  const std::optional<double> pts = m_state.bufferPts ? m_state.bufferPts : m_state.straddlePts;
+  m_outputQueue.push_back({std::move(m_buffer), pts});
 
   m_buffer.clear();
   m_bufferCount = 0;
+
+  // the last unit written runs into the next buffer, else this buffer's content does
+  if (!m_state.lastUnitPts)
+    m_state.lastUnitPts = pts;
+  if (m_state.lastUnitPts)
+    *m_state.lastUnitPts += static_cast<double>(MAT_BUFFER_SIZE) / (64 >> (m_state.ratebits & 7)) /
+                            GetSampleRate(m_state.ratebits);
+  m_state.straddlePts = m_state.lastUnitPts;
+  m_state.bufferPts.reset();
 }
