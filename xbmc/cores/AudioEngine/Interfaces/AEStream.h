@@ -28,6 +28,8 @@ public:
   virtual double GetClockSpeed() { return 1.0; }
   //! The audio in ms the clock start left out on purpose, once per start
   virtual double TakeStartCut() { return 0.0; }
+  //! Clock moves by whole multiples of this period in ms keep the display sync, 0 if none
+  virtual double GetPhasePeriod() { return 0.0; }
 };
 
 class CAESyncInfo
