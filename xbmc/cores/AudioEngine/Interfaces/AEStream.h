@@ -30,6 +30,8 @@ public:
   virtual double TakeStartCut() { return 0.0; }
   //! Clock moves by whole multiples of this period in ms keep the display sync, 0 if none
   virtual double GetPhasePeriod() { return 0.0; }
+  //! 0 without a clock sync phase, -1 while it is pending, else the id of the published phase
+  virtual int GetSyncPhaseId() { return 0; }
 };
 
 class CAESyncInfo

@@ -2710,6 +2710,7 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
     stream->m_startCut = stream->m_pClock->TakeStartCut();
     stream->m_startPad = 0.0;
     stream->m_exactStart = false;
+    stream->m_syncPhaseId = stream->m_pClock->GetSyncPhaseId();
     stream->m_syncSinkReports = m_stats.GetSinkReports();
     CLog::Log(LOGDEBUG,"ActiveAE - start sync of audio stream");
   }
@@ -2723,6 +2724,19 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
     CLog::Log(LOGDEBUG, LOGAUDIO, "ActiveAE::SyncStream - start cut, skip {:.3f}ms", skipped);
     if (buf->pkt->nb_samples == 0)
       return ret;
+  }
+
+  if (stream->m_syncState == CAESyncInfo::AESyncState::SYNC_MUTE)
+  {
+    // the start sync measures against one published clock sync phase
+    const int syncPhaseId = stream->m_pClock->GetSyncPhaseId();
+    if (syncPhaseId == -1 || syncPhaseId != stream->m_syncPhaseId)
+    {
+      stream->m_syncPhaseId = syncPhaseId;
+      stream->m_syncError.Flush(100ms);
+      CLog::Log(LOGDEBUG, LOGAUDIO, "ActiveAE::SyncStream - start sync held, phase id {:d}",
+                syncPhaseId);
+    }
   }
 
   double error;
