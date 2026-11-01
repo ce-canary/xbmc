@@ -14,6 +14,7 @@
 #pragma once
 
 #include <deque>
+#include <optional>
 #include <stdint.h>
 #include <vector>
 
@@ -26,11 +27,17 @@ enum class Type
 class CPackerMAT
 {
 public:
+  struct OutputFrame
+  {
+    std::vector<uint8_t> data;
+    std::optional<double> pts; // seconds, content time of the first byte
+  };
+
   CPackerMAT();
   ~CPackerMAT() = default;
 
-  bool PackTrueHD(const uint8_t* data, int size);
-  std::vector<uint8_t> GetOutputFrame();
+  bool PackTrueHD(const uint8_t* data, int size, std::optional<double> pts);
+  OutputFrame GetOutputFrame();
   void Reset();
 
 private:
@@ -65,6 +72,12 @@ private:
     // frame-time to output-time offset, used to size the padding carry-forward
     // on the next branch point.
     int32_t nOutputTimeOffset;
+
+    // content time of the current buffer's first byte, from the first audio
+    // unit with a pts that starts in it, else carried from the previous buffer
+    std::optional<double> bufferPts;
+    std::optional<double> straddlePts;
+    std::optional<double> lastUnitPts;
   };
 
   void WriteHeader();
@@ -78,5 +91,5 @@ private:
 
   uint32_t m_bufferCount{0};
   std::vector<uint8_t> m_buffer;
-  std::deque<std::vector<uint8_t>> m_outputQueue;
+  std::deque<OutputFrame> m_outputQueue;
 };
