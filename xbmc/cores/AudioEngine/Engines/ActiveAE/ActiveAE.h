@@ -16,6 +16,7 @@
 #include "threads/SystemClock.h"
 #include "threads/Thread.h"
 
+#include <atomic>
 #include <list>
 #include <memory>
 #include <queue>
@@ -191,6 +192,7 @@ public:
   void UpdateSinkDelay(const AEDelayStatus& status, int samples, int pauseMs = 0);
   void AddSamples(int samples, const std::list<CActiveAEStream*>& streams, int pauseMs = 0);
   void GetDelay(AEDelayStatus& status);
+  unsigned int GetSinkReports();
   void AddStream(unsigned int streamid);
   void RemoveStream(unsigned int streamid);
   void UpdateStream(CActiveAEStream *stream);
@@ -214,6 +216,7 @@ protected:
   int m_bufferedPauseMs{0};
   unsigned int m_sinkSampleRate;
   AEDelayStatus m_sinkDelay;
+  std::atomic<unsigned int> m_sinkReports{0};
   bool m_suspended;
   AEAudioFormat m_sinkFormat;
   bool m_pcmOutput;
