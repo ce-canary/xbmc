@@ -1215,6 +1215,10 @@ unsigned int CActiveAESink::OutputSamples(CSampleBuffer* samples)
       m_stats->UpdateSinkDelay(status, samples->pool ? written : 0);
   }
 
+  // a skipped packet or an emptied buffer writes nothing, the device still holds what it had
+  if (totalFrames == 0)
+    m_sink->GetDelay(status);
+
   if (m_requestedFormat.m_dataFormat == AE_FMT_RAW)
     m_stats->UpdateSinkDelay(status, rawPackets, rawPauseMs);
 
