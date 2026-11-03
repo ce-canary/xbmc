@@ -477,6 +477,9 @@ constexpr const int ACTION_DIALOG_SELECT_AUDIO = 271;
 //! Open the dialog window to select a subtitle stream
 constexpr const int ACTION_DIALOG_SELECT_SUBTITLE = 272;
 
+//! Go to the top menu of the DVD/BR
+constexpr const int ACTION_SHOW_VIDEOTOPMENU = 273;
+
 // Voice actions
 constexpr const int ACTION_VOICE_RECOGNIZE = 300;
 

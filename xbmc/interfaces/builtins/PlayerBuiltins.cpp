@@ -273,6 +273,11 @@ static int PlayerControl(const std::vector<std::string>& params)
     if (appPlayer->IsPlaying())
       appPlayer->OnAction(CAction(ACTION_SHOW_VIDEOMENU));
   }
+  else if (paramlow == "showvideotopmenu")
+  {
+    if (appPlayer->IsPlaying())
+      appPlayer->OnAction(CAction(ACTION_SHOW_VIDEOTOPMENU));
+  }
   else if (StringUtils::StartsWithNoCase(params[0], "partymode"))
   {
     std::string strXspPath;
@@ -827,6 +832,7 @@ static int SubtitleShiftDown(const std::vector<std::string>& params)
 ///     | Partymode(video) **     | Toggles video partymode                | none                        |             |
 ///     | Partymode(path to .xsp) | Partymode for *.xsp-file               | Partymode for *.xsp-file    |             |
 ///     | ShowVideoMenu           | Shows the DVD/BR menu if available     | none                        |             |
+///     | ShowVideoTopMenu        | Goes to the DVD/BR top menu            | none                        | Kodi v22    |
 ///     | FrameAdvance(n) ***     | Advance video by _n_ frames            | none                        | Kodi v18    |
 ///     <br>
 ///     '*' = For these controls\, the PlayerControl built-in function can make use of the 'notify'-parameter. For example: PlayerControl(random\, notify)
