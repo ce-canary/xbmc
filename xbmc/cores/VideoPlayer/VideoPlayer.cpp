@@ -5926,10 +5926,11 @@ bool CVideoPlayer::OnAction(const CAction &action)
       break;
 #endif
     case ACTION_SHOW_VIDEOMENU:   // start button
+    case ACTION_SHOW_VIDEOTOPMENU:
       {
         THREAD_ACTION(action);
         CLog::LogF(LOGDEBUG, "Trying to go to the menu");
-        if (pMenus->OnMenu())
+        if (action.GetID() == ACTION_SHOW_VIDEOTOPMENU ? pMenus->OnTopMenu() : pMenus->OnMenu())
         {
           if (m_playSpeed == DVD_PLAYSPEED_PAUSE)
           {
