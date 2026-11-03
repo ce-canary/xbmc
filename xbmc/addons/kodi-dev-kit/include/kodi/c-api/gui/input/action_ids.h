@@ -690,6 +690,9 @@ enum ADDON_ACTION
   /// @brief <b>`272 `</b>: Open the dialog window to select a subtitle stream
   ADDON_ACTION_DIALOG_SELECT_SUBTITLE = 272,
 
+  /// @brief <b>`273`</b>: Go to the top menu of the DVD/BR
+  ADDON_ACTION_SHOW_VIDEOTOPMENU = 273,
+
   /// @brief <b>`300`</b>: Voice actions
   ADDON_ACTION_VOICE_RECOGNIZE = 300,
 

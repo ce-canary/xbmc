@@ -2564,6 +2564,21 @@ bool CDVDInputStreamBluray::OnMenu()
   return true;
 }
 
+bool CDVDInputStreamBluray::OnTopMenu()
+{
+  if (m_bd == nullptr || !m_navmode)
+    return false;
+
+  MarkMenuInput();
+  if (bd_menu_call(m_bd, -1) <= 0)
+  {
+    CLog::Log(LOGDEBUG, "CDVDInputStreamBluray::OnTopMenu - top menu call failed");
+    m_menuInput = false;
+    return false;
+  }
+  return true;
+}
+
 bool CDVDInputStreamBluray::IsInMenu()
 {
   if(m_bd == nullptr || !m_navmode)

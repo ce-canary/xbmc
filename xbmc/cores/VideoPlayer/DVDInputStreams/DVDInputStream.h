@@ -114,6 +114,11 @@ public:
     * \return true if the menu is successfully opened, false otherwise
     */
     virtual bool OnMenu() = 0;
+
+    /*! \brief Go to the top menu of the disc
+    * \return true if the top menu is called, false otherwise
+    */
+    virtual bool OnTopMenu() = 0;
     virtual void OnBack() = 0;
     virtual void OnNext() = 0;
     virtual void OnPrevious() = 0;
