@@ -359,8 +359,9 @@ protected:
     void PollHeldJoin();
     bool TakeHeldEvent();
     bool ProcessHeldEvents();
-    bool TakeMenuJump(bool joinsInLine);
+    bool TakeMenuJump(bool joinsInLine, bool dataRead);
     bool AbandonsItem(bool menuJump, bool fromStill) const;
+    void MarkMenuInput();
     bool IsJoinHeld() const;
     void DropClipStartOnSeek(bool joinHeld);
     const BLURAY_CLIP_INFO* GetClipAt(uint64_t titlePos) const;
