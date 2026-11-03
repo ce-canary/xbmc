@@ -193,9 +193,13 @@ public:
    */
   std::optional<ClipTime> GetClipTime(uint64_t readPos) const;
 
-  //! hand the clip start held at a join to the demuxer opened after it
-  void ReleaseClipStart() { m_clipStartHeld = false; }
+  //! hand the clip start held at a join to the demuxer opened after it, whose first bytes then
+  //! name its play item
+  void ReleaseClipStart();
   bool IsClipStartHeld() const { return !m_navmode && m_clipStartHeld && !m_clipStart.empty(); }
+  //! whether the stream table of the play item the demuxer opened on lists the Dolby Vision
+  //! enhancement layer `pid`, true when libbluray does not tell
+  bool ListsEnhancementLayer(int pid) const;
   bool IsTitleEnded() const { return m_endedTitleTime > 0; }
   bool IsTitleEndWait() const { return m_titleEndWait; }
   //! whether a held title end still waits for its last picture to be presented
@@ -453,6 +457,8 @@ protected:
     bool m_clipStartHeld{false};
     uint64_t m_clipStartEnd{0};
     const BLURAY_CLIP_INFO* m_heldClip{nullptr};
+    const BLURAY_CLIP_INFO* m_demuxerClip{nullptr};
+    bool m_demuxerClipPending{false};
     uint32_t m_pgStreamNumber{0};
     uint32_t m_audioStreamNumber{0};
     bool m_audioStreamPick{false};
