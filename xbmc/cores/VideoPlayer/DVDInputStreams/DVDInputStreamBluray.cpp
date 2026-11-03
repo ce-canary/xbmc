@@ -1014,7 +1014,7 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
       }
       CheckPresentedLeft();
 
-      const bool menuJump = TakeMenuJump(joinsInLine());
+      const bool menuJump = TakeMenuJump(joinsInLine(), result > 0);
 
       // Before the holding events, as a read crossing a clip boundary returns data with one
       if (result > 0)
@@ -2245,12 +2245,11 @@ void CDVDInputStreamBluray::PollEvents()
       return;
     }
 
+    // a read without data joins no play item in line
+    const bool menuJump = TakeMenuJump(false, false);
     if (m_event.event == BD_EVENT_NONE)
       return;
     CheckPresentedLeft();
-
-    // a read without data joins no play item in line
-    const bool menuJump = TakeMenuJump(false);
 
     switch (m_event.event)
     {
@@ -2395,24 +2394,39 @@ const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetClipAt(uint64_t titlePos) cons
   return nullptr;
 }
 
-// the disc program answers an activation key with its next seek, play item, playlist or title
-bool CDVDInputStreamBluray::TakeMenuJump(bool joinsInLine)
+// the disc program answers a menu key with its next seek, play item, playlist or title
+bool CDVDInputStreamBluray::TakeMenuJump(bool joinsInLine, bool dataRead)
 {
   const bool menuJump =
       m_menuInput &&
       (m_event.event == BD_EVENT_SEEK || m_event.event == BD_EVENT_TITLE ||
        m_event.event == BD_EVENT_PLAYLIST || (m_event.event == BD_EVENT_PLAYITEM && !joinsInLine));
-  if (menuJump)
+  // an HDMV program has run to its suspension once a read returns data or reports nothing
+  if (menuJump || ((dataRead || m_event.event == BD_EVENT_NONE) && m_title && !m_title->bdj))
     m_menuInput = false;
   return menuJump;
 }
 
-// a BD-J play item or seek with no data answers the key, or a notification that came with its
-// picture, and leaves the item unplayed; a still has nothing read past it
+// a jump with no data that answers the key leaves the item unplayed on HDMV and BD-J titles alike,
+// as does a BD-J play item or seek with a notification that came with its picture; a still has
+// nothing read past it
 bool CDVDInputStreamBluray::AbandonsItem(bool menuJump, bool fromStill) const
 {
-  return (menuJump || (m_notificationsHeld && !fromStill)) && m_title && m_title->bdj &&
-         (m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_SEEK);
+  if (!m_title)
+    return false;
+  if (!m_title->bdj)
+    return menuJump && !fromStill;
+  return menuJump || (m_notificationsHeld && !fromStill &&
+                      (m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_SEEK));
+}
+
+// the next jump of the disc program answers the key; an HDMV program takes the events queued
+// before the key first
+void CDVDInputStreamBluray::MarkMenuInput()
+{
+  if (m_title && !m_title->bdj)
+    PollEvents();
+  m_menuInput = true;
 }
 
 bool CDVDInputStreamBluray::TakeItemAbandoned()
@@ -2427,10 +2441,11 @@ void CDVDInputStreamBluray::UserInput(bd_vk_key_e vk)
   if(m_bd == nullptr || !m_navmode)
     return;
 
-  // only an activation key makes the disc program jump away from the item
+  // only an activation key makes a BD-J program jump away from the item; an HDMV move can select
+  // a button that acts at once
   if (vk == BD_VK_ENTER || vk == BD_VK_POPUP || vk == BD_VK_ROOT_MENU ||
-      (vk >= BD_VK_0 && vk <= BD_VK_9))
-    m_menuInput = true;
+      (vk >= BD_VK_0 && vk <= BD_VK_9) || (m_title && !m_title->bdj))
+    MarkMenuInput();
   // the events of the key reach the player thread through its next read
   int ret = bd_user_input(m_bd, -1, vk);
   if (ret < 0)
@@ -2472,7 +2487,7 @@ bool CDVDInputStreamBluray::MouseClick(const CPoint &point)
     return false;
   }
 
-  m_menuInput = true;
+  MarkMenuInput();
   if (bd_user_input(m_bd, -1, BD_VK_MOUSE_ACTIVATE) >= 0)
     return true;
 
@@ -2488,7 +2503,7 @@ bool CDVDInputStreamBluray::OnMenu()
     return false;
   }
 
-  m_menuInput = true;
+  MarkMenuInput();
 
   // we can not use this event to track a possible popup menu state since bd-j blu-rays can
   // toggle the popup menu on their own without firing this event, and if they do this, our
