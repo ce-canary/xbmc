@@ -210,6 +210,9 @@ public:
   //! whether a menu action made the disc program leave the item being played out, reset by the call
   bool TakeItemAbandoned();
 
+  //! whether the disc program left the item being played out and the next stream has not opened
+  bool IsJumpPending() const { return m_itemAbandoned; }
+
   //! run the disc program while the player does not read; its events hold the read as a read would
   void PollEvents();
 
@@ -346,6 +349,9 @@ protected:
     int ReadData(uint8_t* buf, int buf_size);
     void HoldClipStart(const uint8_t* buf, int size);
     void DropClipStartOnJump();
+    void PollHeldJoin();
+    bool TakeHeldEvent();
+    bool ProcessHeldEvents();
     bool TakeMenuJump(bool joinsInLine);
     bool AbandonsItem(bool menuJump, bool fromStill) const;
     bool IsJoinHeld() const;
@@ -412,6 +418,7 @@ protected:
     int64_t m_clockTime{-1};
     bool m_menuInput{false};
     bool m_itemAbandoned{false};
+    std::queue<BD_EVENT> m_heldEvents;
     //! libbluray holds the BD-J notifications of the read until their picture is presented
     bool m_notificationsHeld{false};
     //! the menu range of the last play item read with notifications held, from its title time
