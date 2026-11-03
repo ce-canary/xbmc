@@ -440,6 +440,7 @@ protected:
   bool IsBlurayTitleEndHeld() const;
   bool IsBlurayTailInTitle() const;
   bool TakeBlurayItemAbandoned();
+  bool IsBlurayJumpPending() const;
   bool PollBlurayEvents();
   double GetBlurayPresentedTime();
   void ReportBlurayPresented();
