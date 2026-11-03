@@ -1990,6 +1990,23 @@ CDemuxStream* CDVDDemuxFFmpeg::AddStream(int streamIdx)
       return nullptr;
     }
 
+#ifdef HAVE_LIBBLURAY
+    // UHD BD have a secondary video stream called by Dolby as enhancement layer. A player
+    // decodes it only where the stream table of the play item lists it.
+    if (pStream->id == HDMV_PID_VIDEO_EL && m_pInput->IsStreamType(DVDSTREAM_TYPE_BLURAY))
+    {
+      const bool dvEnabled = aml_dolby_vision_enabled();
+      if (!dvEnabled ||
+          !static_cast<CDVDInputStreamBluray*>(m_pInput.get())->ListsEnhancementLayer(pStream->id))
+      {
+        CLog::Log(LOGDEBUG, "CDVDDemuxFFmpeg::AddStream - discarding Dolby Vision stream ({})",
+                  dvEnabled ? "not in the play item" : "disabled");
+        pStream->discard = AVDISCARD_ALL;
+        return nullptr;
+      }
+    }
+#endif
+
     CDemuxStream* stream = nullptr;
 
     switch (pStream->codecpar->codec_type)
@@ -2592,15 +2609,6 @@ CDemuxStream* CDVDDemuxFFmpeg::AddStream(int streamIdx)
 #ifdef HAVE_LIBBLURAY
     if (m_pInput->IsStreamType(DVDSTREAM_TYPE_BLURAY))
     {
-      // UHD BD have a secondary video stream called by Dolby as enhancement layer.
-      // This is not used by streaming services and devices (ATV, Nvidia Shield, XONE).
-      if (pStream->id == 0x1015 && !aml_dolby_vision_enabled())
-      {
-        CLog::Log(LOGDEBUG, "CDVDDemuxFFmpeg::AddStream - discarding Dolby Vision stream");
-        pStream->discard = AVDISCARD_ALL;
-        delete stream;
-        return nullptr;
-      }
       stream->dvdNavId = pStream->id;
 
       auto it = std::find_if(m_streams.begin(), m_streams.end(),
