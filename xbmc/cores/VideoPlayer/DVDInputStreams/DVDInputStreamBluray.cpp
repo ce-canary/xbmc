@@ -44,6 +44,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -607,6 +608,7 @@ void CDVDInputStreamBluray::FreeTitleInfo()
   m_clip = nullptr;
   m_nextClip = nullptr;
   m_heldClip = nullptr;
+  m_demuxerClip = nullptr;
   m_endedTitleTime = 0;
   FreeClipInfo();
 }
@@ -963,7 +965,15 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
 {
   const int result = ReadData(buf, buf_size);
   if (result > 0)
+  {
     m_readPos += result;
+    // a read returns the bytes of one clip, which ends where libbluray stands
+    if (m_demuxerClipPending)
+    {
+      m_demuxerClip = GetClipAt(bd_tell(m_bd) - result);
+      m_demuxerClipPending = false;
+    }
+  }
   return result;
 }
 
@@ -979,6 +989,11 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
 
     result = std::min(buf_size, static_cast<int>(m_clipStart.size() - m_clipStartOffset));
     std::copy_n(m_clipStart.data() + m_clipStartOffset, result, buf);
+    if (m_demuxerClipPending)
+    {
+      m_demuxerClip = m_heldClip;
+      m_demuxerClipPending = false;
+    }
     m_clipStartOffset += result;
     if (m_clipStartOffset == m_clipStart.size())
       m_clipStart.clear();
@@ -2369,6 +2384,26 @@ bool CDVDInputStreamBluray::ProcessHeldEvents()
     ProcessEvent();
   }
   return jump;
+}
+
+void CDVDInputStreamBluray::ReleaseClipStart()
+{
+  m_clipStartHeld = false;
+  m_demuxerClip = nullptr;
+  m_demuxerClipPending = true;
+}
+
+bool CDVDInputStreamBluray::ListsEnhancementLayer(int pid) const
+{
+#if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 5, 0))
+  if (!m_demuxerClip)
+    return true;
+  return std::ranges::any_of(std::span(m_demuxerClip->dv_streams, m_demuxerClip->dv_stream_count),
+                             [pid](const BLURAY_STREAM_INFO& info)
+                             { return info.pid == static_cast<uint16_t>(pid); });
+#else
+  return true;
+#endif
 }
 
 const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetNextItemClip() const
