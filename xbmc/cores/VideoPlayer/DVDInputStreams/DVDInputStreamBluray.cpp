@@ -590,6 +590,7 @@ void CDVDInputStreamBluray::Close()
   m_clipSpans.clear();
   m_hasMVCExtension = false;
   m_clipStart.clear();
+  m_heldEvents = {};
 
 #if defined(HAS_UDFREAD)
   // Released last, as the files opened from the volume are closed above
@@ -1593,8 +1594,13 @@ bool CDVDInputStreamBluray::PosTime(int ms)
   // a held still belongs to the position the seek left
   if (m_event.event != BD_EVENT_NONE && m_event.event != BD_EVENT_STILL_TIME)
     ProcessEvent();
+  const bool heldJump = ProcessHeldEvents();
   while (bd_get_event(m_bd, &m_event))
     ProcessEvent();
+  if (heldJump && (m_hold == HOLD_NONE || m_hold == HOLD_DATA))
+    m_hold = HOLD_HELD;
+  // the seek flushes the item a jump left
+  m_itemAbandoned = false;
   // the player's own seek repositions an external subtitle
   m_itemSeeked = false;
   OpenClipSpan();
@@ -1651,8 +1657,13 @@ bool CDVDInputStreamBluray::SeekChapter(int ch)
   // a held still belongs to the position the seek left
   if (m_event.event != BD_EVENT_NONE && m_event.event != BD_EVENT_STILL_TIME)
     ProcessEvent();
+  const bool heldJump = ProcessHeldEvents();
   while (bd_get_event(m_bd, &m_event))
     ProcessEvent();
+  if (heldJump && (m_hold == HOLD_NONE || m_hold == HOLD_DATA))
+    m_hold = HOLD_HELD;
+  // the seek flushes the item a jump left
+  m_itemAbandoned = false;
   // the player's own seek repositions an external subtitle
   m_itemSeeked = false;
   OpenClipSpan();
@@ -1829,7 +1840,7 @@ bool CDVDInputStreamBluray::CanSelectStream() const
 {
   // libbluray already plays the play item of a held event, which m_clip does not describe yet
   return m_bd && m_navmode && m_titleInfo && m_clip && m_hold != HOLD_HELD &&
-         m_event.event == BD_EVENT_NONE;
+         m_event.event == BD_EVENT_NONE && m_heldEvents.empty();
 }
 
 // a pick or toggle while the read is held is written once the read resumes, for the play item
@@ -2023,6 +2034,8 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
 
   /* process any current event */
   processEvent();
+  while (TakeHeldEvent())
+    processEvent();
 
   // the old item has entered the decoders, so the disc program may learn the playlist ended
   // once its last picture is presented; after that the wait only takes events
@@ -2206,6 +2219,8 @@ void CDVDInputStreamBluray::PollEvents()
   // a move away from the held clip start shows only in the read position until the next stream
   if (m_hold == HOLD_HELD)
   {
+    if (IsJoinHeld() && m_title && !m_title->bdj)
+      PollHeldJoin();
     if (!m_clipStart.empty() && bd_tell(m_bd) != m_clipStartEnd)
     {
       m_clipStart.clear();
@@ -2274,6 +2289,87 @@ void CDVDInputStreamBluray::PollEvents()
     if (m_hold == HOLD_STILL || m_hold == HOLD_ERROR || m_aborted || m_hold == HOLD_HELD)
       return;
   }
+}
+
+// an HDMV program waits in the playlist while a join is held and runs only on a key, a menu call
+// or a page action; a stream or menu change it makes applies to the playing item at once, other
+// events stay behind the held event, and a jump leaves the held item
+void CDVDInputStreamBluray::PollHeldJoin()
+{
+  const BD_EVENT held = m_event;
+  while (!m_aborted)
+  {
+    if (bd_read_ext(m_bd, nullptr, 0, &m_event) < 0)
+    {
+      m_hold = HOLD_ERROR;
+      break;
+    }
+    if (m_event.event == BD_EVENT_NONE)
+      break;
+    // libbluray reports a stuck program on every later poll
+    if (m_event.event == BD_EVENT_ERROR)
+    {
+      ProcessEvent();
+      break;
+    }
+    CheckPresentedLeft();
+
+    switch (m_event.event)
+    {
+      case BD_EVENT_AUDIO_STREAM:
+      case BD_EVENT_PG_TEXTST:
+      case BD_EVENT_PG_TEXTST_STREAM:
+      case BD_EVENT_IG_STREAM:
+      case BD_EVENT_SECONDARY_AUDIO:
+      case BD_EVENT_SECONDARY_AUDIO_STREAM:
+      case BD_EVENT_SECONDARY_VIDEO:
+      case BD_EVENT_SECONDARY_VIDEO_SIZE:
+      case BD_EVENT_SECONDARY_VIDEO_STREAM:
+      case BD_EVENT_MENU:
+      case BD_EVENT_POPUP:
+      case BD_EVENT_UO_MASK_CHANGED:
+      case BD_EVENT_SOUND_EFFECT:
+      case BD_EVENT_KEY_INTEREST_TABLE:
+        if (m_heldEvents.empty())
+        {
+          ProcessEvent();
+          continue;
+        }
+        break;
+
+      case BD_EVENT_SEEK:
+      case BD_EVENT_TITLE:
+      case BD_EVENT_PLAYLIST:
+        m_itemAbandoned = true;
+        break;
+
+      default:
+        break;
+    }
+    m_heldEvents.push(m_event);
+  }
+  m_event = held;
+}
+
+bool CDVDInputStreamBluray::TakeHeldEvent()
+{
+  if (m_heldEvents.empty())
+    return false;
+  m_event = m_heldEvents.front();
+  m_heldEvents.pop();
+  return true;
+}
+
+// true when the disc program left the playlist during the hold, which the next stream still opens
+bool CDVDInputStreamBluray::ProcessHeldEvents()
+{
+  bool jump = false;
+  while (TakeHeldEvent())
+  {
+    jump = jump || m_event.event == BD_EVENT_TITLE || m_event.event == BD_EVENT_PLAYLIST;
+    ProcessEvent();
+  }
+  return jump;
 }
 
 const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetNextItemClip() const

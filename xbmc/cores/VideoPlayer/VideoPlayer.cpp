@@ -1606,7 +1606,7 @@ bool CVideoPlayer::TakeDiscAudioPick(CDemuxStream* stream)
     return false;
 
   m_discAudioPick = false;
-  if (m_CurrentAudio.id < 0 || !m_State.canseek || IsBlurayTitleEnded() ||
+  if (m_CurrentAudio.id < 0 || !m_State.canseek || IsBlurayTitleEnded() || IsBlurayJumpPending() ||
       (m_navTail && !IsBlurayTailInTitle()) || !IsBetterStream(m_CurrentAudio, stream))
     return false;
 
@@ -2568,6 +2568,16 @@ bool CVideoPlayer::TakeBlurayItemAbandoned()
 #if defined(HAVE_LIBBLURAY)
   const auto bluray = GetBlurayInputStream();
   return bluray && bluray->TakeItemAbandoned();
+#else
+  return false;
+#endif
+}
+
+bool CVideoPlayer::IsBlurayJumpPending() const
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  return bluray && bluray->IsJumpPending();
 #else
   return false;
 #endif
