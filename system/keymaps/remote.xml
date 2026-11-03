@@ -193,6 +193,7 @@
       <menu>OSD</menu>
       <contentsmenu>OSD</contentsmenu>
       <rootmenu>OSD</rootmenu>
+      <topmenu>PlayerControl(ShowVideoTopMenu)</topmenu>
       <start>OSD</start>
       <select>OSD</select>
       <title>PlayerProcessInfo</title>
@@ -338,6 +339,7 @@
       <menu>OSD</menu>
       <contentsmenu>OSD</contentsmenu>
       <rootmenu>OSD</rootmenu>
+      <topmenu>PlayerControl(ShowVideoTopMenu)</topmenu>
       <info>Info</info>
       <title>PlayerProcessInfo</title>
       <zero>Number0</zero>
