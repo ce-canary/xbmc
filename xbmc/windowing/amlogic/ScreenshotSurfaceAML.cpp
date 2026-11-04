@@ -272,7 +272,7 @@ private:
       return true;
     }
 
-    convert.MapToSdr(image, coding, dst, &overlay);
+    convert.MapToSdr(image, coding, dst, &overlay, frame.color.luminance);
 
     if (IsRgb())
       Repack<3>(m_buffer.get(), pixels);

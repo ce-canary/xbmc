@@ -35,7 +35,7 @@ enum class AMLCaptureSignal
 struct AMLCaptureColor
 {
   AMLCaptureSignal signal{AMLCaptureSignal::SDR};
-  //! the source luminance of the SDR tonemap in cd/m2
+  //! the source luminance in cd/m2, for the SDR tonemap and the overlay limit
   float luminance{0.0f};
   //! an output mode display-mapped the signal, so it is not the content
   bool displayMapped{false};
@@ -140,11 +140,14 @@ public:
   static bool Scale(const AMLCaptureImage& src, const AMLCaptureImage& dst);
 
   //! Map src, an AV_PIX_FMT_RGBA64LE image in an HDR coding, to SDR AV_PIX_FMT_RGBA of the same
-  //! size by the inverse of the coding, as the GUI places SDR. Pixels where gui is clear are left.
+  //! size by the inverse of the coding, as the GUI places SDR. A pixel over white, as HDR overlay
+  //! art can be, is limited to peakNits, or white if that is higher, and scaled to white. Pixels
+  //! where gui is clear are left.
   void MapToSdr(const AMLCaptureImage& src,
                 const AMLCaptureCoding& coding,
                 const AMLCaptureImage& dst,
-                const AMLCaptureImage* gui);
+                const AMLCaptureImage* gui,
+                float peakNits);
 
   //! A premultiplied 8-bit pixel that leaves what is under it unchanged
   static bool IsClear(const uint8_t* pixel)

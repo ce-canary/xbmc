@@ -484,6 +484,29 @@ void ToneMapRow(const std::vector<float>& encode,
   }
 }
 
+// art coded past the title's peak is not shown as coded, so its ratios are not its colour
+void LimitToPeakRow(const Planes& p, int width, float peak)
+{
+  for (float* v : p)
+  {
+    for (int x = 0; x < width; x++)
+      v[x] = std::min(v[x], peak);
+  }
+}
+
+// scale a pixel brighter than white back to it: a clip per channel would change its hue
+void LimitToWhiteRow(const Planes& p, int width)
+{
+  for (int x = 0; x < width; x++)
+  {
+    const float brightest = std::max({p[0][x], p[1][x], p[2][x]});
+    if (brightest <= 1.0f)
+      continue;
+    for (float* v : p)
+      v[x] /= brightest;
+  }
+}
+
 // in float, which stays within a code of double for these gamut matrices; the Dolby Vision
 // decode keeps double
 void ApplyRow(const Matrix& m, const Planes& p, int width)
@@ -1046,11 +1069,13 @@ bool CAMLCaptureConvert::Scale(const AMLCaptureImage& src, const AMLCaptureImage
 void CAMLCaptureConvert::MapToSdr(const AMLCaptureImage& src,
                                   const AMLCaptureCoding& coding,
                                   const AMLCaptureImage& dst,
-                                  const AMLCaptureImage* gui)
+                                  const AMLCaptureImage* gui,
+                                  float peakNits)
 {
   const Tables& tables = GetTables();
   const Matrix toSdr =
       ScaleMatrix(BT2020_TO_BT709, PQ_PEAK_NITS / static_cast<double>(coding.whiteNits));
+  const float peak = std::max(peakNits, coding.whiteNits) / static_cast<float>(PQ_PEAK_NITS);
   std::vector<float> rows(static_cast<std::size_t>(src.width) * 3);
   const Planes p = {rows.data(), rows.data() + src.width, rows.data() + 2 * src.width};
   for (int y = 0; y < src.height; y++)
@@ -1081,7 +1106,9 @@ void CAMLCaptureConvert::MapToSdr(const AMLCaptureImage& src,
         for (float* v : span)
           LookupRow(tables.pqToLinear, v, width);
       }
+      LimitToPeakRow(span, width, peak);
       ApplyRow(toSdr, span, width);
+      LimitToWhiteRow(span, width);
       for (float* v : span)
         LookupLogRow(tables.linearToSrgbLog, v, width);
 
