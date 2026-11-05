@@ -9,6 +9,7 @@
 #pragma once
 
 #include "cores/VideoPlayer/VideoRenderers/BaseRenderer.h"
+#include "windowing/Resolution.h"
 
 #include <atomic>
 #include <memory>
@@ -35,7 +36,7 @@ public:
   virtual bool ConfigChanged(const VideoPicture &picture) { return false; };
   virtual CRenderInfo GetRenderInfo() override;
   virtual void UnInit() override {};
-  virtual void Update() override {};
+  virtual void Update() override;
   virtual void RenderUpdate(int index, int index2, bool clear, unsigned int flags, unsigned int alpha) override;
   virtual bool SupportsMultiPassRendering()override { return false; };
   virtual bool Flush(bool saveBuffers) override;
@@ -83,9 +84,10 @@ private:
   bool m_lastWakeVsync{false};
   //! Vsync thread only: the wake that ended its last wait
   VsyncPresentWake m_lastWake{VsyncPresentWake::STEP};
-  //! Codec of the frame last queued from the vsync thread, for the render loop to apply geometry
+  //! Codec for the render loop to apply geometry to: the last queued frame, or a new mode
   std::mutex m_pendingGeometryLock;
   std::shared_ptr<CAMLCodec> m_pendingGeometry;
+  RESOLUTION m_placedResolution{RES_INVALID};
   //! Frame last released to amvideo, whose metadata goes out when the frame is shown
   uint32_t m_releasedToken{0};
   std::shared_ptr<const AMLFrameMetadata> m_releasedMeta;
