@@ -317,13 +317,28 @@ std::shared_ptr<CAMLCodec> CRendererAML::QueueFrame(int index, bool setVideoRect
       if (setVideoRect)
         amli->m_amlCodec->SetVideoRect(m_sourceRect, m_destRect);
       m_presentHold = amli->m_amlCodec->GetPresentHold();
-      m_prevCodec = amli->m_amlCodec;
+      {
+        std::lock_guard<std::mutex> lock(m_pendingGeometryLock);
+        m_prevCodec = amli->m_amlCodec;
+      }
       std::shared_ptr<CAMLCodec> codec = std::move(amli->m_amlCodec); //Mark frame as processed
       m_prevVPts = pts;
       return codec;
     }
   }
   return nullptr;
+}
+
+void CRendererAML::Update()
+{
+  // a new mode leaves the plane at its old size until the next new frame
+  const RESOLUTION res = CServiceBroker::GetWinSystem()->GetGfxContext().GetVideoResolution();
+  std::lock_guard<std::mutex> lock(m_pendingGeometryLock);
+  if (res == m_placedResolution)
+    return;
+
+  m_placedResolution = res;
+  m_pendingGeometry = m_prevCodec.lock();
 }
 
 void CRendererAML::RenderUpdate(int index, int index2, bool clear, unsigned int flags, unsigned int alpha)
@@ -336,17 +351,16 @@ void CRendererAML::RenderUpdate(int index, int index2, bool clear, unsigned int 
     m_captureRect = m_destRect;
   }
 
-  if (m_vsyncPresent)
+  std::shared_ptr<CAMLCodec> codec;
   {
-    std::shared_ptr<CAMLCodec> codec;
-    {
-      std::lock_guard<std::mutex> lock(m_pendingGeometryLock);
-      codec.swap(m_pendingGeometry);
-    }
-    if (codec && codec->IsOpen())
-      codec->SetVideoRect(m_sourceRect, m_destRect);
-    return;
+    std::lock_guard<std::mutex> lock(m_pendingGeometryLock);
+    codec.swap(m_pendingGeometry);
   }
+  if (codec && codec->IsOpen())
+    codec->SetVideoRect(m_sourceRect, m_destRect);
+
+  if (m_vsyncPresent)
+    return;
 
   QueueFrame(index, true);
   PublishReleasedFrame();
