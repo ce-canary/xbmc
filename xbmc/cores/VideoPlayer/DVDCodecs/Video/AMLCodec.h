@@ -87,6 +87,7 @@ public:
 
   void          SetSpeed(int speed);
   void          SetDrain(bool drain);
+  void          SendInputEnd();
   void          SetDoviZeroLevel5(bool value);
   void          SetVideoRect(const CRect &SrcRect, const CRect &DestRect);
   void          SetVideoRate(int videoRate);
@@ -188,6 +189,7 @@ private:
   std::string   GetVfmMap(const std::string &name);
   void          SetVfmMap(const std::string &name, const std::string &map);
   int           DequeueBuffer();
+  void          ClearInputEnd();
   unsigned int  GetDecoderVideoRate();
   std::string   GetHDRStaticMetadata(bool dv_enable);
 
@@ -212,6 +214,8 @@ private:
   bool             m_handbackOff{false};
   std::atomic<bool> m_lowerLayers{false};
   bool             m_drainPrebuffer{false};
+  bool             m_inputWritten{false};
+  bool             m_inputEndSent{false};
   am_private_t    *am_private;
   CDVDStreamInfo   m_hints;
   AMLVideoOutput   m_output;
