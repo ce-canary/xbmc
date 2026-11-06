@@ -1625,6 +1625,7 @@ void CVideoPlayer::Prepare()
   m_CurrentAudioID3.hint.Clear();
   m_SpeedState.Reset(DVD_NOPTS_VALUE);
   m_navTail = false;
+  m_inputEnded = false;
   m_navStop = false;
   m_navStopped = false;
   m_discAudioPick = false;
@@ -2066,10 +2067,11 @@ void CVideoPlayer::Process()
         continue;
       }
 
-      if (m_CurrentVideo.inited)
+      if (!m_inputEnded && m_CurrentVideo.id >= 0 && m_CurrentVideo.packets > 0)
       {
         m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
       }
+      m_inputEnded = true;
 
       m_CurrentAudio.inited = false;
       m_CurrentVideo.inited = false;
@@ -2087,9 +2089,11 @@ void CVideoPlayer::Process()
         continue;
       }
 
-      // while players are still playing, keep going to allow seekbacks
+      // while players are still playing, keep going to allow seekbacks; pictures left in the
+      // decoder are not in its queue, and only the decoder knows when it has shown them
       if (m_VideoPlayerAudio->HasData() ||
-          m_VideoPlayerVideo->HasData())
+          m_VideoPlayerVideo->HasData() ||
+          (m_CurrentVideo.id >= 0 && m_CurrentVideo.packets > 0 && !m_VideoPlayerVideo->IsEOS()))
       {
         CThread::Sleep(100ms);
         continue;
@@ -2105,6 +2109,7 @@ void CVideoPlayer::Process()
     {
       m_syncWait.reset();
       m_navTail = false;
+      m_inputEnded = false;
     }
 
     // see if we can find something better to play
@@ -2681,6 +2686,7 @@ bool CVideoPlayer::PlayNavTail()
   {
     if (m_CurrentVideo.id >= 0)
       m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
+    m_inputEnded = true;
 
     m_CurrentAudio.inited = false;
     m_CurrentVideo.inited = false;
@@ -5482,6 +5488,7 @@ void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
   m_syncStartPtsWait.reset();
   m_seekStart = false;
   m_navTail = false;
+  m_inputEnded = false;
   m_lastVideoTitleTime = DVD_NOPTS_VALUE;
 #if defined(HAVE_LIBBLURAY)
   if (const auto bluray = GetBlurayInputStream())
