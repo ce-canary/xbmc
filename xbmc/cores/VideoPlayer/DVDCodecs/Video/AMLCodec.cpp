@@ -204,6 +204,7 @@ public:
   virtual int codec_set_video_delay_limited_ms(codec_para_t *pcodec,int delay_ms)=0;
   virtual int codec_get_video_delay_limited_ms(codec_para_t *pcodec,int *delay_ms)=0;
   virtual int codec_get_video_cur_delay_ms(codec_para_t *pcodec,int *delay_ms)=0;
+  virtual int codec_set_eos(codec_para_t *pcodec, int is_eos)=0;
 };
 
 class DllLibAmCodec : public DllDynamic, DllLibamCodecInterface
@@ -233,6 +234,7 @@ class DllLibAmCodec : public DllDynamic, DllLibamCodecInterface
   DEFINE_METHOD2(int, codec_set_video_delay_limited_ms, (codec_para_t *p1, int p2))
   DEFINE_METHOD2(int, codec_get_video_delay_limited_ms, (codec_para_t *p1, int *p2))
   DEFINE_METHOD2(int, codec_get_video_cur_delay_ms, (codec_para_t *p1, int *p2))
+  DEFINE_METHOD2(int, codec_set_eos, (codec_para_t *p1, int p2))
 
   BEGIN_METHOD_RESOLVE()
     RESOLVE_METHOD(codec_init)
@@ -257,6 +259,7 @@ class DllLibAmCodec : public DllDynamic, DllLibamCodecInterface
     RESOLVE_METHOD(codec_set_video_delay_limited_ms)
     RESOLVE_METHOD(codec_get_video_delay_limited_ms)
     RESOLVE_METHOD(codec_get_video_cur_delay_ms)
+    RESOLVE_METHOD(codec_set_eos)
   END_METHOD_RESOLVE()
 
 public:
@@ -338,6 +341,11 @@ uint64_t PtsToDecoder(double pts)
 #define CODEC_TAG_RV40  (0x30345652)
 
 #define RW_WAIT_TIME    (5 * 1000) // 20ms
+
+// the firmware stops fetching short of the write pointer, frame mode declares the same margin
+constexpr int HEVC_PADDING_SIZE = 1024 * 16;
+// vdec_status.status bit of the kernel's amstream.h, the amcodec copy lacks it
+constexpr unsigned int VDEC_STAT_EOS = 0x100;
 
 #define P_PRE           (0x02000000)
 #define F_PRE           (0x03000000)
@@ -2301,6 +2309,8 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
 {
   m_speed = DVD_PLAYSPEED_NORMAL;
   m_drain = false;
+  m_inputWritten = false;
+  m_inputEndSent = false;
   m_cur_pts = DVD_NOPTS_VALUE;
   m_dst_rect.SetRect(0, 0, 0, 0);
   m_zoom = -1.0f;
@@ -3399,6 +3409,8 @@ void CAMLCodec::Reset()
 
   // reset the decoder
   m_dll->codec_reset(&am_private->vcodec);
+  ClearInputEnd();
+  m_inputWritten = false;
   m_dll->codec_set_video_delay_limited_ms(&am_private->vcodec, 1000);
 
   dumpfile_close(am_private);
@@ -3433,6 +3445,8 @@ bool CAMLCodec::AddData(uint8_t *pData, size_t iSize, double dts, double pts)
   float new_buffer_level = GetBufferLevel(chunk_size, data_len, free_len, size);
   bool streambuffer(am_private->gcodec.dec_mode == STREAM_TYPE_STREAM);
 
+  ClearInputEnd();
+
   if (!m_buffer_level_ready)
   {
     m_buffer_level_ready = (streambuffer ? (new_buffer_level > 90.0f) : (new_buffer_level > 5.0f));
@@ -3465,6 +3479,8 @@ bool CAMLCodec::AddData(uint8_t *pData, size_t iSize, double dts, double pts)
     );
     return false;
   }
+
+  m_inputWritten = true;
 
   if (am_private->hdr_buf.size > 0)
   {
@@ -3898,6 +3914,9 @@ CDVDVideoCodec::VCReturn CAMLCodec::GetPicture(VideoPicture *pVideoPicture)
   if (m_drain)
     queued_frames = m_amlVideoFile->IOControl(AMLVIDEO_IOC_GET_VFQ, &queued_frames) == 0 ? queued_frames : 0;
 
+  // read before the dequeue, a flush that ends after it would leave its pictures behind
+  const bool inputDrained = !m_drain || IsInputDrained();
+
   // queued_frames counts the pictures handed out and not yet returned, a drain dequeues
   // whatever the decoder has ready
   if (m_buffer_level_ready && (buffer_level > m_minimum_buffer_level || m_drain) && (ret = DequeueBuffer()) == 0)
@@ -3936,7 +3955,7 @@ CDVDVideoCodec::VCReturn CAMLCodec::GetPicture(VideoPicture *pVideoPicture)
 
     return CDVDVideoCodec::VC_PICTURE;
   }
-  else if (m_drain && m_buffer_level_ready && (queued_frames == 0))
+  else if (m_drain && m_buffer_level_ready && (queued_frames == 0) && inputDrained)
     return CDVDVideoCodec::VC_EOF;
   else if (m_drain && m_buffer_level_ready && m_speed != DVD_PLAYSPEED_PAUSE &&
            std::chrono::system_clock::now() - std::max(m_tp_drain, m_tp_last_frame) >
@@ -3958,6 +3977,70 @@ CDVDVideoCodec::VCReturn CAMLCodec::GetPicture(VideoPicture *pVideoPicture)
   }
 
   return CDVDVideoCodec::VC_BUFFER;
+}
+
+void CAMLCodec::SendInputEnd()
+{
+  // a reset decoder holds nothing to mark, and a close right after a flush must not wait for it
+  if (!m_opened || !m_inputWritten || m_inputEndSent ||
+      am_private->gcodec.dec_mode != STREAM_TYPE_STREAM)
+    return;
+
+  std::vector<unsigned char> padding(HEVC_PADDING_SIZE, 0);
+  am_packet_t* pkt = &am_private->am_pkt;
+  pkt->data = padding.data();
+  pkt->data_size = HEVC_PADDING_SIZE;
+  pkt->isvalid = 1;
+  // no pts and no header, these bytes are no packet
+  pkt->newflag = 0;
+
+  int loop = 0;
+  while (pkt->isvalid && loop < 100 && write_av_packet(am_private, pkt) == PLAYER_SUCCESS)
+    loop++;
+
+  const bool padded = !pkt->isvalid;
+  pkt->isvalid = 0;
+  pkt->newflag = 1;
+  pkt->data = nullptr;
+  pkt->data_size = 0;
+
+  if (!padded)
+  {
+    CLog::Log(LOGWARNING, "CAMLCodec::{}: no room for the padding", __FUNCTION__);
+    return;
+  }
+
+  const int ret = m_dll->codec_set_eos(&am_private->vcodec, 1);
+  if (ret != 0)
+  {
+    CLog::Log(LOGWARNING, "CAMLCodec::{}: codec_set_eos failed: {}", __FUNCTION__, ret);
+    return;
+  }
+
+  CLog::Log(LOGINFO, "CAMLCodec::{}: input ended", __FUNCTION__);
+  m_inputEndSent = true;
+  // the wait up to here was for input, the decoder's timeouts count from this mark
+  m_tp_last_frame = std::chrono::system_clock::now();
+  m_tp_drain = m_tp_last_frame;
+}
+
+void CAMLCodec::ClearInputEnd()
+{
+  if (!m_inputEndSent)
+    return;
+
+  m_dll->codec_set_eos(&am_private->vcodec, 0);
+  m_inputEndSent = false;
+}
+
+bool CAMLCodec::IsInputDrained()
+{
+  if (!m_inputEndSent)
+    return true;
+
+  struct vdec_status status = {};
+  return m_dll->codec_get_vdec_state(&am_private->vcodec, &status) == 0 &&
+         (status.status & VDEC_STAT_EOS) != 0;
 }
 
 void CAMLCodec::SetDrain(bool drain)
