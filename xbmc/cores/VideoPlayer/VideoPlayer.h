@@ -720,6 +720,8 @@ protected:
   double m_lastVideoTitleTime{DVD_NOPTS_VALUE};
   bool m_navStop{false};
   bool m_navStopped{false};
+  // the video player has a drain for the video input so far
+  bool m_videoDrained{false};
   bool m_discAudioPick{false};
 
   CEdl m_Edl;
