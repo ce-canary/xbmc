@@ -252,6 +252,11 @@ public:
   virtual void SetCodecControl(int flags) {}
 
   /**
+   * The input has ended, it is not only late. A packet that follows resumes the decoder.
+   */
+  virtual void SetInputEnd() {}
+
+  /**
    * Re-open the decoder.
    * Decoder request to re-open
    */

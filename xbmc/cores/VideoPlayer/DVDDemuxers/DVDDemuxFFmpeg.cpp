@@ -1423,6 +1423,11 @@ DemuxPacket* CDVDDemuxFFmpeg::Read()
   return pPacket;
 }
 
+bool CDVDDemuxFFmpeg::IsAtEnd() const
+{
+  return m_pkt.result == AVERROR_EOF;
+}
+
 void CDVDDemuxFFmpeg::FlushInputSeek()
 {
   Flush();
