@@ -1642,6 +1642,7 @@ void CVideoPlayer::Prepare()
   m_SpeedState.Reset(DVD_NOPTS_VALUE);
   m_seekStart = false;
   m_navTail = false;
+  m_inputEnded = false;
   m_videoDrained = false;
   m_navStop = false;
   m_navStopped = false;
@@ -2121,6 +2122,7 @@ void CVideoPlayer::Process()
             m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
             m_videoDrained = true;
           }
+          m_inputEnded = true;
 
           m_CurrentAudio.inited = false;
           m_CurrentVideo.inited = false;
@@ -2182,6 +2184,7 @@ void CVideoPlayer::Process()
         m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
         m_videoDrained = true;
       }
+      m_inputEnded = true;
 
       m_CurrentAudio.inited = false;
       m_CurrentVideo.inited = false;
@@ -2226,6 +2229,7 @@ void CVideoPlayer::Process()
     {
       m_syncWait.reset();
       m_navTail = false;
+      m_inputEnded = false;
     }
 
     // see if we can find something better to play
@@ -3037,7 +3041,9 @@ void CVideoPlayer::HandlePlaySpeed()
                  (!m_VideoPlayerAudio->AcceptsData() && m_processInfo->GetLevelVQ() < 10);
     bool audio = m_CurrentAudio.id < 0 || (m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_WAITSYNC) ||
                  (m_CurrentAudio.packets == 0 && m_CurrentVideo.packets > threshold) ||
-                 (!m_VideoPlayerVideo->AcceptsData() && m_VideoPlayerAudio->GetLevel() < 10);
+                 (!m_VideoPlayerVideo->AcceptsData() && m_VideoPlayerAudio->GetLevel() < 10) ||
+                 (m_inputEnded && m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_STARTING &&
+                  !m_VideoPlayerAudio->HasData());
 
     const bool syncAudio = m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_WAITSYNC &&
                            (m_CurrentAudio.avsync == CCurrentStream::AV_SYNC_CONT ||
@@ -5686,6 +5692,7 @@ void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
   m_syncStartPtsWait.reset();
   m_seekStart = false;
   m_navTail = false;
+  m_inputEnded = false;
   m_videoDrained = false;
   m_lastVideoTitleTime = DVD_NOPTS_VALUE;
 #if defined(HAVE_LIBBLURAY)

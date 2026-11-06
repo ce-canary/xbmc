@@ -720,6 +720,8 @@ protected:
   double m_lastVideoTitleTime{DVD_NOPTS_VALUE};
   bool m_navStop{false};
   bool m_navStopped{false};
+  // the demuxer has no more for now, the players play out what they hold
+  bool m_inputEnded{false};
   // the video player has a drain for the video input so far
   bool m_videoDrained{false};
   bool m_discAudioPick{false};
