@@ -264,6 +264,11 @@ public:
   virtual DemuxPacket* Read() = 0;
 
   /*
+   * True when the last read found the end of the stream, not an error
+   */
+  virtual bool IsAtEnd() const { return false; }
+
+  /*
    * Seek, time in msec calculated from stream start
    */
   virtual bool SeekTime(double time, bool backwards = false, double* startpts = nullptr) = 0;

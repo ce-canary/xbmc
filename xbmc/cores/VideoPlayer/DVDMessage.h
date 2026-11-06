@@ -62,6 +62,7 @@ public:
     // video related messages
     VIDEO_SET_ASPECT,               // set aspectratio of video
     VIDEO_DRAIN,                    // wait for decoder to output last frame
+    VIDEO_INPUT_END,                // no packets follow for now, the read has not just stalled
 
     // subtitle related messages
     SUBTITLE_CLUTCHANGE,
