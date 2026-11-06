@@ -1339,7 +1339,7 @@ CDVDVideoCodec::VCReturn CDVDVideoCodecAndroidMediaCodec::GetPicture(VideoPictur
     SignalEndOfStream();
     m_state = MEDIACODEC_STATE_WAIT_ENDOFSTREAM;
   }
-  else if (m_state == MEDIACODEC_STATE_FLUSHED)
+  else if (m_state != MEDIACODEC_STATE_WAIT_ENDOFSTREAM)
     return VC_EOF;
 
   return VC_NONE;
