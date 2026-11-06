@@ -353,6 +353,30 @@ void CVideoPlayerVideo::Process()
   bool onlyPrioMsgs = false;
   bool drainWait = false;
 
+  // one pull per pass, so that messages are served while a decoder plays out what it holds
+  const auto drainStep = [&](const std::shared_ptr<CDVDMsg>& msg)
+  {
+    if (!m_pVideoCodec)
+      return false;
+
+    m_pVideoCodec->SetCodecControl(DVD_CODEC_CTRL_DRAIN);
+    if (!ProcessDecoderOutput(frametime, pts))
+      return false;
+
+    // a picture dropped in the drain is never rendered, and a decoder that drains until its
+    // frames come back needs its buffer now, not at the next picture
+    if (m_outputSate == OUTPUT_DROPPED && m_picture.videoBuffer)
+    {
+      m_picture.videoBuffer->Release();
+      m_picture.videoBuffer = nullptr;
+    }
+
+    SendMessageBack(msg);
+    drainWait = m_noPicture;
+    onlyPrioMsgs = m_outputSate == OUTPUT_AGAIN && m_picture.videoBuffer;
+    return true;
+  };
+
   m_vfmt.clear();
   int vfmtCheckCount = 0;
 
@@ -441,30 +465,18 @@ void CVideoPlayerVideo::Process()
       if (!m_stalled)
       {
         // squeeze pictures out
-        while (!m_bStop && m_pVideoCodec)
-        {
-          m_pVideoCodec->SetCodecControl(DVD_CODEC_CTRL_DRAIN);
-          if (!ProcessDecoderOutput(frametime, pts))
-            break;
-
-          // the decoder holds pictures it cannot output yet, the drain handler waits for them
-          if (m_noPicture)
-          {
-            SendMessageBack(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
-            drainWait = true;
-            break;
-          }
-        }
+        if (drainStep(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN)))
+          continue;
 
         CLog::Log(LOGDEBUG, "CVideoPlayerVideo - Stillframe detected, switching to forced {:f} fps",
                   m_fFrameRate);
         m_stalled = true;
-        m_eos = !drainWait;
+        m_eos = true;
         pts += frametime * 4;
       }
 
       // Waiting timed out, output last picture
-      if (m_picture.videoBuffer && !drainWait)
+      if (m_picture.videoBuffer)
       {
         m_picture.pts = pts;
         m_outputSate = OutputPicture(&m_picture);
@@ -569,14 +581,8 @@ void CVideoPlayerVideo::Process()
     {
       auto msg = std::static_pointer_cast<CDVDMsgVideoCodecChange>(pMsg);
 
-      while (!m_bStop && m_pVideoCodec)
-      {
-        m_pVideoCodec->SetCodecControl(DVD_CODEC_CTRL_DRAIN);
-        bool cont = ProcessDecoderOutput(frametime, pts);
-
-        if (!cont)
-          break;
-      }
+      if (drainStep(pMsg))
+        continue;
 
       OpenStream(msg->m_hints, std::move(msg->m_codec));
       msg->m_codec = NULL;
@@ -588,29 +594,9 @@ void CVideoPlayerVideo::Process()
     }
     else if (pMsg->IsType(CDVDMsg::VIDEO_DRAIN))
     {
-      while (!m_bStop && m_pVideoCodec)
-      {
-        m_pVideoCodec->SetCodecControl(DVD_CODEC_CTRL_DRAIN);
-        if (!ProcessDecoderOutput(frametime, pts))
-          break;
-
-        // a picture dropped in the drain is never rendered, and a decoder that drains until its
-        // frames come back needs its buffer now, not at the next picture
-        if (m_outputSate == OUTPUT_DROPPED && m_picture.videoBuffer)
-        {
-          m_picture.videoBuffer->Release();
-          m_picture.videoBuffer = nullptr;
-        }
-
-        // the decoder holds frames it cannot output yet, serve messages before retrying
-        if (m_noPicture)
-        {
-          SendMessageBack(pMsg);
-          drainWait = true;
-          break;
-        }
-      }
-      m_eos = !drainWait;
+      // not finished while the step runs, the requeued drain is out of the queue
+      m_eos = false;
+      m_eos = !drainStep(pMsg);
     }
     else if (pMsg->IsType(CDVDMsg::GENERAL_PAUSE))
     {
