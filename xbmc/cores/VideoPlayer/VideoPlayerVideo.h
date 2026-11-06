@@ -68,7 +68,7 @@ public:
   void SetSubtitleDelay(double delay) override { m_iSubtitleDelay = delay; }
   bool IsStalled() const override { return m_stalled; }
   bool IsRewindStalled() const override { return m_rewindStalled; }
-  bool IsEOS() override { return m_eos; }
+  bool IsEOS() override;
   double GetCurrentPts() override;
   double GetOutputDelay() override; /* returns the expected delay, from that a packet is put in queue */
   std::string GetPlayerInfo() override;
