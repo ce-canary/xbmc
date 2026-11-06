@@ -804,6 +804,12 @@ void CDVDVideoCodecAmlogic::SetCodecControl(int flags)
   }
 }
 
+void CDVDVideoCodecAmlogic::SetInputEnd()
+{
+  if (m_Codec)
+    m_Codec->SendInputEnd();
+}
+
 int CDVDVideoCodecAmlogic::GetDataLevel() const
 {
   if (m_Codec)
