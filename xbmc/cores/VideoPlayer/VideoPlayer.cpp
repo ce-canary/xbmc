@@ -2045,6 +2045,10 @@ void CVideoPlayer::Process()
         continue;
       }
 
+      // a read without a packet at a still is the end of the input until the disc moves on
+      if (m_dvd.state == DVDSTATE_STILL)
+        SendVideoInputEnd();
+
       // check for a still frame state
       if (std::shared_ptr<CDVDInputStream::IMenus> pStream = std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream))
       {
@@ -2119,6 +2123,12 @@ void CVideoPlayer::Process()
 
       if (!m_inputEnded && m_CurrentVideo.id >= 0 && m_CurrentVideo.packets > 0)
       {
+        // a demuxer can come back empty on a late read, a disc that gets here has no next item;
+        // the input's EOF needs a read past the last byte, which a demuxer may never make
+        if (m_pInputStream->IsEOF() || (m_pDemuxer && m_pDemuxer->IsAtEnd()) ||
+            std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream))
+          SendVideoInputEnd();
+
         m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
       }
       m_inputEnded = true;
@@ -2161,6 +2171,10 @@ void CVideoPlayer::Process()
       CDVDDemuxUtils::FreeDemuxPacket(pPacket);
       continue;
     }
+
+    // the still state can leave and return while packets flow, only new input needs a new end
+    if (pStream->type == StreamType::VIDEO)
+      m_videoInputEndSent = false;
 
     if (STREAM_SOURCE_MASK(pStream->source) != STREAM_SOURCE_DEMUX_SUB)
     {
@@ -2767,7 +2781,10 @@ bool CVideoPlayer::PlayNavTail()
   if (!m_navTail)
   {
     if (m_CurrentVideo.id >= 0)
+    {
+      SendVideoInputEnd();
       m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
+    }
     m_inputEnded = true;
 
     m_CurrentAudio.inited = false;
@@ -2780,6 +2797,16 @@ bool CVideoPlayer::PlayNavTail()
     m_navTail = true;
   }
   return true;
+}
+
+// queues behind the last packet, once for each run of input
+void CVideoPlayer::SendVideoInputEnd()
+{
+  if (m_CurrentVideo.id < 0 || m_CurrentVideo.packets == 0 || m_videoInputEndSent)
+    return;
+
+  m_videoInputEndSent = true;
+  m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_INPUT_END));
 }
 
 // seeks in the tail are dropped, as they would act on the next item, unless the read is held in
