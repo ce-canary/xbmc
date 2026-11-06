@@ -2994,7 +2994,9 @@ void CVideoPlayer::HandlePlaySpeed()
                  (!m_VideoPlayerAudio->AcceptsData() && m_processInfo->GetLevelVQ() < 10);
     bool audio = m_CurrentAudio.id < 0 || (m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_WAITSYNC) ||
                  (m_CurrentAudio.packets == 0 && m_CurrentVideo.packets > threshold) ||
-                 (!m_VideoPlayerVideo->AcceptsData() && m_VideoPlayerAudio->GetLevel() < 10);
+                 (!m_VideoPlayerVideo->AcceptsData() && m_VideoPlayerAudio->GetLevel() < 10) ||
+                 (m_inputEnded && m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_STARTING &&
+                  !m_VideoPlayerAudio->HasData());
 
     const bool syncAudio = m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_WAITSYNC &&
                            (m_CurrentAudio.avsync == CCurrentStream::AV_SYNC_CONT ||
