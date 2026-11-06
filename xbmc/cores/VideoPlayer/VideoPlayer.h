@@ -446,6 +446,7 @@ protected:
   void ReportBlurayItemPlayedOut();
   void CloseSubtitleForNextStream();
   bool PlayNavTail();
+  void SendVideoInputEnd();
   bool DropInNavTail(CDVDMsg& msg);
   bool SelectDiscStream(const SelectionStream& st);
   bool TakeDiscAudioPick(CDemuxStream* stream);
@@ -718,6 +719,7 @@ protected:
   double m_lastVideoTitleTime{DVD_NOPTS_VALUE};
   bool m_navStop{false};
   bool m_navStopped{false};
+  bool m_videoInputEnded{false};
   // the demuxer has no more for now, the players play out what they hold
   bool m_inputEnded{false};
   bool m_discAudioPick{false};

@@ -258,6 +258,7 @@ void CVideoPlayerVideo::CloseStream(bool bWaitForBuffers)
   // wait until buffers are empty
   if (bWaitForBuffers && m_speed > 0)
   {
+    SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_INPUT_END), 0);
     SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN), 0);
     m_messageQueue.WaitUntilEmpty();
   }
@@ -321,6 +322,7 @@ inline void CVideoPlayerVideo::SendMessageBack(const std::shared_ptr<CDVDMsg>& p
 inline void CVideoPlayerVideo::FlushMessages()
 {
   m_messageQueue.Flush(CDVDMsg::VIDEO_DRAIN);
+  m_messageQueue.Flush(CDVDMsg::VIDEO_INPUT_END);
   m_messageQueue.Flush();
   m_processInfo.SetLevelVQ(m_messageQueue.GetLevel());
 }
@@ -574,6 +576,9 @@ void CVideoPlayerVideo::Process()
     {
       auto msg = std::static_pointer_cast<CDVDMsgVideoCodecChange>(pMsg);
 
+      if (m_pVideoCodec)
+        m_pVideoCodec->SetInputEnd();
+
       if (drainStep(pMsg))
         continue;
 
@@ -584,6 +589,11 @@ void CVideoPlayerVideo::Process()
         m_picture.videoBuffer->Release();
         m_picture.videoBuffer = nullptr;
       }
+    }
+    else if (pMsg->IsType(CDVDMsg::VIDEO_INPUT_END))
+    {
+      if (m_pVideoCodec)
+        m_pVideoCodec->SetInputEnd();
     }
     else if (pMsg->IsType(CDVDMsg::VIDEO_DRAIN))
     {

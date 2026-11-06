@@ -96,6 +96,7 @@ public:
   std::string GetFileName() override;
 
   DemuxPacket* Read() override;
+  bool IsAtEnd() const override;
   DemuxPacket* ReadInternal(bool keep);
 
   bool SeekTime(double time, bool backwards = false, double* startpts = NULL) override;
