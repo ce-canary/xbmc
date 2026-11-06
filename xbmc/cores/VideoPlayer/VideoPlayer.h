@@ -447,6 +447,8 @@ protected:
   void ReportBlurayReadPresented();
   void ReportBlurayItemPlayedOut();
   void CloseSubtitleForNextStream();
+  void SendVideoInputEnd();
+  void SendVideoDrain();
   bool SelectDiscStream(const SelectionStream& st);
   bool TakeDiscAudioPick(CDemuxStream* stream);
   bool OpenStream(CCurrentStream& current, int64_t demuxerId, int iStream, int source, bool reset = true);
@@ -720,6 +722,7 @@ protected:
   double m_lastVideoTitleTime{DVD_NOPTS_VALUE};
   bool m_navStop{false};
   bool m_navStopped{false};
+  bool m_videoInputEndSent{false};
   // the demuxer has no more for now, the players play out what they hold
   bool m_inputEnded{false};
   // the video player has a drain for the video input so far
