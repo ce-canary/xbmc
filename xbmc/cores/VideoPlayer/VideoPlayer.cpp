@@ -2783,6 +2783,24 @@ bool CVideoPlayer::SelectDiscStream(const SelectionStream& st)
   return true;
 }
 
+void CVideoPlayer::ReportAVStarted()
+{
+  // Activate the fullscreen-video skin now that streams are ready, so
+  // video frames will fully paint the swap chain from the first frame
+  // the skin is visible.
+  if (m_playerOptions.fullscreen)
+  {
+    CServiceBroker::GetAppMessenger()->PostMsg(TMSG_SWITCHTOFULLSCREEN);
+  }
+
+  IPlayerCallback *cb = &m_callback;
+  CFileItem fileItem = m_item;
+  m_outboundEvents->Submit([=]() {
+    cb->OnAVStarted(fileItem);
+  });
+  m_State.streamsReady = true;
+}
+
 void CVideoPlayer::HandlePlaySpeed()
 {
   const bool isInMenu = IsInMenuInternal();
@@ -3048,22 +3066,7 @@ void CVideoPlayer::HandlePlaySpeed()
       m_syncTimer.Set(3000ms);
 
       if (!m_State.streamsReady)
-      {
-        // Activate the fullscreen-video skin now that streams are ready, so
-        // video frames will fully paint the swap chain from the first frame
-        // the skin is visible.
-        if (m_playerOptions.fullscreen)
-        {
-          CServiceBroker::GetAppMessenger()->PostMsg(TMSG_SWITCHTOFULLSCREEN);
-        }
-
-        IPlayerCallback *cb = &m_callback;
-        CFileItem fileItem = m_item;
-        m_outboundEvents->Submit([=]() {
-          cb->OnAVStarted(fileItem);
-        });
-        m_State.streamsReady = true;
-      }
+        ReportAVStarted();
     }
     else
     {
