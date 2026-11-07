@@ -881,7 +881,15 @@ void CDVDInputStreamBluray::ProcessEvent() {
     break;
 
   case BD_EVENT_IDLE:
-    KODI::TIME::Sleep(100ms);
+    // the disc program plays no playlist until its next act, as after a released title end
+    if (m_navmode && m_event.param == 0)
+    {
+      if (!m_titleEndWait)
+        ReleaseTitle();
+      m_titleEndWait = true;
+    }
+    else
+      KODI::TIME::Sleep(100ms);
     break;
 
   case BD_EVENT_SOUND_EFFECT:
