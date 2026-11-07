@@ -1097,7 +1097,9 @@ void CVideoPlayer::UpdateHasVideoAudio()
   // a playlist item transition (e.g. music video to audio-only track) reuses this
   // running player instance without a CloseFile(), so a stale true from the previous
   // item must be cleared here if no stream was opened for the current item
-  if (m_CurrentVideo.id < 0)
+
+  // a Blu-ray disc in menu mode presents video and menus for the whole playback
+  if (m_CurrentVideo.id < 0 && !m_blurayMenu)
     m_HasVideo = false;
   if (m_CurrentAudio.id < 0)
     m_HasAudio = false;
@@ -1678,7 +1680,8 @@ void CVideoPlayer::Prepare()
     }
   }
 
-  if (!OpenDemuxStream())
+  // a disc program may start with no playlist, which the main loop waits for
+  if (!OpenDemuxStream() && !IsBlurayTitleEndWait())
   {
     m_bAbortRequest = true;
     m_error = true;
@@ -1872,6 +1875,11 @@ void CVideoPlayer::Process()
       // no demuxer opens while the disc program has a released title end to act on
       if (next == CDVDInputStream::NEXTSTREAM_RETRY && IsBlurayTitleEndWait())
       {
+        // the playback starts with the disc program, as on a disc player
+        if (!m_State.streamsReady)
+          ReportAVStarted();
+        // the menu state routes the remote's keys to the disc program's page
+        UpdatePlayState(200);
         CThread::Sleep(10ms);
         continue;
       }
@@ -2880,6 +2888,9 @@ bool CVideoPlayer::SelectDiscStream(const SelectionStream& st)
 
 void CVideoPlayer::ReportAVStarted()
 {
+  if (m_blurayMenu)
+    m_HasVideo = true;
+
   // Activate the fullscreen-video skin now that streams are ready, so
   // video frames will fully paint the swap chain from the first frame
   // the skin is visible.
