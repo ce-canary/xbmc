@@ -516,6 +516,7 @@ protected:
 
   void HandleMessages();
   void HandlePlaySpeed();
+  void ReportAVStarted();
   bool IsInMenuInternal() const;
   void SynchronizeDemuxer();
   bool IsNearStreamEnd(std::chrono::milliseconds time) const;
