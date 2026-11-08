@@ -631,6 +631,7 @@ bool CDVDVideoCodecAmlogic::AddData(const DemuxPacket &packet)
 
       m_processInfo.SetDoviIsFEL(doviIsFEL);
       m_processInfo.SetIsHdr10Plus(IsHdr10Plus);
+      m_processInfo.SetVideoInterlaced(m_hints.interlaced);
 
       CLog::Log(LOGINFO, "CDVDVideoCodecAmlogic::{}: Open decoder: fps:{:d}/{:d}", __FUNCTION__, m_hints.fpsrate, m_hints.fpsscale);
       if (m_Codec && !m_Codec->OpenDecoder(m_hints, doviIsFEL))
