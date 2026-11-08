@@ -183,6 +183,7 @@ private:
   static void   CloseLayers();
   Hold          HoldOnClose(bool dvEnabled, int& dvPolicy);
   void          EndHold(bool failed);
+  void          SetStreamStartLevel(uint32_t level);
   void          HandBack();
   static void   ReleaseKept();
   static void   RestoreOutput(OutputModule module, int decoderTimeout);
@@ -214,6 +215,7 @@ private:
   bool             m_handbackOff{false};
   std::atomic<bool> m_lowerLayers{false};
   bool             m_drainPrebuffer{false};
+  bool             m_streamStartGate{false};
   bool             m_inputWritten{false};
   bool             m_inputEndSent{false};
   am_private_t    *am_private;
