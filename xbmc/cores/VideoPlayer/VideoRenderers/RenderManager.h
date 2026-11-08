@@ -83,6 +83,7 @@ public:
   RESOLUTION GetResolution();
   void UpdateResolution();
   void TriggerUpdateResolution(float fps, int width, int height, std::string &stereomode);
+  void VideoStreamClosed();
   void SetViewMode(int iViewMode);
   void PreInit();
   void UnInit();
@@ -213,6 +214,9 @@ protected:
   CCriticalSection m_presentlock;
   CCriticalSection m_datalock;
   std::atomic_bool m_bTriggerUpdateResolution{false};
+  //! Set with the stream hints before their trigger; cleared under m_statelock once the
+  //! stream's first picture reaches Configure, or when the stream closes
+  std::atomic_bool m_awaitConfigure{false};
   bool m_bRenderGUI = true;
   bool m_renderedDebugOverlay = false;
   bool m_renderDebug = false;
@@ -277,7 +281,6 @@ protected:
   unsigned int m_orientation = 0;
   int m_NumberBuffers = 0;
   int m_lateframes = -1;
-  int m_amdv_wait_delay = -1;
   double m_presentpts = 0.0;
   EPRESENTSTEP m_presentstep = PRESENT_IDLE;
   XbmcThreads::EndTime<> m_presentTimer;
@@ -313,6 +316,8 @@ protected:
   //! Set by the render loop around a display mode switch, under m_statelock; the vsync thread
   //! does not pick meanwhile
   bool m_switching{false};
+  //! Under m_statelock: when the last display mode switch ended
+  std::chrono::steady_clock::time_point m_switchEnd{};
   int m_guiPresentSource{-1};
   //! Vsync thread, under m_presentlock: the frame on the video plane when a GUI flip made now
   //! latches
