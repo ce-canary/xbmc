@@ -1067,44 +1067,47 @@ void CRenderManager::UpdateResolution()
         return;
       }
       else if (aml_video_started() || elapsed > std::chrono::seconds(m_render_timeout))
-      {
-        const RenderStereoMode user_stereo_mode =
-          CServiceBroker::GetGUI()->GetStereoscopicsManager().GetStereoModeByUser();
-        STEREOSCOPIC_PLAYBACK_MODE playbackMode =
-          static_cast<STEREOSCOPIC_PLAYBACK_MODE>(CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_VIDEOPLAYER_STEREOSCOPICPLAYBACKMODE));
-        if (!m_picture.stereoMode.empty() &&
-            playbackMode == STEREOSCOPIC_PLAYBACK_MODE_ASK &&
-            user_stereo_mode == RenderStereoMode::UNDEFINED)
-          m_bTriggerUpdateResolution = false;
-
-        if (m_bTriggerUpdateResolution &&
-          CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_VIDEOPLAYER_ADJUSTREFRESHRATE) != ADJUST_REFRESHRATE_OFF && m_fps > 0.0f)
-        {
-          {
-            // a vsync step already past its m_switching test finishes its queue first
-            std::unique_lock lock(m_statelock);
-            m_switching = true;
-          }
-          CServiceBroker::GetWinSystem()->GetGfxContext().SetHDRType(m_picture.hdrType);
-          RESOLUTION res = CResolutionUtils::ChooseBestResolution(
-              m_fps, m_picture.iWidth, m_picture.iHeight, !m_picture.stereoMode.empty());
-          // a mode set before the first frame of the next decoder would show the kept picture
-          if (res != CServiceBroker::GetWinSystem()->GetGfxContext().GetVideoResolution())
-            aml_drop_kept_picture(true);
-          CServiceBroker::GetWinSystem()->GetGfxContext().SetVideoResolution(res, false);
-          UpdateLatencyTweak();
-          if (m_pRenderer)
-            m_pRenderer->Update();
-          std::unique_lock lock(m_statelock);
-          m_switching = false;
-          if (m_presenting)
-            m_pRenderer->WakeVsyncPresent();
-        }
-        m_bTriggerUpdateResolution = false;
-        m_playerPort->VideoParamsChange();
-      }
+        SwitchResolution();
     }
   }
+}
+
+void CRenderManager::SwitchResolution()
+{
+  const RenderStereoMode user_stereo_mode =
+    CServiceBroker::GetGUI()->GetStereoscopicsManager().GetStereoModeByUser();
+  STEREOSCOPIC_PLAYBACK_MODE playbackMode =
+    static_cast<STEREOSCOPIC_PLAYBACK_MODE>(CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_VIDEOPLAYER_STEREOSCOPICPLAYBACKMODE));
+  if (!m_picture.stereoMode.empty() &&
+      playbackMode == STEREOSCOPIC_PLAYBACK_MODE_ASK &&
+      user_stereo_mode == RenderStereoMode::UNDEFINED)
+    m_bTriggerUpdateResolution = false;
+
+  if (m_bTriggerUpdateResolution &&
+    CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_VIDEOPLAYER_ADJUSTREFRESHRATE) != ADJUST_REFRESHRATE_OFF && m_fps > 0.0f)
+  {
+    {
+      // a vsync step already past its m_switching test finishes its queue first
+      std::unique_lock lock(m_statelock);
+      m_switching = true;
+    }
+    CServiceBroker::GetWinSystem()->GetGfxContext().SetHDRType(m_picture.hdrType);
+    RESOLUTION res = CResolutionUtils::ChooseBestResolution(
+        m_fps, m_picture.iWidth, m_picture.iHeight, !m_picture.stereoMode.empty());
+    // a mode set before the first frame of the next decoder would show the kept picture
+    if (res != CServiceBroker::GetWinSystem()->GetGfxContext().GetVideoResolution())
+      aml_drop_kept_picture(true);
+    CServiceBroker::GetWinSystem()->GetGfxContext().SetVideoResolution(res, false);
+    UpdateLatencyTweak();
+    if (m_pRenderer)
+      m_pRenderer->Update();
+    std::unique_lock lock(m_statelock);
+    m_switching = false;
+    if (m_presenting)
+      m_pRenderer->WakeVsyncPresent();
+  }
+  m_bTriggerUpdateResolution = false;
+  m_playerPort->VideoParamsChange();
 }
 
 void CRenderManager::TriggerUpdateResolution(float fps, int width, int height, std::string &stereomode)
