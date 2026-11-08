@@ -3451,20 +3451,12 @@ bool CAMLCodec::AddData(uint8_t *pData, size_t iSize, double dts, double pts)
 
   if (!m_buffer_level_ready)
   {
-    m_buffer_level_ready = (streambuffer ? (new_buffer_level > 90.0f) : (new_buffer_level > 5.0f));
-    m_minimum_buffer_level = (streambuffer ? 10.0f : 5.0f);
+    m_buffer_level_ready = (streambuffer || new_buffer_level > 5.0f);
+    m_minimum_buffer_level = 5.0f;
 
+    // the stream decoder starts on a tenth of its buffer, until its first picture is out
     if (streambuffer)
-    {
-      CSysfsPath pre_decode_buf_level{"/sys/module/amvdec_h265/parameters/pre_decode_buf_level"};
-      if (pre_decode_buf_level.Exists())
-      {
-        if (!m_buffer_level_ready)
-          pre_decode_buf_level.Set(static_cast<uint32_t>(size / m_minimum_buffer_level));
-        else
-          pre_decode_buf_level.Set(static_cast<uint32_t>(0x1000));
-      }
-    }
+      SetStreamStartLevel(static_cast<uint32_t>(size / 10));
   }
 
   if (!m_opened || !pData || free_len == 0 || new_buffer_level >= 95.0f)
@@ -3921,12 +3913,15 @@ CDVDVideoCodec::VCReturn CAMLCodec::GetPicture(VideoPicture *pVideoPicture)
 
   // queued_frames counts the pictures handed out and not yet returned, a drain dequeues
   // whatever the decoder has ready
-  if (m_buffer_level_ready && (buffer_level > m_minimum_buffer_level || m_drain) && (ret = DequeueBuffer()) == 0)
+  if (m_buffer_level_ready && (buffer_level > m_minimum_buffer_level || streambuffer || m_drain) &&
+      (ret = DequeueBuffer()) == 0)
   {
     pVideoPicture->iFlags = 0;
     m_drainPrebuffer = false;
 
-    m_minimum_buffer_level = (streambuffer ? m_minimum_buffer_level : 0.0f);
+    m_minimum_buffer_level = 0.0f;
+    if (m_streamStartGate)
+      SetStreamStartLevel(0x1000);
 
     m_tp_last_frame = std::chrono::system_clock::now();
 
@@ -4056,18 +4051,17 @@ void CAMLCodec::SetDrain(bool drain)
 
   // a drain hands out what the decoder holds, the start prebuffer must not hold it back; input
   // after a drain that handed out nothing prebuffers again
+  if (drain && m_streamStartGate)
+  {
+    SetStreamStartLevel(0x1000);
+    m_drainPrebuffer = true;
+  }
+
   if (drain && !m_buffer_level_ready && m_opened)
   {
-    bool streambuffer(am_private->gcodec.dec_mode == STREAM_TYPE_STREAM);
     m_buffer_level_ready = true;
     m_drainPrebuffer = true;
-    m_minimum_buffer_level = (streambuffer ? 10.0f : 5.0f);
-    if (streambuffer)
-    {
-      CSysfsPath pre_decode_buf_level{"/sys/module/amvdec_h265/parameters/pre_decode_buf_level"};
-      if (pre_decode_buf_level.Exists())
-        pre_decode_buf_level.Set(static_cast<uint32_t>(0x1000));
-    }
+    m_minimum_buffer_level = 5.0f;
   }
   else if (!drain && m_drainPrebuffer)
   {
@@ -4076,6 +4070,15 @@ void CAMLCodec::SetDrain(bool drain)
   }
 
   m_drain = drain;
+}
+
+// `level` bytes of input the h265 stream decoder waits for before it runs; 0x1000 is its default
+void CAMLCodec::SetStreamStartLevel(uint32_t level)
+{
+  CSysfsPath pre_decode_buf_level{"/sys/module/amvdec_h265/parameters/pre_decode_buf_level"};
+  if (pre_decode_buf_level.Exists())
+    pre_decode_buf_level.Set(level);
+  m_streamStartGate = level != 0x1000;
 }
 
 void CAMLCodec::SetSpeed(int speed)

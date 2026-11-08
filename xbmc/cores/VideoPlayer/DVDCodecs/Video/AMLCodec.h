@@ -182,6 +182,7 @@ private:
   Hold          HoldOnClose(bool dvEnabled, int& dvPolicy);
   bool          TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& output, bool doviIsFEL);
   void          EndHold(bool failed);
+  void          SetStreamStartLevel(uint32_t level);
   void          HandBack();
   static void   ReleaseKept();
   static void   RestoreOutput(OutputModule module, int decoderTimeout);
@@ -205,6 +206,7 @@ private:
   bool             m_handbackFrame{false};
   bool             m_handbackOff{false};
   bool             m_drainPrebuffer{false};
+  bool             m_streamStartGate{false};
   bool             m_inputWritten{false};
   bool             m_inputEndSent{false};
   std::atomic<double> m_presentHold{0.0};
