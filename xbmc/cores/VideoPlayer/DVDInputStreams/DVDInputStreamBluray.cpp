@@ -2450,6 +2450,70 @@ bool CDVDInputStreamBluray::GetDemuxerGraphicsPlane(int pid, int& width, int& he
   }
 }
 
+bool CDVDInputStreamBluray::GetDemuxerFrameRate(int pid, int& rate, int& scale) const
+{
+  if (!m_demuxerClip || m_demuxerClip->video_stream_count == 0)
+    return false;
+
+  // a stream the play item does not list, such as an MVC view, runs with the primary video
+  const BLURAY_STREAM_INFO* info{&m_demuxerClip->video_streams[0]};
+  const auto pick = [pid, &info](const BLURAY_STREAM_INFO* streams, uint8_t count)
+  {
+    for (const BLURAY_STREAM_INFO& stream : std::span(streams, count))
+    {
+      if (stream.pid == static_cast<uint16_t>(pid))
+        info = &stream;
+    }
+  };
+  pick(m_demuxerClip->video_streams, m_demuxerClip->video_stream_count);
+  pick(m_demuxerClip->sec_video_streams, m_demuxerClip->sec_video_stream_count);
+#if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 5, 0))
+  pick(m_demuxerClip->dv_streams, m_demuxerClip->dv_stream_count);
+#endif
+
+  switch (info->format)
+  {
+    case BLURAY_VIDEO_FORMAT_480P:
+    case BLURAY_VIDEO_FORMAT_576P:
+    case BLURAY_VIDEO_FORMAT_720P:
+    case BLURAY_VIDEO_FORMAT_1080P:
+    case BLURAY_VIDEO_FORMAT_2160P:
+      break;
+    default:
+      return false;
+  }
+
+  switch (info->rate)
+  {
+    case BLURAY_VIDEO_RATE_24000_1001:
+      rate = 24000;
+      scale = 1001;
+      return true;
+    case BLURAY_VIDEO_RATE_24:
+      rate = 24;
+      scale = 1;
+      return true;
+    case BLURAY_VIDEO_RATE_25:
+      rate = 25;
+      scale = 1;
+      return true;
+    case BLURAY_VIDEO_RATE_30000_1001:
+      rate = 30000;
+      scale = 1001;
+      return true;
+    case BLURAY_VIDEO_RATE_50:
+      rate = 50;
+      scale = 1;
+      return true;
+    case BLURAY_VIDEO_RATE_60000_1001:
+      rate = 60000;
+      scale = 1001;
+      return true;
+    default:
+      return false;
+  }
+}
+
 const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetNextItemClip() const
 {
   if (m_bMVCPlayback || m_hasMVCExtension)
