@@ -396,13 +396,15 @@ bool CWinSystemAmlogic::CreateNewWindow(const std::string& name,
   }
 
   if ((ret = m_amlDisplay->set_native_resolution(res, m_framebuffer_name, m_stereo_mode,
-                                           m_force_mode_switch, m_hotplug_mode_switch)))
+                                           m_force_mode_switch, m_hotplug_mode_switch,
+                                           m_modeset_mode_switch)))
   {
     m_bWindowCreated = true;
   }
 
   m_force_mode_switch = false;
   m_hotplug_mode_switch = false;
+  m_modeset_mode_switch = false;
   return ret;
 }
 
