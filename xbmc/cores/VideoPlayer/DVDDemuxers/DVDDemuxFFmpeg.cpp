@@ -630,6 +630,21 @@ bool CDVDDemuxFFmpeg::Open(const std::shared_ptr<CDVDInputStream>& pInput, bool 
     if (m_pInput->IsStreamType(DVDSTREAM_TYPE_DVD))
       av_opt_set_int(m_pFormatContext, "analyzeduration", 500000, 0);
 
+#ifdef HAVE_LIBBLURAY
+    // ffmpeg takes a PG size only from a display set and reads on to the probesize for one; the
+    // play item states it
+    if (isBluray)
+    {
+      const auto bluray{std::static_pointer_cast<CDVDInputStreamBluray>(m_pInput)};
+      for (unsigned int i = 0; i < m_pFormatContext->nb_streams; i++)
+      {
+        AVStream* st = m_pFormatContext->streams[i];
+        if (st->codecpar->codec_id == AV_CODEC_ID_HDMV_PGS_SUBTITLE && st->codecpar->width == 0)
+          bluray->GetDemuxerGraphicsPlane(st->id, st->codecpar->width, st->codecpar->height);
+      }
+    }
+#endif
+
     CLog::Log(LOGDEBUG, "{} - avformat_find_stream_info starting", __FUNCTION__);
     int iErr = avformat_find_stream_info(m_pFormatContext, NULL);
     if (iErr < 0)
