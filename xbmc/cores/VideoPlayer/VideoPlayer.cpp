@@ -5182,6 +5182,8 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
       break;
     case StreamType::VIDEO:
       res = OpenVideoStream(hint, reset);
+      if (!res)
+        m_renderManager.VideoStreamClosed();
       // a presentation kept for this stream ends when no AML decoder claimed it
       aml_end_presentation(false);
       // Set the m_bFullScreenVideo flag now, before streamsReady, so the
@@ -5545,6 +5547,9 @@ bool CVideoPlayer::CloseStream(CCurrentStream& current, bool bWaitForBuffers)
       bWaitForBuffers = false;
     player->CloseStream(bWaitForBuffers);
   }
+
+  if (current.type == StreamType::VIDEO)
+    m_renderManager.VideoStreamClosed();
 
   current.Clear();
   return true;

@@ -506,18 +506,6 @@ void aml_drop_kept_picture(bool taken)
   CAMLCodec::DropKeptPicture(taken);
 }
 
-int aml_amdv_wait(StreamHdrType hdrType)
-{
-  if (hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION)
-  {
-    CSysfsPath amdv_wait_delay{"/sys/module/aml_media/parameters/amdv_wait_delay"};
-    if (amdv_wait_delay.Exists())
-      return amdv_wait_delay.Get<int>().value_or(0);
-  }
-
-  return 0;
-}
-
 void aml_set_3d_video_mode(unsigned int mode, bool framepacking_support, int view_mode)
 {
   int fd;
