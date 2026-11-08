@@ -2414,6 +2414,42 @@ bool CDVDInputStreamBluray::ListsEnhancementLayer(int pid) const
 #endif
 }
 
+bool CDVDInputStreamBluray::GetDemuxerGraphicsPlane(int pid, int& width, int& height) const
+{
+  if (!m_demuxerClip || m_demuxerClip->video_stream_count == 0 ||
+      std::ranges::none_of(std::span(m_demuxerClip->pg_streams, m_demuxerClip->pg_stream_count),
+                           [pid](const BLURAY_STREAM_INFO& info)
+                           { return info.pid == static_cast<uint16_t>(pid); }))
+    return false;
+
+  // the plane follows the primary video, except that a UHD play item keeps the HD plane
+  switch (m_demuxerClip->video_streams[0].format)
+  {
+    case BLURAY_VIDEO_FORMAT_480I:
+    case BLURAY_VIDEO_FORMAT_480P:
+      width = 720;
+      height = 480;
+      return true;
+    case BLURAY_VIDEO_FORMAT_576I:
+    case BLURAY_VIDEO_FORMAT_576P:
+      width = 720;
+      height = 576;
+      return true;
+    case BLURAY_VIDEO_FORMAT_720P:
+      width = 1280;
+      height = 720;
+      return true;
+    case BLURAY_VIDEO_FORMAT_1080I:
+    case BLURAY_VIDEO_FORMAT_1080P:
+    case BLURAY_VIDEO_FORMAT_2160P:
+      width = 1920;
+      height = 1080;
+      return true;
+    default:
+      return false;
+  }
+}
+
 const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetNextItemClip() const
 {
   if (m_bMVCPlayback || m_hasMVCExtension)

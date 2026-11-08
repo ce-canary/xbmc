@@ -201,6 +201,9 @@ public:
   //! whether the stream table of the play item the demuxer opened on lists the Dolby Vision
   //! enhancement layer `pid`, true when libbluray does not tell
   bool ListsEnhancementLayer(int pid) const;
+  //! the graphics plane of the presentation graphic stream `pid` of the play item the demuxer
+  //! opened on, false when the play item does not list the stream or its video format
+  bool GetDemuxerGraphicsPlane(int pid, int& width, int& height) const;
   bool IsTitleEnded() const { return m_endedTitleTime > 0; }
   bool IsTitleEndWait() const { return m_titleEndWait; }
   //! whether a held title end still waits for its last picture to be presented
