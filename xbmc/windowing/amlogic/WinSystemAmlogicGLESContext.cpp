@@ -129,7 +129,6 @@ bool CWinSystemAmlogicGLESContext::CreateNewWindow(const std::string& name,
   bool nativeGUI = CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DISABLEGUISCALING);
 
   StreamHdrType hdrType = CServiceBroker::GetWinSystem()->GetGfxContext().GetHDRType();
-  bool force_mode_switch_by_hdr = (m_hdrType != hdrType);
   bool force_mode_switch_by_stereo_mode = (m_stereo_mode != stereo_mode);
   bool force_mode_switch_by_fractional_rate = (cur_fractional_rate != fractional_rate);
   bool force_mode_switch_by_hotplug = m_amlDisplay->GetHotPlug();
@@ -143,14 +142,12 @@ bool CWinSystemAmlogicGLESContext::CreateNewWindow(const std::string& name,
   }
 
   const std::string new_hdrStr = CStreamDetails::HdrTypeToString(hdrType);
-  const std::string old_hdrStr = CStreamDetails::HdrTypeToString(m_hdrType);
   CLog::Log(LOGDEBUG,
             "CWinSystemAmlogicGLESContext::{}: "
             "m_bWindowCreated: {}, "
-            "hdrType: {}({}), "
-            "force mode switch by - hdr: {}, frac rate: {}, stereo mode: {}, hotplug: {}",
+            "hdrType: {}, "
+            "force mode switch by - frac rate: {}, stereo mode: {}, hotplug: {}",
             __FUNCTION__, m_bWindowCreated, new_hdrStr.empty() ? "none" : new_hdrStr,
-            old_hdrStr.empty() ? "none" : old_hdrStr, force_mode_switch_by_hdr,
             force_mode_switch_by_fractional_rate, force_mode_switch_by_stereo_mode,
             force_mode_switch_by_hotplug);
   CLog::Log(LOGDEBUG, "CWinSystemAmlogicGLESContext::{}: "
@@ -170,12 +167,17 @@ bool CWinSystemAmlogicGLESContext::CreateNewWindow(const std::string& name,
       current_resolution.fRefreshRate == res.fRefreshRate &&
       (current_resolution.dwFlags & D3DPRESENTFLAG_MODEMASK) ==
           (res.dwFlags & D3DPRESENTFLAG_MODEMASK) &&
-      m_bWindowCreated && nativeGUI == m_nativeGUI && !force_mode_switch_by_hdr &&
+      m_bWindowCreated && nativeGUI == m_nativeGUI &&
       !force_mode_switch_by_hotplug && !force_mode_switch_by_fractional_rate &&
       !force_mode_switch_by_stereo_mode)
   {
-    CLog::Log(LOGDEBUG, "CWinSystemAmlogicGLESContext::{}: No need to create a new window", __FUNCTION__);
-    return true;
+    // the kernel decides the link colour attrs and whether a change of them needs a re-enable
+    if (!m_amlDisplay->aml_display_needs_modeset())
+    {
+      CLog::Log(LOGDEBUG, "CWinSystemAmlogicGLESContext::{}: No need to create a new window", __FUNCTION__);
+      return true;
+    }
+    m_modeset_mode_switch = true;
   }
 
   // destroy old window, then create a new one
@@ -197,7 +199,7 @@ bool CWinSystemAmlogicGLESContext::CreateNewWindow(const std::string& name,
       MathUtils::FloatEquals(current_resolution.fRefreshRate, res.fRefreshRate, 0.06f))
   {
     // same resolution, check frac rate and other parameter
-    if (force_mode_switch_by_fractional_rate || force_mode_switch_by_hdr)
+    if (force_mode_switch_by_fractional_rate)
       m_force_mode_switch = true;
   }
 
@@ -205,7 +207,6 @@ bool CWinSystemAmlogicGLESContext::CreateNewWindow(const std::string& name,
     CLog::Log(LOGDEBUG, "CWinSystemAmlogicGLESContext::{}: force mode switch", __FUNCTION__);
 
   // refresh backup data
-  m_hdrType = hdrType;
   m_stereo_mode = stereo_mode;
   m_bFullScreen = fullScreen;
   m_nativeGUI = nativeGUI;
