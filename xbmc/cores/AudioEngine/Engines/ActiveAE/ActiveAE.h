@@ -334,7 +334,7 @@ protected:
   bool InitSink();
   bool SendYieldDevice(bool yield);
   void DrainSink();
-  void UnconfigureSink();
+  void UnconfigureSink(bool drain = true);
   // ends the pending start target of every stream, which a sink that stops playing cannot decide
   void EndStartTargets();
   void Dispose();
@@ -390,6 +390,7 @@ protected:
   unsigned int m_extErrorRetries{0};
   bool m_extDrain;
   XbmcThreads::EndTime<> m_extDrainTimer;
+  XbmcThreads::EndTime<> m_streamTailEnd;
   std::chrono::milliseconds m_extKeepConfig;
   bool m_extHoldConfig{false};
   AEAudioFormat m_extHoldFormat;

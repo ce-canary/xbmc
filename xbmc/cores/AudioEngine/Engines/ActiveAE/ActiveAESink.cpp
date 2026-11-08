@@ -267,7 +267,7 @@ void CActiveAESink::StateMachine(int signal, Protocol *port, Message *msg)
           m_extError = false;
           m_extStreaming = data && data->streaming;
           ReturnBuffers();
-          OpenSink();
+          OpenSink(!data || data->drain);
           opened = !m_extError;
 
           // the device is empty, the keep-alive fills it before any reader sees its delay
@@ -331,7 +331,7 @@ void CActiveAESink::StateMachine(int signal, Protocol *port, Message *msg)
 
         case CSinkControlProtocol::UNCONFIGURE:
           ReturnBuffers();
-          CloseSink();
+          CloseSink(*reinterpret_cast<bool*>(msg->data));
           m_state = S_TOP_UNCONFIGURED;
           msg->Reply(CSinkControlProtocol::ACC);
           return;
@@ -993,7 +993,7 @@ void CActiveAESink::GetDeviceFriendlyName(const std::string& device)
   }
 }
 
-void CActiveAESink::OpenSink()
+void CActiveAESink::OpenSink(bool drain)
 {
   bool passthrough = (m_requestedFormat.m_dataFormat == AE_FMT_RAW);
 
@@ -1016,7 +1016,7 @@ void CActiveAESink::OpenSink()
 
   CLog::LogF(LOGINFO, "initialize sink");
 
-  CloseSink();
+  CloseSink(drain);
 
   // get the display name of the device
   GetDeviceFriendlyName(dev.name);

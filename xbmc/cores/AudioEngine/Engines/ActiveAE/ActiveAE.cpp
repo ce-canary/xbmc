@@ -789,7 +789,8 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
         case CActiveAEControlProtocol::DISPLAYLOST:
           if (m_sink.GetDeviceType(m_mode == MODE_PCM ? m_settings.device : m_settings.passthroughdevice) == AE_DEVTYPE_HDMI)
           {
-            UnconfigureSink();
+            // the display waits for this reply before it changes mode
+            UnconfigureSink(!m_streamTailEnd.IsTimePast());
             m_stats.SetSuspended(true);
             m_state = AE_TOP_CONFIGURED_SUSPEND;
             m_extDeferData = true;
@@ -1772,6 +1773,13 @@ void CActiveAE::DiscardStream(CActiveAEStream *stream)
       ++it;
   }
 
+  if (m_streams.empty())
+  {
+    AEDelayStatus status;
+    m_stats.GetDelay(status);
+    m_streamTailEnd.Set(std::chrono::milliseconds(static_cast<int>(status.GetDelay() * 1000)));
+  }
+
   ClearDiscardedBuffers();
 }
 
@@ -2102,6 +2110,8 @@ bool CActiveAE::InitSink()
   config.stats = &m_stats;
   config.device = (m_sinkRequestFormat.m_dataFormat == AE_FMT_RAW) ? &m_settings.passthroughdevice :
                                                                      &m_settings.device;
+  // drain only while the device still plays the tail of a stream
+  config.drain = !m_streamTailEnd.IsTimePast();
   config.streaming = !m_streams.empty() || HoldsFormat();
   config.fill = config.streaming;
   for (const auto* stream : m_streams)
@@ -2197,11 +2207,12 @@ void CActiveAE::EndStartTargets()
   }
 }
 
-void CActiveAE::UnconfigureSink()
+void CActiveAE::UnconfigureSink(bool drain)
 {
   // send message to sink
   Message *reply;
-  if (m_sink.m_controlPort.SendOutMessageSync(CSinkControlProtocol::UNCONFIGURE, &reply, 2s))
+  if (m_sink.m_controlPort.SendOutMessageSync(CSinkControlProtocol::UNCONFIGURE, &reply, 2s,
+                                              &drain, sizeof(bool)))
   {
     bool success = reply->signal == CSinkControlProtocol::ACC;
     if (!success)
@@ -2284,7 +2295,13 @@ bool CActiveAE::RunStages()
 
           //! @todo find better solution for this gapless bites audiophile
           if (m_settings.config == AE_CONFIG_MATCH)
+          {
+            AEDelayStatus status;
+            m_stats.GetDelay(status);
+            m_streamTailEnd.Set(
+                std::chrono::milliseconds(static_cast<int>(status.GetDelay() * 1000)));
             Configure(&slave->m_format);
+          }
 
           (*it)->m_streamSlave = NULL;
         }

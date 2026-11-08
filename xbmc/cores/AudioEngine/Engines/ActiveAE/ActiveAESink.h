@@ -37,6 +37,7 @@ struct SinkConfig
   AEAudioFormat format;
   CEngineStats *stats;
   const std::string *device;
+  bool drain{true};
   bool streaming{false};
   // the keep-alive silence is what reaches the device first
   bool fill{false};
@@ -124,7 +125,7 @@ protected:
   void StateMachine(int signal, Protocol* port, Message* msg);
   void PrintSinks(std::string& driver);
   void GetDeviceFriendlyName(const std::string& device);
-  void OpenSink();
+  void OpenSink(bool drain = true);
   void CloseSink(bool drain = true);
   void ReturnBuffers();
   void SetSilenceTimer();
