@@ -5,6 +5,7 @@
  *  See LICENSES/README.md for more information.
  */
 #include <drm_fourcc.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <amcodec/codec.h>
@@ -531,7 +532,7 @@ std::string CAMLDRMUtils::aml_get_drmDevice_modes(void)
 // set mode of drmDevice
 bool CAMLDRMUtils::aml_set_drmDevice_mode(const RESOLUTION_INFO &res, std::string mode,
   const RenderStereoMode stereo_mode, std::string framebuffer_name, bool force_mode_switch,
-  bool hotplug_mode_switch)
+  bool hotplug_mode_switch, bool modeset_mode_switch)
 {
   std::unique_lock<CCriticalSection> lock(m_drmSection);
   bool ret = false;
@@ -573,7 +574,8 @@ bool CAMLDRMUtils::aml_set_drmDevice_mode(const RESOLUTION_INFO &res, std::strin
   }
 
   int fractional_rate = (res.fRefreshRate == floor(res.fRefreshRate)) ? 0 : 1;
-  ret = aml_set_drmDevice_active(mode, fractional_rate, stereo_mode, _force_mode_switch, true);
+  ret = aml_set_drmDevice_active(mode, fractional_rate, stereo_mode,
+                                 _force_mode_switch || modeset_mode_switch, true);
 
   if (ret && _hotplug_mode_switch)
   {
@@ -951,6 +953,63 @@ bool CAMLDRMUtils::aml_set_drmDevice_active(std::string mode, int fractional_rat
   return ret;
 }
 
+// a same-mode commit needs a modeset when the kernel refuses it without ALLOW_MODESET and
+// accepts it with ALLOW_MODESET; any other answer leaves the display as it is
+bool CAMLDRMUtils::aml_drmDevice_needs_modeset()
+{
+  std::unique_lock<CCriticalSection> lock(m_drmSection);
+
+  if (!aml_get_drmDevice_connected() || !m_connector || !m_crtc)
+    return false;
+
+  int ret = aml_test_drmDevice_active(0);
+  if (ret == 0)
+    return false;
+
+  if (ret != -EINVAL)
+  {
+    CLog::Log(LOGWARNING, "CAMLDRMUtils::{} - test commit failed: {:d}", __FUNCTION__, ret);
+    return false;
+  }
+
+  ret = aml_test_drmDevice_active(DRM_MODE_ATOMIC_ALLOW_MODESET);
+  if (ret != 0)
+  {
+    CLog::Log(LOGWARNING, "CAMLDRMUtils::{} - test commit with modeset failed: {:d}", __FUNCTION__,
+              ret);
+    return false;
+  }
+
+  CLog::Log(LOGDEBUG, "CAMLDRMUtils::{} - display needs a modeset at the current mode", __FUNCTION__);
+  return true;
+}
+
+// the committed mode blob, not the connector's mode list: 3D frame packing commits a synthetic mode
+int CAMLDRMUtils::aml_test_drmDevice_active(uint32_t flags)
+{
+  const int modeBlobId = get_drmProp(m_crtc->crtc_id, "MODE_ID", DRM_MODE_OBJECT_CRTC);
+  const int fractionalRate =
+      get_drmProp(m_connector->connector_id, "FRAC_RATE_POLICY", DRM_MODE_OBJECT_CONNECTOR);
+  if (modeBlobId <= 0 || fractionalRate < 0)
+    return -ENOENT;
+
+  drmModeAtomicReqPtr req = drmModeAtomicAlloc();
+  if (!req)
+    return -ENOMEM;
+
+  set_drmProp(m_connector->connector_id, "CRTC_ID", DRM_MODE_OBJECT_CONNECTOR, m_crtc->crtc_id,
+              req);
+  set_drmProp(m_connector->connector_id, "FRAC_RATE_POLICY", DRM_MODE_OBJECT_CONNECTOR,
+              fractionalRate, req);
+  set_drmProp(m_crtc->crtc_id, "MODE_ID", DRM_MODE_OBJECT_CRTC, modeBlobId, req);
+  set_drmProp(m_crtc->crtc_id, "ACTIVE", DRM_MODE_OBJECT_CRTC, 1, req);
+
+  const int ret = drmModeAtomicCommit(m_fd, req, DRM_MODE_ATOMIC_TEST_ONLY | flags, nullptr);
+  drmModeAtomicFree(req);
+
+  return ret;
+}
+
 bool CAMLDRMUtils::SupportsFormat(drmModePlane *plane, uint32_t format)
 {
   for (uint32_t i = 0; i < plane->count_formats; i++)
@@ -1077,14 +1136,16 @@ void CAMLDisplay::aml_refresh_display_caps()
 }
 
 bool CAMLDisplay::set_native_resolution(const RESOLUTION_INFO &res, std::string framebuffer_name,
-  const RenderStereoMode stereo_mode, bool force_mode_switch, bool hotplug_mode_switch)
+  const RenderStereoMode stereo_mode, bool force_mode_switch, bool hotplug_mode_switch,
+  bool modeset_mode_switch)
 {
   bool result = false;
 
   if (aml_get_cpufamily_id() < AML_T7)
   {
     handle_display_stereo_mode(stereo_mode);
-    result = set_display_resolution(res, framebuffer_name, force_mode_switch, hotplug_mode_switch);
+    result = set_display_resolution(res, framebuffer_name, force_mode_switch, hotplug_mode_switch,
+                                    modeset_mode_switch);
     if (stereo_mode != RenderStereoMode::OFF)
       CSysfsPath("/sys/class/amhdmitx/amhdmitx0/phy", 1);
   }
@@ -1093,7 +1154,8 @@ bool CAMLDisplay::set_native_resolution(const RESOLUTION_INFO &res, std::string 
     if (stereo_mode == RenderStereoMode::HARDWAREBASED ||
         stereo_mode == RenderStereoMode::OFF)
       handle_display_stereo_mode(stereo_mode);
-    result = set_display_resolution(res, framebuffer_name, force_mode_switch, hotplug_mode_switch);
+    result = set_display_resolution(res, framebuffer_name, force_mode_switch, hotplug_mode_switch,
+                                    modeset_mode_switch);
     if (stereo_mode != RenderStereoMode::HARDWAREBASED &&
         stereo_mode != RenderStereoMode::OFF)
       handle_display_stereo_mode(stereo_mode);
@@ -1138,7 +1200,7 @@ void CAMLDisplay::handle_display_stereo_mode(const RenderStereoMode stereo_mode)
 }
 
 bool CAMLDisplay::set_display_resolution(const RESOLUTION_INFO &res, std::string framebuffer_name,
-  bool force_mode_switch, bool hotplug_mode_switch)
+  bool force_mode_switch, bool hotplug_mode_switch, bool modeset_mode_switch)
 {
   std::string mode = res.strId.c_str();
   std::vector<std::string> _mode = StringUtils::Split(mode, ' ');
@@ -1161,7 +1223,8 @@ bool CAMLDisplay::set_display_resolution(const RESOLUTION_INFO &res, std::string
     CLog::Log(LOGDEBUG, "CAMLDisplay::{}: try to set mode: {}", __FUNCTION__, mode.c_str());
 
   return m_amlDRMUtils->aml_set_drmDevice_mode(
-      res, mode, m_stereo_mode, framebuffer_name, force_mode_switch, hotplug_mode_switch);
+      res, mode, m_stereo_mode, framebuffer_name, force_mode_switch, hotplug_mode_switch,
+      modeset_mode_switch);
 }
 
 std::string CAMLDisplay::aml_get_preferred_mode()
