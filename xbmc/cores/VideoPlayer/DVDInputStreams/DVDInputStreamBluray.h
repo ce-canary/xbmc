@@ -204,6 +204,9 @@ public:
   //! the graphics plane of the presentation graphic stream `pid` of the play item the demuxer
   //! opened on, false when the play item does not list the stream or its video format
   bool GetDemuxerGraphicsPlane(int pid, int& width, int& height) const;
+  //! the frame rate `rate`/`scale` of video stream `pid` of the play item the demuxer opened on,
+  //! false for an interlaced format or a rate the play item does not state
+  bool GetDemuxerFrameRate(int pid, int& rate, int& scale) const;
   bool IsTitleEnded() const { return m_endedTitleTime > 0; }
   bool IsTitleEndWait() const { return m_titleEndWait; }
   //! whether a held title end still waits for its last picture to be presented
