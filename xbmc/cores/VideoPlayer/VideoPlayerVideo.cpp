@@ -834,6 +834,7 @@ bool CVideoPlayerVideo::ProcessDecoderOutput(double &frametime, double &pts)
     // is still interlaced overall. Only allow for runtime-detected interlace
     // (not demuxer-flagged) when hardware confirms progressive.
     if (m_processInfo.GetVideoInterlaced() &&
+        !m_hints.interlaced &&
         m_vfmt == "progressive" &&
         MathUtils::FloatEquals(static_cast<float>(m_picture.iDuration), static_cast<float>(2 * DVD_TIME_BASE) / m_processInfo.GetVideoFps(), 700.0f))
     {
