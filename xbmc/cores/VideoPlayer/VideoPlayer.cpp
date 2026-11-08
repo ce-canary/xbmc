@@ -2924,7 +2924,13 @@ void CVideoPlayer::HandlePlaySpeed()
           if (m_VideoPlayerAudio->GetLevel() <= 50 &&
               m_processInfo->GetLevelVQ() <= 50)
           {
-            SetCaching(CACHESTATE_FULL);
+            // once playback has started, a stream that has not synced yet is starting, not stalled
+            if (!m_State.streamsReady ||
+                (m_CurrentAudio.id >= 0 && m_VideoPlayerAudio->IsStalled() &&
+                 m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_INSYNC) ||
+                (m_CurrentVideo.id >= 0 && m_VideoPlayerVideo->IsStalled() &&
+                 m_CurrentVideo.syncState == IDVDStreamPlayer::SYNC_INSYNC))
+              SetCaching(CACHESTATE_FULL);
           }
           else if (m_CurrentAudio.id >= 0 && m_CurrentAudio.inited &&
                    m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_INSYNC &&
