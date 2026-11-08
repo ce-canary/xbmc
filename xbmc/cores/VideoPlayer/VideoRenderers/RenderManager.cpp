@@ -128,9 +128,6 @@ void CRenderManager::SetVideoSettings(const CVideoSettings& settings)
 bool CRenderManager::Configure(const VideoPicture& picture, float fps, unsigned int orientation, int buffers)
 {
 
-  if (m_amdv_wait_delay == -1)
-    m_amdv_wait_delay = aml_amdv_wait(picture.hdrType);
-
   // check if something has changed
   {
     std::unique_lock lock(m_statelock);
@@ -141,6 +138,7 @@ bool CRenderManager::Configure(const VideoPicture& picture, float fps, unsigned 
     if (m_pRenderer != nullptr && m_picture.IsSameParams(picture) && m_orientation == orientation &&
         m_NumberBuffers == buffers && !m_pRenderer->ConfigChanged(picture))
     {
+      m_awaitConfigure = false;
       if (m_fps != fps)
       {
         CLog::Log(LOGDEBUG, "CRenderManager::Configure - framerate changed from {:4.2f} to {:4.2f}",
@@ -190,6 +188,7 @@ bool CRenderManager::Configure(const VideoPicture& picture, float fps, unsigned 
     m_orientation = orientation;
     m_NumberBuffers  = buffers;
     m_renderState = STATE_CONFIGURING;
+    m_awaitConfigure = false;
     m_stateEvent.Reset();
     m_clockSync.Reset();
     m_dvdClock.SetVsyncAdjust(0);
@@ -202,11 +201,23 @@ bool CRenderManager::Configure(const VideoPicture& picture, float fps, unsigned 
     m_presentevent.notifyAll();
   }
 
-  if (!m_stateEvent.Wait(std::chrono::seconds(m_render_timeout)))
+  // a display mode switch the render loop runs meanwhile does not count against the timeout
+  const std::chrono::seconds timeout(m_render_timeout);
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (!m_stateEvent.Wait(std::chrono::duration_cast<std::chrono::milliseconds>(
+      deadline - std::chrono::steady_clock::now())))
   {
-    CLog::Log(LOGWARNING, "CRenderManager::Configure - timeout waiting for configure");
     std::unique_lock lock(m_statelock);
-    return false;
+    const auto now = std::chrono::steady_clock::now();
+    if (m_switching)
+      deadline = now + timeout;
+    else
+      deadline = std::max(deadline, m_switchEnd + timeout);
+    if (deadline <= now)
+    {
+      CLog::Log(LOGWARNING, "CRenderManager::Configure - timeout waiting for configure");
+      return false;
+    }
   }
 
   std::unique_lock lock(m_statelock);
@@ -370,6 +381,10 @@ void CRenderManager::FrameMove()
       StopPresentThread();
       if (!Configure())
         return;
+      // the video thread waits for m_stateEvent, so no frame of this stream is queued yet
+      const CGraphicContext& gfx = CServiceBroker::GetWinSystem()->GetGfxContext();
+      if (gfx.IsFullScreenVideo() && gfx.IsFullScreenRoot())
+        SwitchResolution();
       StartPresentThread();
       // the release lead a waiter reads depends on whether the vsync presenter runs
       m_stateEvent.Set();
@@ -638,6 +653,8 @@ void CRenderManager::UnInit()
   DeleteRenderer();
 
   m_renderState = STATE_UNCONFIGURED;
+  // ends a Configure that waits for this stream
+  m_stateEvent.Set();
   m_dvdClock.GetVsyncPhase().SetPhasePeriod(0);
   m_picture.Reset();
   m_bRenderGUI = false;
@@ -1073,54 +1090,57 @@ void CRenderManager::UpdateResolution()
     {
       auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - m_videostarted);
 
-      if (m_amdv_wait_delay == -1)
-        return;
-
-      if (m_amdv_wait_delay > 0)
       {
-        m_amdv_wait_delay--;
-        return;
+        // a switch for a new stream runs at its Configure
+        std::unique_lock lock(m_statelock);
+        if (m_renderState != STATE_CONFIGURED || m_awaitConfigure)
+          return;
       }
-      else if (!CServiceBroker::GetDataCacheCore().IsVideoHwDecoder() || aml_video_started() ||
-               elapsed > std::chrono::seconds(m_render_timeout))
-      {
-        const RenderStereoMode user_stereo_mode =
-          CServiceBroker::GetGUI()->GetStereoscopicsManager().GetStereoModeByUser();
-        STEREOSCOPIC_PLAYBACK_MODE playbackMode =
-          static_cast<STEREOSCOPIC_PLAYBACK_MODE>(CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_VIDEOPLAYER_STEREOSCOPICPLAYBACKMODE));
-        if (!m_picture.stereoMode.empty() && m_picture.stereoMode != "mono" &&
-            playbackMode == STEREOSCOPIC_PLAYBACK_MODE_ASK &&
-            user_stereo_mode == RenderStereoMode::UNDEFINED)
-          m_bTriggerUpdateResolution = false;
 
-        if (m_bTriggerUpdateResolution &&
-          CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_VIDEOPLAYER_ADJUSTREFRESHRATE) != ADJUST_REFRESHRATE_OFF && m_fps > 0.0f)
-        {
-          {
-            // a vsync step already past its m_switching test finishes its queue first
-            std::unique_lock lock(m_statelock);
-            m_switching = true;
-          }
-          CServiceBroker::GetWinSystem()->GetGfxContext().SetHDRType(m_picture.hdrType);
-          RESOLUTION res = CResolutionUtils::ChooseBestResolution(
-              m_fps, m_picture.iWidth, m_picture.iHeight, !m_picture.stereoMode.empty());
-          // a mode set before the first frame of the next decoder would show the kept picture
-          if (res != CServiceBroker::GetWinSystem()->GetGfxContext().GetVideoResolution())
-            aml_drop_kept_picture(true);
-          CServiceBroker::GetWinSystem()->GetGfxContext().SetVideoResolution(res, false);
-          UpdateLatencyTweak();
-          if (m_pRenderer)
-            m_pRenderer->Update();
-          std::unique_lock lock(m_statelock);
-          m_switching = false;
-          if (m_presenting)
-            m_pRenderer->WakeVsyncPresent();
-        }
-        m_bTriggerUpdateResolution = false;
-        m_playerPort->VideoParamsChange();
-      }
+      if (!CServiceBroker::GetDataCacheCore().IsVideoHwDecoder() || aml_video_started() ||
+          elapsed > std::chrono::seconds(m_render_timeout))
+        SwitchResolution();
     }
   }
+}
+
+void CRenderManager::SwitchResolution()
+{
+  const RenderStereoMode user_stereo_mode =
+    CServiceBroker::GetGUI()->GetStereoscopicsManager().GetStereoModeByUser();
+  STEREOSCOPIC_PLAYBACK_MODE playbackMode =
+    static_cast<STEREOSCOPIC_PLAYBACK_MODE>(CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_VIDEOPLAYER_STEREOSCOPICPLAYBACKMODE));
+  if (!m_picture.stereoMode.empty() && m_picture.stereoMode != "mono" &&
+      playbackMode == STEREOSCOPIC_PLAYBACK_MODE_ASK &&
+      user_stereo_mode == RenderStereoMode::UNDEFINED)
+    m_bTriggerUpdateResolution = false;
+
+  if (m_bTriggerUpdateResolution &&
+    CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_VIDEOPLAYER_ADJUSTREFRESHRATE) != ADJUST_REFRESHRATE_OFF && m_fps > 0.0f)
+  {
+    {
+      // a vsync step already past its m_switching test finishes its queue first
+      std::unique_lock lock(m_statelock);
+      m_switching = true;
+    }
+    CServiceBroker::GetWinSystem()->GetGfxContext().SetHDRType(m_picture.hdrType);
+    RESOLUTION res = CResolutionUtils::ChooseBestResolution(
+        m_fps, m_picture.iWidth, m_picture.iHeight, !m_picture.stereoMode.empty());
+    // a mode set before the first frame of the next decoder would show the kept picture
+    if (res != CServiceBroker::GetWinSystem()->GetGfxContext().GetVideoResolution())
+      aml_drop_kept_picture(true);
+    CServiceBroker::GetWinSystem()->GetGfxContext().SetVideoResolution(res, false);
+    UpdateLatencyTweak();
+    if (m_pRenderer)
+      m_pRenderer->Update();
+    std::unique_lock lock(m_statelock);
+    m_switching = false;
+    m_switchEnd = std::chrono::steady_clock::now();
+    if (m_presenting)
+      m_pRenderer->WakeVsyncPresent();
+  }
+  m_bTriggerUpdateResolution = false;
+  m_playerPort->VideoParamsChange();
 }
 
 void CRenderManager::TriggerUpdateResolution(float fps, int width, int height, std::string &stereomode)
@@ -1131,9 +1151,17 @@ void CRenderManager::TriggerUpdateResolution(float fps, int width, int height, s
     m_picture.iWidth = width;
     m_picture.iHeight = height;
     m_picture.stereoMode = stereomode;
+    m_awaitConfigure = true;
   }
   m_videostarted = std::chrono::system_clock::now();
   m_bTriggerUpdateResolution = true;
+}
+
+void CRenderManager::VideoStreamClosed()
+{
+  std::unique_lock lock(m_statelock);
+
+  m_awaitConfigure = false;
 }
 
 void CRenderManager::ToggleDebug()
