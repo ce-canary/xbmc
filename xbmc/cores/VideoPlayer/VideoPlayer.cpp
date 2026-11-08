@@ -3952,6 +3952,10 @@ void CVideoPlayer::HandleMessages()
       m_playSpeed = speed;
 
       m_caching = CACHESTATE_DONE;
+      {
+        std::unique_lock lock(m_StateSection);
+        m_State.caching = false;
+      }
       m_clock.SetSpeed(speed);
       m_VideoPlayerAudio->SetSpeed(speed);
       m_VideoPlayerVideo->SetSpeed(speed);
@@ -4077,6 +4081,9 @@ void CVideoPlayer::SetCaching(ECacheState state)
   m_caching = state;
 
   m_clock.SetSpeedAdjust(0);
+
+  std::unique_lock lock(m_StateSection);
+  m_State.caching = m_caching > CACHESTATE_DONE && m_caching < CACHESTATE_PLAY;
 }
 
 void CVideoPlayer::SetPlaySpeed(int speed)
