@@ -9006,7 +9006,17 @@ msgctxt "#14317"
 msgid "Intended for Dolby Vision enabled displays. HDR content will be tone mapped by Dolby Vision VS-Engine."
 msgstr ""
 
-#empty strings from id 14318 to 15010
+#: system/settings/settings.xml
+msgctxt "#14318"
+msgid "Keep the disc's output format"
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14319"
+msgid "In Blu-ray menu playback, keep the main feature's resolution and dynamic range for every video where the display supports it. The refresh rate still follows each video."
+msgstr ""
+
+#empty strings from id 14320 to 15010
 
 #: system/settings/settings.xml
 msgctxt "#14400"
