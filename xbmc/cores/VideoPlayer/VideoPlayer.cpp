@@ -1825,7 +1825,7 @@ void CVideoPlayer::Process()
     if (m_displayLost)
     {
       emptySince.reset();
-      CThread::Sleep(50ms);
+      m_displayReset.Wait(50ms);
       continue;
     }
 
@@ -2143,7 +2143,7 @@ void CVideoPlayer::Process()
       if (next == CDVDInputStream::NEXTSTREAM_RETRY && !IsBlurayTitleEndHeld())
       {
         // a BD-J title end waits on the disc program, which acts on its own thread
-        CThread::Sleep(IsBlurayTitleEndWait() ? 10ms : 100ms);
+        m_messenger.WaitForMessage(IsBlurayTitleEndWait() ? 10ms : 100ms);
         continue;
       }
 
@@ -2181,7 +2181,7 @@ void CVideoPlayer::Process()
           m_VideoPlayerVideo->HasData() ||
           (m_CurrentVideo.id >= 0 && m_CurrentVideo.packets > 0 && !m_VideoPlayerVideo->IsEOS()))
       {
-        CThread::Sleep(100ms);
+        m_messenger.WaitForMessage(100ms);
         continue;
       }
 
@@ -7278,6 +7278,7 @@ void CVideoPlayer::OnResetDisplay()
   m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsgBool>(CDVDMsg::GENERAL_PAUSE, false), 1);
   m_clock.Pause(false);
   m_displayLost = false;
+  m_displayReset.Set();
   m_VideoPlayerAudio->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::PLAYER_DISPLAY_RESET), 1);
   m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::PLAYER_DISPLAY_RESET), 1);
 }
