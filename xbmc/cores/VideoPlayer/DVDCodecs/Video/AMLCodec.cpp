@@ -2188,8 +2188,18 @@ bool pictureTaken{false};
 bool pictureHdr10{false};
 // the decoder that kept the picture, or took it, runs the Dolby Vision core
 bool pictureDv{false};
-// the kept picture has a full enhancement layer, which its open enabled; set also once it went off
-bool pictureFEL{false};
+// the layers the core runs a Dolby Vision picture with
+enum class CoreLayers
+{
+  SINGLE,
+  MEL,
+  FEL
+};
+// the layers of a kept picture; a full enhancement layer, which its open enabled, stays set also
+// once the picture went off
+CoreLayers pictureLayers{CoreLayers::SINGLE};
+// the open of a kept Dolby Vision picture forced the mode of the core
+bool pictureForced{false};
 // the mode the core keeps a kept Dolby Vision picture's output in
 int pictureDvMode{-1};
 // the taken picture went off before the first frame of its taker, which plays under the forced
@@ -2224,6 +2234,23 @@ bool RunsDolbyVision(const CDVDStreamInfo& hints, const AMLVideoOutput& output)
            (displaySupportDv || hints.dovi.dv_profile == 5)) ||
           ((output.hdrType != StreamHdrType::HDR_TYPE_NONE && dv2sdr) ||
            (output.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && dv2hdr)));
+}
+
+CoreLayers GetCoreLayers(const CDVDStreamInfo& hints, bool doviIsFEL)
+{
+  if (hints.dovi.el_present_flag == 0 || hints.dovi.dv_profile != DOVI_DUAL_LAYER_PROFILE)
+    return CoreLayers::SINGLE;
+  return doviIsFEL ? CoreLayers::FEL : CoreLayers::MEL;
+}
+
+// whether OpenDecoder forces the mode of the core for `hints`, as a VS10 mapping of a non Dolby
+// Vision item or a tone map does
+bool ForcesCoreMode(const CDVDStreamInfo& hints)
+{
+  const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+  return hints.dovi.dv_profile == 0 ||
+         settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2SDR) ||
+         settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2HDR);
 }
 
 // whether a decoder for `hints` put out as `output` sends HDR10 through the HDR module; forced PQ
@@ -3131,20 +3158,17 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   const bool dvOutputHold =
       m_outputModule == OutputModule::DV || dvMode == AMDV_OUTPUT_MODE_IPT ||
       dvMode == AMDV_OUTPUT_MODE_IPT_TUNNEL;
-  // the keeper does not keep deinterlaced or MVC frames; a running core keeps its own close, except
-  // for a dual layer item where it could hold the dv output or runs a VS10 mapping; the enhancement
-  // layer type shows only in the RPU, so the next open takes the picture or else that output
-  const bool dualLayers = dvEnabled && m_hints.dovi.el_present_flag != 0 &&
-                          m_hints.dovi.dv_profile == DOVI_DUAL_LAYER_PROFILE &&
-                          (dvOutputHold || dvPolicy == AMDV_FORCE_OUTPUT_MODE);
-  if (!dropped && (!dvEnabled || dualLayers) && !format.interlaced && !format.mvc &&
+  // the keeper does not keep deinterlaced or MVC frames; a running core keeps a picture only where
+  // it could hold the dv output or runs a VS10 mapping
+  const bool corePicture = dvEnabled && (dvOutputHold || dvPolicy == AMDV_FORCE_OUTPUT_MODE);
+  if (!dropped && (!dvEnabled || corePicture) && !format.interlaced && !format.mvc &&
       NextPlays(format))
   {
     heldFormat = format;
     heldModule = m_outputModule;
     heldPicture = true;
     pictureHdr10 = PlaysHdr10Output(m_hints, m_output, m_processInfo.GetIsHdr10Plus());
-    pictureDv = dualLayers;
+    pictureDv = corePicture;
     pictureDvMode = dvMode;
     hold = Hold::PICTURE;
   }
@@ -3198,7 +3222,12 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   {
     holdDecoderTimeout = m_decoder_timeout;
     holdKept = true;
-    pictureFEL = hold == Hold::PICTURE && dualLayers && m_processInfo.GetDoviIsFEL();
+    // the setup of the next item shows only at its open, so it takes the picture or else the dv
+    // output
+    const bool kept = hold == Hold::PICTURE && corePicture;
+    pictureLayers =
+        kept ? GetCoreLayers(m_hints, m_processInfo.GetDoviIsFEL()) : CoreLayers::SINGLE;
+    pictureForced = kept && m_ownOutput;
   }
   CLog::Log(LOGDEBUG, "CAMLCodec::{}: armed close keeps {}, next {}, dv core {}, dv policy {}",
             __FUNCTION__,
@@ -3228,13 +3257,16 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
                   : (heldModule == OutputModule::DV && RunsDolbyVision(hints, output)) ||
                         (heldModule == OutputModule::HDR &&
                          PlaysHdr10Output(hints, output, m_processInfo.GetIsHdr10Plus()));
-  // the core runs a kept picture with the enhancement layer type of its open; a full layer goes
-  // only to a full one, a minimum layer to either
-  const bool dualLayer =
-      hints.dovi.el_present_flag != 0 && hints.dovi.dv_profile == DOVI_DUAL_LAYER_PROFILE;
-  const bool fullLayer = dualLayer && doviIsFEL;
-  const bool convert = take && heldPicture && pictureDv && !(pictureFEL ? fullLayer : dualLayer);
-  const bool takes = take && (!convert || RunsDolbyVision(hints, output));
+  // the core runs a kept picture with the setup of its open; a picture goes only to an open that
+  // forces the mode alike and has the same layers, a minimum layer also to a full one
+  const CoreLayers layers = GetCoreLayers(hints, doviIsFEL);
+  const bool fullLayer = layers == CoreLayers::FEL;
+  const bool convert =
+      take && heldPicture && pictureDv &&
+      (ForcesCoreMode(hints) != pictureForced ||
+       (layers != pictureLayers && !(pictureLayers == CoreLayers::MEL && fullLayer)));
+  // a picture under the core goes only to a decoder that runs the core
+  const bool takes = take && (!(heldPicture && pictureDv) || RunsDolbyVision(hints, output));
   CLog::Log(LOGDEBUG, "CAMLCodec::{}: {} the held {}", __FUNCTION__, takes ? "takes" : "releases",
             heldPicture ? "picture" : "output");
   if (!takes)
@@ -3271,12 +3303,11 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
     m_keptPicture = true;
     pictureTaken = true;
     pictureHdr10 = PlaysHdr10Output(hints, output, m_processInfo.GetIsHdr10Plus());
-    pictureDv = pictureDv && RunsDolbyVision(hints, output);
     return true;
   }
 
   // the open of a full layer picture enabled its layer, and the picture went off before this open
-  if (pictureFEL && !fullLayer)
+  if (pictureLayers == CoreLayers::FEL && !fullLayer)
     CloseLayers({});
   // a native Dolby Vision open forces no mode; the core would leave a mapping's held IPT for the
   // tunnel only at the handback, on video
