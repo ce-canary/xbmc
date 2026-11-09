@@ -3125,9 +3125,8 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   const int dvMode =
       dvEnabled ? AmlDisplay->aml_get_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC) : -1;
   const bool dvOutputHold =
-      m_outputModule == OutputModule::DV ||
-      (dvPolicy == AMDV_FOLLOW_SOURCE &&
-       (dvMode == AMDV_OUTPUT_MODE_IPT || dvMode == AMDV_OUTPUT_MODE_IPT_TUNNEL));
+      m_outputModule == OutputModule::DV || dvMode == AMDV_OUTPUT_MODE_IPT ||
+      dvMode == AMDV_OUTPUT_MODE_IPT_TUNNEL;
   // the keeper does not keep deinterlaced or MVC frames; a running core keeps its own close, except
   // for a dual layer item where it could hold the dv output or runs a VS10 mapping; the enhancement
   // layer type shows only in the RPU, so the next open takes the picture or else that output
@@ -3150,11 +3149,11 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
       (!armNext || armNext->hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION))
   {
     // the core keeps a forced mode over the gap without video, where it follows the source to
-    // bypass otherwise; a VS10 mapping keeps its own close
+    // bypass otherwise
     if (dvOutputHold)
     {
       // the mode is stored only once the policy is forced
-      if (m_outputModule != OutputModule::DV)
+      if (dvPolicy != AMDV_FORCE_OUTPUT_MODE)
       {
         AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FORCE_OUTPUT_MODE);
         AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC, dvMode);
@@ -3271,6 +3270,18 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
   // the open of a full layer picture enabled its layer, and the picture went off before this open
   if (pictureFEL && !fullLayer)
     CloseLayers({});
+  // a native Dolby Vision open forces no mode; the core would leave a mapping's held IPT for the
+  // tunnel only at the handback, on video
+  const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+  if (m_outputModule == OutputModule::DV && hints.dovi.dv_profile != 0 &&
+      !settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2SDR) &&
+      !settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2HDR))
+  {
+    auto* AmlDisplay =
+        static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+    if (AmlDisplay->aml_get_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC) == AMDV_OUTPUT_MODE_IPT)
+      AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC, AMDV_OUTPUT_MODE_IPT_TUNNEL);
+  }
   m_handback = m_outputModule != OutputModule::NONE;
   // the core can still run on a picture that went off at this take when the first frame shows
   m_handbackOff = !convert;
