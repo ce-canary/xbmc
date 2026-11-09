@@ -871,6 +871,14 @@ bool CVideoPlayer::OpenFile(const CFileItem& file, const CPlayerOptions &options
   return true;
 }
 
+void CVideoPlayer::StopThread(bool bWait)
+{
+  // the player loop's waits do not wake on the stop event
+  m_messenger.Abort();
+  m_displayReset.Set();
+  CThread::StopThread(bWait);
+}
+
 bool CVideoPlayer::CloseFile(bool reopen)
 {
   CLog::Log(LOGINFO, "CVideoPlayer::CloseFile()");
@@ -1829,7 +1837,7 @@ void CVideoPlayer::Process()
     if (m_displayLost)
     {
       emptySince.reset();
-      CThread::Sleep(50ms);
+      m_displayReset.Wait(50ms);
       continue;
     }
 
@@ -1885,7 +1893,7 @@ void CVideoPlayer::Process()
           ReportAVStarted();
         // the menu state routes the remote's keys to the disc program's page
         UpdatePlayState(200);
-        CThread::Sleep(10ms);
+        m_messenger.WaitForMessage(10ms);
         continue;
       }
       m_navStop = false;
@@ -1999,7 +2007,7 @@ void CVideoPlayer::Process()
         }
         ProcessPacket(stream, packet);
       }
-      CThread::Sleep(10ms);
+      m_messenger.WaitForMessage(10ms);
       continue;
     }
 
@@ -2070,7 +2078,7 @@ void CVideoPlayer::Process()
       if (m_playSpeed == DVD_PLAYSPEED_PAUSE)
       {
         PollBlurayEvents();
-        CThread::Sleep(10ms);
+        m_messenger.WaitForMessage(10ms);
         continue;
       }
 
@@ -2138,7 +2146,7 @@ void CVideoPlayer::Process()
       if (navWait)
       {
         PollBlurayEvents();
-        CThread::Sleep(10ms);
+        m_messenger.WaitForMessage(10ms);
         continue;
       }
 
@@ -2176,7 +2184,7 @@ void CVideoPlayer::Process()
       if (next == CDVDInputStream::NEXTSTREAM_RETRY && !IsBlurayTitleEndHeld())
       {
         // a BD-J title end waits on the disc program, which acts on its own thread
-        CThread::Sleep(IsBlurayTitleEndWait() ? 10ms : 100ms);
+        m_messenger.WaitForMessage(IsBlurayTitleEndWait() ? 10ms : 100ms);
         continue;
       }
 
@@ -2195,7 +2203,7 @@ void CVideoPlayer::Process()
 
       if (next == CDVDInputStream::NEXTSTREAM_RETRY)
       {
-        CThread::Sleep(10ms);
+        m_messenger.WaitForMessage(10ms);
         continue;
       }
 
@@ -2205,7 +2213,7 @@ void CVideoPlayer::Process()
           m_VideoPlayerVideo->HasData() ||
           (m_CurrentVideo.id >= 0 && m_CurrentVideo.packets > 0 && !m_VideoPlayerVideo->IsEOS()))
       {
-        CThread::Sleep(100ms);
+        m_messenger.WaitForMessage(100ms);
         continue;
       }
 
@@ -7281,6 +7289,7 @@ void CVideoPlayer::OnResetDisplay()
   m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsgBool>(CDVDMsg::GENERAL_PAUSE, false), 1);
   m_clock.Pause(false);
   m_displayLost = false;
+  m_displayReset.Set();
   m_VideoPlayerAudio->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::PLAYER_DISPLAY_RESET), 1);
   m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::PLAYER_DISPLAY_RESET), 1);
 }
