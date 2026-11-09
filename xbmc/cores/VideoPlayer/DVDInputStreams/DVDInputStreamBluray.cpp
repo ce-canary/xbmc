@@ -28,6 +28,7 @@
 #include "utils/Geometry.h"
 #include "utils/HDRCapabilities.h"
 #include "utils/LanguageTag.h"
+#include "utils/StreamDetails.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
 #include "utils/XTimeUtils.h"
@@ -169,6 +170,63 @@ void SetupUHDSettings(BLURAY* bd)
 #endif
 
 constexpr uint64_t SOURCE_PACKET_SIZE = 192;
+
+// the largest video size and the highest dynamic range of the clips of `title`
+DiscFormat GetTitleFormat(const BLURAY_TITLE_INFO& title)
+{
+  DiscFormat format;
+  for (const BLURAY_CLIP_INFO& clip : std::span(title.clips, title.clip_count))
+  {
+    if (clip.video_stream_count == 0)
+      continue;
+
+    const BLURAY_STREAM_INFO& video = clip.video_streams[0];
+    int width = 0;
+    int height = 0;
+    switch (video.format)
+    {
+      case BLURAY_VIDEO_FORMAT_480I:
+      case BLURAY_VIDEO_FORMAT_480P:
+        width = 720;
+        height = 480;
+        break;
+      case BLURAY_VIDEO_FORMAT_576I:
+      case BLURAY_VIDEO_FORMAT_576P:
+        width = 720;
+        height = 576;
+        break;
+      case BLURAY_VIDEO_FORMAT_720P:
+        width = 1280;
+        height = 720;
+        break;
+      case BLURAY_VIDEO_FORMAT_1080I:
+      case BLURAY_VIDEO_FORMAT_1080P:
+        width = 1920;
+        height = 1080;
+        break;
+      case BLURAY_VIDEO_FORMAT_2160P:
+        width = 3840;
+        height = 2160;
+        break;
+      default:
+        break;
+    }
+    if (width * height > format.width * format.height)
+    {
+      format.width = width;
+      format.height = height;
+    }
+
+#if (BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 5, 0))
+    if (clip.dv_stream_count > 0 || video.dynamic_range_type == BLURAY_DYNAMIC_RANGE_DOLBY_VISION)
+      format.hdrType = StreamHdrType::HDR_TYPE_DOLBYVISION;
+    else if (video.dynamic_range_type == BLURAY_DYNAMIC_RANGE_HDR10 &&
+             format.hdrType == StreamHdrType::HDR_TYPE_NONE)
+      format.hdrType = StreamHdrType::HDR_TYPE_HDR10;
+#endif
+  }
+  return format;
+}
 } // namespace
 
 static int read_blocks(void* handle, void* buf, int lba, int num_blocks)
@@ -3022,4 +3080,26 @@ void CDVDInputStreamBluray::UpdateStack(CFileItem& item)
 {
   return UpdateStackItem(item,
                          m_titleInfo ? std::chrono::milliseconds(m_titleInfo->duration / 90) : 0ms);
+}
+
+DiscFormat CDVDInputStreamBluray::GetDiscFormat()
+{
+  if (!m_navmode)
+    return {};
+
+  // libbluray found the main title in bd_get_titles at the open
+  DiscFormat format;
+  const int mainTitle = bd_get_main_title(m_bd);
+  BLURAY_TITLE_INFO* title = mainTitle >= 0 ? bd_get_title_info(m_bd, mainTitle, 0) : nullptr;
+  if (title)
+  {
+    format = GetTitleFormat(*title);
+    CLog::Log(LOGINFO, "CDVDInputStreamBluray::GetDiscFormat - main title {:05d}.mpls: {}x{} {}",
+              title->playlist, format.width, format.height,
+              CStreamDetails::HdrTypeToString(format.hdrType));
+    bd_free_title_info(title);
+  }
+  else
+    CLog::Log(LOGINFO, "CDVDInputStreamBluray::GetDiscFormat - no main title");
+  return format;
 }
