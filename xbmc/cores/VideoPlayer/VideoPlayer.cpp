@@ -65,6 +65,7 @@
 #include "utils/Variant.h"
 #include "utils/log.h"
 #include "video/Bookmark.h"
+#include "video/VideoFileItemClassify.h"
 #include "video/VideoInfoTag.h"
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
@@ -835,11 +836,29 @@ bool CVideoPlayer::OpenFile(const CFileItem& file, const CPlayerOptions &options
 {
   CLog::Log(LOGINFO, "VideoPlayer::OpenFile: {}", CURL::GetRedacted(file.GetPath()));
 
+  // the application opens these in a fresh player, and a parked one already reported its end
+  if (m_parked && (file.IsDiscImage() || VIDEO::IsDVDFile(file)))
+  {
+    m_bAbortRequest = true;
+    if (auto system = CServiceBroker::GetWinSystem(); system != nullptr)
+    {
+      CSingleExit exitlock(system->GetGfxContext());
+      StopThread();
+    }
+    else
+    {
+      StopThread();
+    }
+  }
+
   if (IsRunning())
   {
     CDVDMsgOpenFile::FileParams params;
     params.m_item = file;
     params.m_options = options;
+    // a parked player plays again before this returns, as a fresh one does
+    std::unique_lock lock(m_parkSection);
+    m_parked = false;
     m_messenger.Put(std::make_shared<CDVDMsgOpenFile>(params), 1);
 
     return true;
@@ -852,6 +871,7 @@ bool CVideoPlayer::OpenFile(const CFileItem& file, const CPlayerOptions &options
   m_bAbortRequest = false;
   m_error = false;
   m_bCloseRequest = false;
+  m_parked = false;
   m_renderManager.PreInit();
 
   Create();
@@ -910,12 +930,13 @@ bool CVideoPlayer::CloseFile(bool reopen)
 
 bool CVideoPlayer::IsPlaying() const
 {
-  return !m_bStop;
+  return !m_bStop && !m_parked;
 }
 
 void CVideoPlayer::OnStartup()
 {
   m_syncStartPtsWait.reset();
+  m_endReported = false;
   m_CurrentVideo.Clear();
   m_CurrentAudio.Clear();
   m_CurrentSubtitle.Clear();
@@ -1803,6 +1824,85 @@ void CVideoPlayer::Prepare()
   SetCaching(CACHESTATE_FLUSH);
 }
 
+// At the end of a played out item, reports its close and end as OnExit does and waits for the
+// next item to open in this player. The video stream stays open, so its decoder keeps the last
+// picture. Returns whether the main loop goes on: an open was queued, or the next item opens.
+bool CVideoPlayer::ParkAtEnd()
+{
+  // menu and live inputs, and a video decoder of the input itself, end as they did
+  if (m_error || std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream) ||
+      m_item.IsPVR() || m_item.IsLiveTV() || m_item.IsEPG() ||
+      m_CurrentVideo.hint.externalInterfaces)
+    return false;
+
+  CloseStream(m_CurrentAudio, true);
+  CloseStream(m_CurrentTeletext, true);
+  CloseStream(m_CurrentRadioRDS, true);
+  CloseStream(m_CurrentAudioID3, true);
+  CloseStream(m_CurrentSubtitle, false);
+  m_overlayContainer.Clear();
+
+  if (m_bAbortRequest)
+    return false;
+
+  // the player plays until its audio played out, as at a stock end
+  {
+    std::unique_lock lock(m_parkSection);
+    if (m_messenger.GetPacketCount(CDVDMsg::PLAYER_OPENFILE) > 0)
+      return true;
+    m_parked = true;
+  }
+
+  m_endReported = true;
+
+  IPlayerCallback* cb = &m_callback;
+  CFileItem fileItem(m_item);
+  UpdateFileItemStreamDetails(fileItem, UpdateStreamDetails::UPDATE_IF_FLAGGED);
+  CVideoSettings vs = m_processInfo->GetVideoSettings();
+  m_outboundEvents->Submit([=]() { cb->StoreVideoSettings(fileItem, vs); });
+
+  CBookmark bookmark;
+  bookmark.totalTimeInSeconds = 0;
+  bookmark.timeInSeconds = 0;
+  if (m_State.startTime == 0)
+  {
+    bookmark.totalTimeInSeconds = m_State.timeMax / 1000;
+    bookmark.timeInSeconds = m_State.time / 1000;
+  }
+  bookmark.player = m_name;
+  bookmark.playerState = GetPlayerState();
+  m_outboundEvents->Submit([=]() { cb->OnPlayerCloseFile(fileItem, bookmark); });
+
+  m_pDemuxer.reset();
+  m_pSubtitleDemuxer.reset();
+  m_subtitleDemuxerMap.clear();
+  m_pCCDemuxer.reset();
+  if (m_pInputStream.use_count() > 1)
+    throw std::runtime_error("m_pInputStream reference count is greater than 1");
+  m_pInputStream.reset();
+
+  m_outboundEvents->Submit([=]() { cb->OnPlayBackEnded(); });
+
+  // only an open acts on a parked player, as a stopped one ignores the rest
+  while (!m_bAbortRequest)
+  {
+    std::shared_ptr<CDVDMsg> msg;
+    if (m_messenger.Get(msg, 100ms) != MSGQ_OK)
+      continue;
+
+    if (msg->IsType(CDVDMsg::PLAYER_OPENFILE))
+    {
+      m_messenger.Put(msg, 1);
+      return true;
+    }
+    if (msg->IsType(CDVDMsg::GENERAL_SYNCHRONIZE))
+      std::static_pointer_cast<CDVDMsgGeneralSynchronize>(msg)->Wait(100ms, SYNCSOURCE_PLAYER);
+    else if (msg->IsType(CDVDMsg::PLAYER_SEEK))
+      m_processInfo->SetStateSeeking(false);
+  }
+  return false;
+}
+
 void CVideoPlayer::Process()
 {
   // Try to resolve the correct mime type. This can take some time, for example if a requested
@@ -2123,6 +2223,9 @@ void CVideoPlayer::Process()
 
       if (!m_pInputStream->IsEOF())
         CLog::Log(LOGINFO, "{} - eof reading from demuxer", __FUNCTION__);
+
+      if (ParkAtEnd())
+        continue;
 
       break;
     }
@@ -3736,8 +3839,11 @@ void CVideoPlayer::OnExit()
   // If we decide nothing was played then the state is cleared
   // For other input streams no action is taken (as NONE is returned by the default virtual function)
   constexpr double STREAM_FINISHED{std::numeric_limits<double>::max()};
+  // a parked player reported its item and dropped its input
   const CDVDInputStream::UpdateState updateState{
-      m_pInputStream->UpdateItemFromSavedStates(fileItem, m_State.time, m_bCloseRequest)};
+      m_endReported
+          ? CDVDInputStream::UpdateState::NONE
+          : m_pInputStream->UpdateItemFromSavedStates(fileItem, m_State.time, m_bCloseRequest)};
   switch (updateState)
   {
     using enum CDVDInputStream::UpdateState;
@@ -3770,9 +3876,8 @@ void CVideoPlayer::OnExit()
 
   IPlayerCallback *cb = &m_callback;
   CVideoSettings vs = m_processInfo->GetVideoSettings();
-  m_outboundEvents->Submit([=]() {
-    cb->StoreVideoSettings(fileItem, vs);
-  });
+  if (!m_endReported)
+    m_outboundEvents->Submit([=]() { cb->StoreVideoSettings(fileItem, vs); });
 
   CBookmark bookmark;
   bookmark.totalTimeInSeconds = 0;
@@ -3784,9 +3889,8 @@ void CVideoPlayer::OnExit()
   }
   bookmark.player = m_name;
   bookmark.playerState = GetPlayerState();
-  m_outboundEvents->Submit([=]() {
-    cb->OnPlayerCloseFile(fileItem, bookmark);
-  });
+  if (!m_endReported)
+    m_outboundEvents->Submit([=]() { cb->OnPlayerCloseFile(fileItem, bookmark); });
 
   // destroy objects
   m_renderManager.Flush(false, false);
@@ -3807,6 +3911,9 @@ void CVideoPlayer::OnExit()
 
   CFFmpegLog::ClearLogLevel();
   m_bStop = true;
+
+  if (m_endReported)
+    return;
 
   bool error = m_error;
   bool close = m_bCloseRequest;
@@ -3834,13 +3941,14 @@ void CVideoPlayer::HandleMessages()
     {
       CDVDMsgOpenFile& msg(*std::static_pointer_cast<CDVDMsgOpenFile>(pMsg));
 
+      // a parked player reported its item, and keeps its picture until the next video opens
+      const bool joined = m_endReported;
       IPlayerCallback *cb = &m_callback;
       CFileItem fileItem(m_item);
       UpdateFileItemStreamDetails(fileItem, UpdateStreamDetails::UPDATE_IF_FLAGGED);
       CVideoSettings vs = m_processInfo->GetVideoSettings();
-      m_outboundEvents->Submit([=]() {
-        cb->StoreVideoSettings(fileItem, vs);
-      });
+      if (!joined)
+        m_outboundEvents->Submit([=]() { cb->StoreVideoSettings(fileItem, vs); });
 
       CBookmark bookmark;
       bookmark.totalTimeInSeconds = 0;
@@ -3852,9 +3960,8 @@ void CVideoPlayer::HandleMessages()
       }
       bookmark.player = m_name;
       bookmark.playerState = GetPlayerState();
-      m_outboundEvents->Submit([=]() {
-        cb->OnPlayerCloseFile(fileItem, bookmark);
-      });
+      if (!joined)
+        m_outboundEvents->Submit([=]() { cb->OnPlayerCloseFile(fileItem, bookmark); });
 
       m_item = msg.GetItem();
       // resolved here, as for a fresh start, so the caller does not wait for a lookup
@@ -3867,9 +3974,18 @@ void CVideoPlayer::HandleMessages()
         m_callback.OnPlayBackStarted(m_item);
       });
 
-      aml_end_presentation(true);
-      FlushBuffers(DVD_NOPTS_VALUE, true, true);
-      m_renderManager.Flush(false, false);
+      if (joined)
+      {
+        CLog::Log(LOGINFO, "VideoPlayer: opening the next item in the running player");
+        m_endReported = false;
+        m_joinPending = true;
+      }
+      else
+      {
+        aml_end_presentation(true);
+        FlushBuffers(DVD_NOPTS_VALUE, true, true);
+        m_renderManager.Flush(false, false);
+      }
       m_pDemuxer.reset();
       m_pSubtitleDemuxer.reset();
       m_subtitleDemuxerMap.clear();
@@ -3882,6 +3998,13 @@ void CVideoPlayer::HandleMessages()
       m_SelectionStreams.Clear(StreamType::NONE, STREAM_SOURCE_NONE);
 
       Prepare();
+      // a next item that opened no video, such as a disc menu, does not show the old picture
+      if (m_joinPending && m_CurrentVideo.id >= 0)
+      {
+        aml_end_presentation(true);
+        CloseStream(m_CurrentVideo, false);
+      }
+      m_joinPending = false;
     }
     else if (pMsg->IsType(CDVDMsg::PLAYER_SEEK) &&
         m_messenger.GetPacketCount(CDVDMsg::PLAYER_SEEK) == 0 &&
@@ -5207,6 +5330,12 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
       res = OpenAudioStream(hint, reset);
       break;
     case StreamType::VIDEO:
+      // the next item of a join opens its decoder once the old one closed, as at a disc join
+      if (m_joinPending && m_CurrentVideo.id >= 0)
+      {
+        CloseStream(m_CurrentVideo, true);
+        m_joinPending = false;
+      }
       res = OpenVideoStream(hint, reset);
       if (!res)
         m_renderManager.VideoStreamClosed();

@@ -430,6 +430,7 @@ protected:
   void DestroyPlayers();
 
   void Prepare();
+  bool ParkAtEnd();
   bool ShouldDeferSync(bool ready, std::chrono::steady_clock::time_point now);
   bool ShouldWaitForSync(std::chrono::steady_clock::time_point now);
   std::shared_ptr<CDVDInputStreamBluray> GetBlurayInputStream() const;
@@ -726,6 +727,14 @@ protected:
   bool m_videoDrained{false};
   bool m_playersFlushed{false};
   bool m_discAudioPick{false};
+  //! between the end of an item and the next open in this player; read from any thread
+  std::atomic<bool> m_parked{false};
+  //! orders the park against an open, so an open queued at the end is never parked over
+  CCriticalSection m_parkSection;
+  // the parked item's close and end were reported
+  bool m_endReported{false};
+  // the next item opens in place of a parked one
+  bool m_joinPending{false};
 
   CEdl m_Edl;
   bool m_SkipCommercials;

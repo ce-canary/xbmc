@@ -691,7 +691,12 @@ bool CApplicationMessageHandling::OnMessage(const CGUIMessage& message)
         {
           m_app.PlayFile(stackHelper->SetNextStackPartAsCurrent(), "", true);
           if (!m_app.WasPlaybackCancelled())
+          {
+            // a part that did not open leaves the player of the last part parked
+            if (!m_app.GetComponent<CApplicationPlayer>()->IsPlaying())
+              m_app.GetComponent<CApplicationPlayer>()->ClosePlayer();
             return true;
+          }
 
           // Selection of next part playlist cancelled so create bookmark for next part
           stackHelper->SetNextPartBookmark(m_app.CurrentFileItem().GetDynPath());
@@ -708,7 +713,10 @@ bool CApplicationMessageHandling::OnMessage(const CGUIMessage& message)
 
       if (!isEpgPlaylistItem)
       {
-        if (!CServiceBroker::GetPlaylistPlayer().PlayNext(1, true))
+        // a next item that opened nothing, such as a cancelled playlist choice or a disc stub,
+        // leaves the player of the last item parked
+        if (!CServiceBroker::GetPlaylistPlayer().PlayNext(1, true) ||
+            !m_app.GetComponent<CApplicationPlayer>()->IsPlaying())
           m_app.GetComponent<CApplicationPlayer>()->ClosePlayer();
 
         m_app.PlaybackCleanup();
