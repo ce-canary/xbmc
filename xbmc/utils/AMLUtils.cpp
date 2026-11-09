@@ -448,16 +448,12 @@ bool IsInterlacedClipVideo(uint8_t format)
          format == BLURAY_VIDEO_FORMAT_1080I;
 }
 
-// the hdr type OpenStream converts a demuxer hdr type to before it opens the decoder
+// the hdr type the decoder of a stream of the demuxer's `hdrType` puts out
 StreamHdrType GetOpenedHdrType(StreamHdrType hdrType)
 {
-  if (aml_convert_to_dv_by_vs_engine(hdrType))
-    return StreamHdrType::HDR_TYPE_DOLBYVISION;
-  if (aml_convert_to_sdr(hdrType))
-    return StreamHdrType::HDR_TYPE_NONE;
-  if (aml_convert_to_hdr(hdrType))
-    return StreamHdrType::HDR_TYPE_HDR10;
-  return hdrType;
+  CDVDStreamInfo source;
+  source.hdrType = hdrType;
+  return aml_video_output(source).hdrType;
 }
 
 // the format the decoder will be opened with for the video of `clip`
