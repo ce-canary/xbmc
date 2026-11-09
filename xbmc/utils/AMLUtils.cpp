@@ -411,6 +411,16 @@ bool aml_video_started()
   return (StringUtils::EqualsNoCase(videostarted.Get<std::string>().value_or("0x0"), "0x1"));
 }
 
+bool aml_display_reset_pending()
+{
+  return static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->IsDisplayResetPending();
+}
+
+std::chrono::steady_clock::time_point aml_display_reset_end()
+{
+  return static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetDisplayResetEnd();
+}
+
 #if defined(HAVE_LIBBLURAY)
 namespace
 {

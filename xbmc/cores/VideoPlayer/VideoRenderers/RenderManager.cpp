@@ -33,6 +33,7 @@
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
 
+#include <algorithm>
 #include <memory>
 #include <mutex>
 
@@ -199,7 +200,8 @@ bool CRenderManager::Configure(const VideoPicture& picture, float fps, unsigned 
     m_presentevent.notifyAll();
   }
 
-  // a display mode switch the render loop runs meanwhile does not count against the timeout
+  // a display mode switch or a delayed display reset the render loop runs meanwhile does not
+  // count against the timeout
   const std::chrono::seconds timeout(m_render_timeout);
   auto deadline = std::chrono::steady_clock::now() + timeout;
   while (!m_stateEvent.Wait(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -207,10 +209,10 @@ bool CRenderManager::Configure(const VideoPicture& picture, float fps, unsigned 
   {
     std::unique_lock lock(m_statelock);
     const auto now = std::chrono::steady_clock::now();
-    if (m_switching)
+    if (m_switching || aml_display_reset_pending())
       deadline = now + timeout;
     else
-      deadline = std::max(deadline, m_switchEnd + timeout);
+      deadline = std::max({deadline, m_switchEnd + timeout, aml_display_reset_end() + timeout});
     if (deadline <= now)
     {
       CLog::Log(LOGWARNING, "CRenderManager::Configure - timeout waiting for configure");

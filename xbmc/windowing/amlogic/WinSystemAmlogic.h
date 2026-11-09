@@ -19,6 +19,7 @@
 #include "utils/EGLUtils.h"
 
 #include <atomic>
+#include <chrono>
 #include <gbm.h>
 
 class IDispResource;
@@ -60,6 +61,8 @@ public:
   void MonitorStop();
 
   CAMLDisplay* GetAmlDisplay() const { return m_amlDisplay.get(); }
+  bool IsDisplayResetPending() const { return m_delayDispReset.load(); }
+  std::chrono::steady_clock::time_point GetDisplayResetEnd() const { return m_dispResetEnd.load(); }
 protected:
   std::string m_framebuffer_name;
   bool IsHotplugPending() const { return m_hotplugPending.load(); }
@@ -70,8 +73,9 @@ protected:
 
   RenderStereoMode m_stereo_mode;
 
-  bool m_delayDispReset;
+  std::atomic<bool> m_delayDispReset;
   XbmcThreads::EndTime<> m_dispResetTimer;
+  std::atomic<std::chrono::steady_clock::time_point> m_dispResetEnd{};
 
   CCriticalSection m_resourceSection;
   std::vector<IDispResource*> m_resources;

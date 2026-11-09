@@ -342,11 +342,13 @@ void CWinSystemAmlogicGLESContext::PresentRender(bool rendered, bool videoLayer)
 
   if (m_delayDispReset && m_dispResetTimer.IsTimePast())
   {
-    m_delayDispReset = false;
     std::unique_lock<CCriticalSection> lock(m_resourceSection);
     // tell any shared resources
     for (std::vector<IDispResource *>::iterator i = m_resources.begin(); i != m_resources.end(); ++i)
       (*i)->OnResetDisplay();
+    // a configure waits until the resources are reset
+    m_dispResetEnd = std::chrono::steady_clock::now();
+    m_delayDispReset = false;
     // the player clock runs again: pick now, not a vsync later
     CAMLCodec::RequestVsyncStep();
   }
