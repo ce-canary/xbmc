@@ -188,7 +188,8 @@ protected:
   //! Video-only tap: serve VIDEO capture requests from the just-presented frame.
   void ServiceVideoCaptures();
 
-  void SwitchResolution();
+  //! false when the switch waits for the user to pick a stereo mode
+  bool SwitchResolution();
   void UpdateLatencyTweak();
   //! Release lead in ms without the video delay; needs m_pRenderer
   double CalcReleaseLead();

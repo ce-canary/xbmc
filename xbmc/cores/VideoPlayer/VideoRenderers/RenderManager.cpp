@@ -381,7 +381,10 @@ void CRenderManager::FrameMove()
       // the video thread waits for m_stateEvent, so no frame of this stream is queued yet
       const CGraphicContext& gfx = CServiceBroker::GetWinSystem()->GetGfxContext();
       if (gfx.IsFullScreenVideo() && gfx.IsFullScreenRoot())
-        SwitchResolution();
+      {
+        if (SwitchResolution())
+          m_pRenderer->PlaceConfiguredVideo();
+      }
       StartPresentThread();
       // the release lead a waiter reads depends on whether the vsync presenter runs
       m_stateEvent.Set();
@@ -1088,16 +1091,20 @@ void CRenderManager::UpdateResolution()
   }
 }
 
-void CRenderManager::SwitchResolution()
+bool CRenderManager::SwitchResolution()
 {
   const RenderStereoMode user_stereo_mode =
     CServiceBroker::GetGUI()->GetStereoscopicsManager().GetStereoModeByUser();
   STEREOSCOPIC_PLAYBACK_MODE playbackMode =
     static_cast<STEREOSCOPIC_PLAYBACK_MODE>(CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_VIDEOPLAYER_STEREOSCOPICPLAYBACKMODE));
+  bool deferred = false;
   if (!m_picture.stereoMode.empty() &&
       playbackMode == STEREOSCOPIC_PLAYBACK_MODE_ASK &&
       user_stereo_mode == RenderStereoMode::UNDEFINED)
+  {
     m_bTriggerUpdateResolution = false;
+    deferred = true;
+  }
 
   if (m_bTriggerUpdateResolution &&
     CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_VIDEOPLAYER_ADJUSTREFRESHRATE) != ADJUST_REFRESHRATE_OFF && m_fps > 0.0f)
@@ -1125,6 +1132,7 @@ void CRenderManager::SwitchResolution()
   }
   m_bTriggerUpdateResolution = false;
   m_playerPort->VideoParamsChange();
+  return !deferred;
 }
 
 void CRenderManager::TriggerUpdateResolution(float fps, int width, int height, std::string &stereomode)

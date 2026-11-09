@@ -118,6 +118,8 @@ public:
   virtual int GetPresentLatency() const { return -1; }
   //! Milliseconds a stage after the release holds a frame for its successor (a deinterlacer)
   virtual double GetPresentHold() const { return 0.0; }
+  //! Places the video of a configured stream in the final output mode, before its first frame
+  virtual void PlaceConfiguredVideo() {}
   // Render info, can be called before configure
   virtual CRenderInfo GetRenderInfo() { return CRenderInfo(); }
   virtual void Update() = 0;

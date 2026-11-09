@@ -53,6 +53,7 @@ public:
   virtual void WakeVsyncPresent() override;
   virtual int GetPresentLatency() const override;
   virtual double GetPresentHold() const override;
+  virtual void PlaceConfiguredVideo() override;
 
   // Feature support
   virtual bool Supports(ESCALINGMETHOD method) const override { return false; };
@@ -78,6 +79,7 @@ private:
 
   uint64_t m_prevVPts;
   std::weak_ptr<CAMLCodec> m_prevCodec;
+  std::weak_ptr<CAMLCodec> m_configCodec;
   uint64_t m_hdrGuiOwner{0};
   int m_hdrGuiTransfer{0};
   bool m_bConfigured;

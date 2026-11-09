@@ -4116,11 +4116,14 @@ void CAMLCodec::SetSpeed(int speed)
   }
 }
 
+namespace
+{
+std::mutex saved_mutex;
+int saved_disable_video = -1;
+} // namespace
+
 void CAMLCodec::ShowMainVideo(const bool show)
 {
-  static std::mutex saved_mutex;
-  static int saved_disable_video = -1;
-
   std::lock_guard<std::mutex> lock(saved_mutex);
   int disable_video = show ? 0:1;
   if (saved_disable_video == disable_video)
@@ -4128,6 +4131,12 @@ void CAMLCodec::ShowMainVideo(const bool show)
 
   CSysfsPath("/sys/class/video/disable_video", disable_video);
   saved_disable_video = disable_video;
+}
+
+bool CAMLCodec::IsMainVideoHidden()
+{
+  std::lock_guard<std::mutex> lock(saved_mutex);
+  return saved_disable_video == 1;
 }
 
 void CAMLCodec::SetVideoZoom(const float zoom)

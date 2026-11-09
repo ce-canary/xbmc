@@ -79,6 +79,7 @@ bool CRendererAML::Configure(const VideoPicture &picture, float fps, unsigned in
 
   CAMLVideoBuffer* amli = dynamic_cast<CAMLVideoBuffer*>(picture.videoBuffer);
   m_presentHold = amli && amli->m_amlCodec ? amli->m_amlCodec->GetPresentHold() : 0.0;
+  m_configCodec = amli ? amli->m_amlCodec : nullptr;
 
   int color_transfer = 0;
   const bool dv_graphics =
@@ -357,6 +358,17 @@ void CRendererAML::Update()
 
   m_placedResolution = res;
   m_pendingGeometry = m_prevCodec.lock();
+}
+
+// amvideo turns a layer on at the first frame only when it was enabled before it
+void CRendererAML::PlaceConfiguredVideo()
+{
+  const std::shared_ptr<CAMLCodec> codec = m_configCodec.lock();
+  if (!codec || !codec->IsOpen() || !CAMLCodec::IsMainVideoHidden())
+    return;
+
+  ManageRenderArea();
+  codec->SetVideoRect(m_sourceRect, m_destRect);
 }
 
 void CRendererAML::RenderUpdate(int index, int index2, bool clear, unsigned int flags, unsigned int alpha)
