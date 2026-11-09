@@ -933,6 +933,7 @@ bool CVideoPlayer::OpenInputStream()
     throw std::runtime_error("m_pInputStream reference count is greater than 1");
   m_pInputStream.reset();
   m_blurayMenu = false;
+  m_processInfo->SetDiscFormat({});
 
   // Flushes keep disc menu overlays, and the closed input stream can no longer remove them
   m_overlayContainer.Clear();
@@ -964,6 +965,9 @@ bool CVideoPlayer::OpenInputStream()
   // a settings load before this point put the per-file subtitle state over the disc's
   if (m_blurayMenu)
     m_VideoPlayerVideo->EnableSubtitle(GetBlurayInputStream()->IsPgEnabled());
+  if (m_blurayMenu && CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+                          CSettings::SETTING_COREELEC_AMLOGIC_KEEPDISCOUTPUT))
+    m_processInfo->SetDiscFormat(GetBlurayInputStream()->GetDiscFormat());
 #endif
 
   // find any available external subtitles for non dvd files
