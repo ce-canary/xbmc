@@ -2143,7 +2143,9 @@ void CVideoPlayer::Process()
       }
       if (navWait)
       {
-        PollBlurayEvents();
+        // a held read is the end of the input, and video only stalls once it is drained
+        if (PollBlurayEvents())
+          SendVideoDrain();
         m_messenger.WaitForMessage(10ms);
         continue;
       }
