@@ -99,6 +99,8 @@ public:
   virtual bool OpenFile(const CFileItem& file, const CPlayerOptions& options){ return false;}
   virtual bool QueueNextFile(const CFileItem &file) { return false; }
   virtual void OnNothingToQueueNotify() {}
+  // the next item, for the player to prepare; it is still played through OpenFile
+  virtual void PrefetchNextFile(const CFileItem& file) {}
   virtual bool CloseFile(bool reopen = false) = 0;
   virtual bool IsPlaying() const { return false;}
   virtual bool CanPause() const { return true; }
