@@ -3165,17 +3165,21 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   }
 
   // forced PQ keeps HDR10 on the wire over the gap without video, where the HDR module sends
-  // SDR otherwise; a user mapping keeps its own close
+  // SDR otherwise; outside follow source the forced output is the module's output now
+  const int hdrPolicy =
+      dvEnabled ? -1 : AmlDisplay->aml_get_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC);
   if (hold == Hold::NONE && !dvEnabled &&
       PlaysHdr10Output(m_hints, m_output, m_processInfo.GetIsHdr10Plus()) &&
       (!armNext || armNext->hdrType == StreamHdrType::HDR_TYPE_HDR10) &&
       (m_outputModule == OutputModule::HDR ||
-       (AmlDisplay->aml_get_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC) == HDR_FOLLOW_SOURCE &&
-        dvPolicy != AMDV_FORCE_OUTPUT_MODE)))
+       (dvPolicy != AMDV_FORCE_OUTPUT_MODE &&
+        (hdrPolicy == HDR_FOLLOW_SOURCE ||
+         (m_ownOutput && AmlDisplay->aml_get_drmProperty("force_output", DRM_MODE_OBJECT_CRTC) ==
+                             FORCE_OUTPUT_BT2020_PQ)))))
   {
     // follow sink without the forced output sees a sink without HDR, so the forced output goes
     // first
-    if (m_outputModule != OutputModule::HDR)
+    if (m_outputModule != OutputModule::HDR && hdrPolicy == HDR_FOLLOW_SOURCE)
     {
       AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, FORCE_OUTPUT_BT2020_PQ);
       AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, HDR_FOLLOW_SINK);
