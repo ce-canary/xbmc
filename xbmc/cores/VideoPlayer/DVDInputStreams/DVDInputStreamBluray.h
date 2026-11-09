@@ -10,6 +10,7 @@
 
 #include "BlurayStateSerializer.h"
 #include "DVDInputStream.h"
+#include "cores/DataCacheCore.h"
 #include "threads/CriticalSection.h"
 #if defined(HAS_UDFREAD)
 #include "filesystem/UDFContext.h"
@@ -174,6 +175,9 @@ public:
 
   //! the presentation graphic display flag libbluray last reported
   bool IsPgEnabled() const { return m_pgEnabled; }
+
+  //! the format of the disc's main title in navigation mode, empty otherwise; reads the title
+  DiscFormat GetDiscFormat();
 
   //! whether the audio stream libbluray last reported changed from a stream of the playing clip, as
   //! a pick by the disc program or the user does; not set for a play item that lacks the stream
