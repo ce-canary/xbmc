@@ -546,6 +546,12 @@ void aml_continue_presentation(const BLURAY_CLIP_INFO* next)
   CAMLCodec::ContinuePresentation(format);
 }
 
+void aml_continue_presentation(const CDVDStreamInfo& next)
+{
+  CAMLCodec::ContinuePresentation(
+      NextVideoFormat{next.codec, aml_video_output(next).hdrType, next.interlaced});
+}
+
 void aml_end_presentation(bool stop)
 {
   CAMLCodec::EndPresentation(stop);

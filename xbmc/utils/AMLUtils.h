@@ -100,6 +100,8 @@ bool aml_display_reset_pending();
 std::chrono::steady_clock::time_point aml_display_reset_end();
 // `next` is the clip of the next item, nullptr when unknown
 void aml_continue_presentation(const BLURAY_CLIP_INFO* next);
+// `next` is the stream the next decoder opens with
+void aml_continue_presentation(const CDVDStreamInfo& next);
 void aml_end_presentation(bool stop);
 // `taken` also drops a picture a next decoder took before its first frame
 void aml_drop_kept_picture(bool taken);

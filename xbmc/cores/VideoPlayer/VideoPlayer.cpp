@@ -5333,6 +5333,7 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
       // the next item of a join opens its decoder once the old one closed, as at a disc join
       if (m_joinPending && m_CurrentVideo.id >= 0)
       {
+        aml_continue_presentation(hint);
         CloseStream(m_CurrentVideo, true);
         m_joinPending = false;
       }
