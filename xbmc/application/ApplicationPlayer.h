@@ -143,6 +143,7 @@ public:
   void OnNothingToQueueNotify();
   void Pause();
   bool QueueNextFile(const CFileItem &file);
+  void PrefetchNextFile(const CFileItem& file);
   void Seek(bool bPlus = true, bool bLargeStep = false, bool bChapterOverride = false);
   int SeekChapter(int iChapter);
   void SeekPercentage(float fPercent = 0);

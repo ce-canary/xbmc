@@ -63,6 +63,8 @@ constexpr const int GUI_MSG_SCAN_FINISHED           = GUI_MSG_USER + 13;
 
 //  Player has requested the next item for caching purposes (PAPlayer)
 constexpr const int GUI_MSG_QUEUE_NEXT_ITEM         = GUI_MSG_USER + 16;
+//  Parameter for GUI_MSG_QUEUE_NEXT_ITEM: the player only prepares the item, which plays as usual
+constexpr int GUI_MSG_FLAG_PREFETCH = 0x00000001;
 
 //  Playback request for the trailer of a given item
 constexpr const int GUI_MSG_PLAY_TRAILER = GUI_MSG_USER + 17;

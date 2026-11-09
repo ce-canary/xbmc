@@ -564,6 +564,26 @@ bool CApplicationMessageHandling::OnMessage(const CGUIMessage& message)
 
     case GUI_MSG_QUEUE_NEXT_ITEM:
     {
+      // the item PlayNext picks; the playlist stays as it is
+      if (message.GetParam1() == GUI_MSG_FLAG_PREFETCH)
+      {
+        const auto& playlistPlayer = CServiceBroker::GetPlaylistPlayer();
+        const int next = playlistPlayer.GetNextItemIdx(1);
+        const PLAYLIST::CPlayList& playlist =
+            playlistPlayer.GetPlaylist(playlistPlayer.GetCurrentPlaylist());
+        if (next < 0 || next >= playlist.size() ||
+            m_app.GetComponent<CApplicationStackHelper>()->IsPlayingStack())
+          return true;
+
+        // a plugin item is resolved when it plays
+        const CFileItem& file = *playlist[next];
+        if (URIUtils::IsPlugin(file.GetDynPath()) || !VIDEO::IsVideo(file))
+          return true;
+
+        m_app.GetComponent<CApplicationPlayer>()->PrefetchNextFile(file);
+        return true;
+      }
+
       // Check to see if our playlist player has a new item for us,
       // and if so, we check whether our current player wants the file
       int iNext = CServiceBroker::GetPlaylistPlayer().GetNextItemIdx();

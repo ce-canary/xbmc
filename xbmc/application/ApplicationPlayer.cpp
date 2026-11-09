@@ -629,6 +629,13 @@ bool CApplicationPlayer::QueueNextFile(const CFileItem &file)
   return (player && player->QueueNextFile(file));
 }
 
+void CApplicationPlayer::PrefetchNextFile(const CFileItem& file)
+{
+  std::shared_ptr<IPlayer> player = GetInternal();
+  if (player)
+    player->PrefetchNextFile(file);
+}
+
 bool CApplicationPlayer::SetPlayerState(const std::string& state)
 {
   std::shared_ptr<IPlayer> player = GetInternal();

@@ -29,6 +29,7 @@ public:
   void OnPlayBackStopped() override;
   void OnPlayBackError() override;
   void OnQueueNextItem() override;
+  void OnPrefetchNextItem() override;
   void OnPlayBackSeek(int64_t iTime, int64_t seekOffset) override;
   void OnPlayBackSeekChapter(int iChapter) override;
   void OnPlayBackSpeedChanged(int iSpeed) override;

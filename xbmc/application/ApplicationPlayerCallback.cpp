@@ -460,6 +460,12 @@ void CApplicationPlayerCallback::OnQueueNextItem()
   CServiceBroker::GetGUI()->GetWindowManager().SendThreadMessage(msg);
 }
 
+void CApplicationPlayerCallback::OnPrefetchNextItem()
+{
+  CGUIMessage msg(GUI_MSG_QUEUE_NEXT_ITEM, 0, 0, GUI_MSG_FLAG_PREFETCH);
+  CServiceBroker::GetGUI()->GetWindowManager().SendThreadMessage(msg);
+}
+
 void CApplicationPlayerCallback::OnPlayBackSeek(int64_t iTime, int64_t seekOffset)
 {
 #ifdef HAS_PYTHON
