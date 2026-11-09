@@ -149,6 +149,8 @@ public:
   //! output stays set up for the next decoder, and a picture under a held HDR10 or Dolby Vision
   //! output leaves that forced output to the hold or the decoder that took it
   static void   DropKeptPicture(bool taken);
+  //! Whether Kodi last switched the video layer off
+  static bool   IsMainVideoHidden();
   //! Makes this decoder the newest, and the one that takes or ends a held output no decoder
   //! claimed
   void          ClaimHold();
