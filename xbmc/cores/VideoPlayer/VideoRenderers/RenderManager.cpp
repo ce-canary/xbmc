@@ -14,6 +14,7 @@
 #include "RenderFlags.h"
 #include "ServiceBroker.h"
 #include "application/Application.h"
+#include "cores/DataCacheCore.h"
 #include "cores/VideoPlayer/Interface/TimingConstants.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/StereoscopicsManager.h"
@@ -43,6 +44,25 @@ namespace
 {
 // the video start delay the player assumes for a renderer that cannot report its release lead
 constexpr double UNKNOWN_RELEASE_LEAD_MS = 100.0;
+
+// the size the output mode is chosen for; a smaller clip of a disc takes the size of its main
+// title
+CSizeInt GetModeSize(const VideoPicture& picture, float fps)
+{
+  const CSizeInt size(static_cast<int>(picture.iWidth), static_cast<int>(picture.iHeight));
+  const DiscFormat disc = CServiceBroker::GetDataCacheCore().GetDiscFormat();
+  if (!picture.stereoMode.empty() || disc.width <= size.Width() || disc.height <= size.Height())
+    return size;
+
+  // Dolby Vision at 2160p50/60 needs the sink's 2160p60 capability
+  if (picture.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && fps > 30.0f &&
+      disc.height >= 2160 &&
+      CServiceBroker::GetWinSystem()->GetDisplayHDRCapabilities().SupportsDolbyVision() !=
+          DolbyVisionFormat::DOLBYVISION_TYPE_4K60)
+    return size;
+
+  return CSizeInt(disc.width, disc.height);
+}
 } // namespace
 
 class CRenderManager::CPresentThread : public CThread
@@ -1115,8 +1135,15 @@ bool CRenderManager::SwitchResolution()
       m_switching = true;
     }
     CServiceBroker::GetWinSystem()->GetGfxContext().SetHDRType(m_picture.hdrType);
-    RESOLUTION res = CResolutionUtils::ChooseBestResolution(
-        m_fps, m_picture.iWidth, m_picture.iHeight, !m_picture.stereoMode.empty());
+    const CSizeInt size = GetModeSize(m_picture, m_fps);
+    RESOLUTION res = CResolutionUtils::ChooseBestResolution(m_fps, size.Width(), size.Height(),
+                                                            !m_picture.stereoMode.empty());
+    // a whitelist with no mode of the disc's height chooses for the clip
+    if (size.Height() > static_cast<int>(m_picture.iHeight) &&
+        CServiceBroker::GetWinSystem()->GetGfxContext().GetResInfo(res).iScreenHeight <
+            size.Height())
+      res = CResolutionUtils::ChooseBestResolution(m_fps, m_picture.iWidth, m_picture.iHeight,
+                                                   !m_picture.stereoMode.empty());
     // a mode set before the first frame of the next decoder would show the kept picture
     if (res != CServiceBroker::GetWinSystem()->GetGfxContext().GetVideoResolution())
       aml_drop_kept_picture(true);
