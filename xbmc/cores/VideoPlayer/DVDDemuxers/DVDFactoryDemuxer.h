@@ -18,4 +18,7 @@ class CDVDFactoryDemuxer
 public:
   static CDVDDemux* CreateDemuxer(const std::shared_ptr<CDVDInputStream>& pInputStream,
                                   bool fileinfo = false);
+
+  // Whether CreateDemuxer opens the input as a file in a CDVDDemuxFFmpeg with stream info.
+  static bool IsFFmpegFile(const std::shared_ptr<CDVDInputStream>& pInputStream);
 };
