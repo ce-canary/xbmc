@@ -473,6 +473,7 @@ public:
   static constexpr auto SETTING_COREELEC_AMLOGIC_DV2HDR = "coreelec.amlogic.dv2hdr";
   static constexpr auto SETTING_COREELEC_AMLOGIC_SDR2DV = "coreelec.amlogic.sdr2dv";
   static constexpr auto SETTING_COREELEC_AMLOGIC_HDR2DV = "coreelec.amlogic.hdr2dv";
+  static constexpr auto SETTING_COREELEC_AMLOGIC_KEEPDISCOUTPUT = "coreelec.amlogic.keepdiscoutput";
   static constexpr auto SETTING_COREELEC_AMLOGIC_LIMIT_CD = "coreelec.amlogic.limitcd";
   static constexpr auto SETTING_COREELEC_AMLOGIC_FORCE_CS = "coreelec.amlogic.forcecs";
   static constexpr auto SETTING_COREELEC_AMLOGIC_DISABLEGUISCALING = "coreelec.amlogic.disableguiscaling";

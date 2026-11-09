@@ -4185,6 +4185,16 @@
             <dependency type="enable" setting="coreelec.amlogic.disabledolbyvision" operator="is">false</dependency>
           </dependencies>
         </setting>
+        <setting id="coreelec.amlogic.keepdiscoutput" type="boolean" label="14318" help="14319">
+          <requirement>
+            <and>
+              <condition>HAVE_AMCODEC</condition>
+              <condition>HAVE_LIBBLURAY</condition>
+            </and>
+          </requirement>
+          <default>true</default>
+          <control type="toggle" />
+        </setting>
         <setting id="coreelec.amlogic.disabledolbyvision" type="boolean" label="14422" help="14423">
           <requirement>HAVE_AMCODEC</requirement>
           <default>false</default>
