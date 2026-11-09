@@ -840,7 +840,6 @@ bool CVideoPlayer::OpenFile(const CFileItem& file, const CPlayerOptions &options
     CDVDMsgOpenFile::FileParams params;
     params.m_item = file;
     params.m_options = options;
-    params.m_item.SetMimeTypeForInternetFile();
     m_messenger.Put(std::make_shared<CDVDMsgOpenFile>(params), 1);
 
     return true;
@@ -3858,6 +3857,8 @@ void CVideoPlayer::HandleMessages()
       });
 
       m_item = msg.GetItem();
+      // resolved here, as for a fresh start, so the caller does not wait for a lookup
+      m_item.SetMimeTypeForInternetFile();
       m_playerOptions = msg.GetOptions();
 
       m_processInfo->SetPlayTimes(0,0,0,0);
