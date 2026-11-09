@@ -11,6 +11,7 @@
 #include "utils/StreamDetails.h"
 
 #include <chrono>
+#include <optional>
 
 extern "C"
 {
@@ -78,6 +79,9 @@ bool aml_convert_to_hdr(StreamHdrType hdrType);
 bool aml_convert_to_sdr_by_vs_engine(StreamHdrType hdrType);
 bool aml_convert_to_hdr_by_vs_engine(StreamHdrType hdrType);
 bool aml_convert_to_dv_by_vs_engine(StreamHdrType hdrType);
+// the engine every clip of a Blu-ray menu session runs through, the disc's range before a user's
+// mapping lowers it; none outside a session or where the clips are mapped to sdr
+std::optional<StreamHdrType> aml_disc_output_hdr_type();
 
 // what the decoder puts out for a source under the conversion settings
 struct AMLVideoOutput
