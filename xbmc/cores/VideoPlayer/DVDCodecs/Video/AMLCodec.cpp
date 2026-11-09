@@ -2494,30 +2494,31 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, const AMLVideoOutput &output,
   auto* AmlDisplay =
       static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
 
+  std::vector<AMLCrtcWrite> outputWrites;
+
   // default enable HDR10+
   auto hdr_cap = CServiceBroker::GetWinSystem()->GetDisplayHDRCapabilities();
-  if (hdr_cap.SupportsHDR10Plus())
-    AmlDisplay->aml_set_drmProperty("enable_hdr10plus", DRM_MODE_OBJECT_CRTC, 1);
+  if (hdr_cap.SupportsHDR10Plus() && !dv_enable)
+    outputWrites.emplace_back("enable_hdr10plus", 1);
 
   if (dv_enable)
   {
     // enable Dolby Vision
-    AmlDisplay->aml_set_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC, 1);
+    outputWrites.emplace_back("dv_enable", 1);
 
     // use player led mode when enabled
     if (settings->GetInt(
             CSettings::SETTING_COREELEC_AMLOGIC_DV_LED) == AML_DV_PLAYER_LED ||
         !display_support_dv)
-      AmlDisplay->aml_set_drmProperty("dv_ll_policy", DRM_MODE_OBJECT_CRTC, DOLBY_VISION_LL_YUV422);
+      outputWrites.emplace_back("dv_ll_policy", DOLBY_VISION_LL_YUV422);
     else
-      AmlDisplay->aml_set_drmProperty("dv_ll_policy", DRM_MODE_OBJECT_CRTC,
-                                      DOLBY_VISION_LL_DISABLE);
+      outputWrites.emplace_back("dv_ll_policy", DOLBY_VISION_LL_DISABLE);
 
     // setup Dolby Vision VS-Engine for non DV media or for tone map to SDR/HDR
     if (hints.dovi.dv_profile == 0 || (dv2sdr || dv2hdr))
     {
       unsigned int dv_mode = AMDV_OUTPUT_MODE_IPT_TUNNEL;
-      AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FORCE_OUTPUT_MODE);
+      outputWrites.emplace_back("dv_policy", AMDV_FORCE_OUTPUT_MODE);
       m_outputModule = OutputModule::NONE;
       m_ownOutput = true;
       m_handback = false;
@@ -2529,18 +2530,18 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, const AMLVideoOutput &output,
       else
         dv_mode = dv2hdr ? AMDV_OUTPUT_MODE_HDR10 : AMDV_OUTPUT_MODE_SDR8;
 
-      AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC, dv_mode);
+      outputWrites.emplace_back("dv_mode", dv_mode);
     }
 
-    AmlDisplay->aml_set_drmProperty("enable_hdr10plus", DRM_MODE_OBJECT_CRTC, 0);
+    outputWrites.emplace_back("enable_hdr10plus", 0);
     am_private->gcodec.dv_enable = 1;
 
     if (hints.dovi.dv_profile == 4 || hints.dovi.dv_profile == 7)
     {
       if (doviIsFEL) // use stream path if not MEL
       {
-        AmlDisplay->aml_set_drmProperty("dv_debug", DRM_MODE_OBJECT_CRTC, "enable_fel 1");
-        AmlDisplay->aml_set_drmProperty("dv_debug", DRM_MODE_OBJECT_CRTC, "enable_mel 1");
+        outputWrites.emplace_back("dv_debug", "enable_fel 1");
+        outputWrites.emplace_back("dv_debug", "enable_mel 1");
         am_private->gcodec.dec_mode = STREAM_TYPE_STREAM;
       }
     }
@@ -2549,7 +2550,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, const AMLVideoOutput &output,
   {
     int forceOutput = FORCE_OUTPUT_DISABLED;
 
-    AmlDisplay->aml_set_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC, 0);
+    outputWrites.emplace_back("dv_enable", 0);
     if (settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR) &&
         m_output.hdrType == StreamHdrType::HDR_TYPE_HDR10 && !m_processInfo.GetIsHdr10Plus())
       forceOutput = FORCE_OUTPUT_BT2020_PQ;
@@ -2558,14 +2559,15 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, const AMLVideoOutput &output,
 
     if (forceOutput != FORCE_OUTPUT_DISABLED)
     {
-      AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FOLLOW_SINK);
-      AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, AMDV_FOLLOW_SINK);
-      AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, forceOutput);
+      outputWrites.emplace_back("dv_policy", AMDV_FOLLOW_SINK);
+      outputWrites.emplace_back("hdr_policy", AMDV_FOLLOW_SINK);
+      outputWrites.emplace_back("force_output", forceOutput);
       m_outputModule = OutputModule::NONE;
       m_ownOutput = true;
       m_handback = false;
     }
   }
+  AmlDisplay->SetCrtcProperties(outputWrites);
 
   // the deinterlacer outputs a field once the next one is queued
   m_presentHold = hints.interlaced ? am_private->video_rate * 1000.0 / UNIT_FREQ / 2 : 0.0;
@@ -2912,7 +2914,7 @@ void CAMLCodec::CloseDecoder()
   }
   else if (hold != Hold::PICTURE)
   {
-    CloseLayers();
+    CloseLayers({});
 
     ShowMainVideo(false);
   }
@@ -2924,6 +2926,7 @@ void CAMLCodec::CloseOutput(bool dvEnabled, int dvPolicy, int decoderTimeout)
 {
   auto* AmlDisplay =
       static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+  std::vector<AMLCrtcWrite> writes;
 
   // disable Dolby Vision driver
   if (dvEnabled)
@@ -2939,31 +2942,32 @@ void CAMLCodec::CloseOutput(bool dvEnabled, int dvPolicy, int decoderTimeout)
       usleep(10000); // wait 10ms
 
     if (dvPolicy == AMDV_FORCE_OUTPUT_MODE)
-      AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FOLLOW_SOURCE);
+      writes.emplace_back("dv_policy", AMDV_FOLLOW_SOURCE);
     else
-      AmlDisplay->aml_set_drmProperty("enable_hdr10plus", DRM_MODE_OBJECT_CRTC, 1);
+      writes.emplace_back("enable_hdr10plus", 1);
 
-    AmlDisplay->aml_set_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC, 0);
+    writes.emplace_back("dv_enable", 0);
   }
   else if (CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR) ||
            CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2SDR))
   {
-    AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FOLLOW_SOURCE);
-    AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, HDR_FOLLOW_SOURCE);
-    AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, FORCE_OUTPUT_BT709);
+    writes.emplace_back("dv_policy", AMDV_FOLLOW_SOURCE);
+    writes.emplace_back("hdr_policy", HDR_FOLLOW_SOURCE);
+    writes.emplace_back("force_output", FORCE_OUTPUT_BT709);
   }
 
-  CloseLayers();
+  CloseLayers(std::move(writes));
 }
 
-void CAMLCodec::CloseLayers()
+void CAMLCodec::CloseLayers(std::vector<AMLCrtcWrite> writes)
 {
   auto* AmlDisplay =
       static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
 
-  AmlDisplay->aml_set_drmProperty("dv_debug", DRM_MODE_OBJECT_CRTC, "enable_fel 0");
-  AmlDisplay->aml_set_drmProperty("dv_debug", DRM_MODE_OBJECT_CRTC, "enable_mel 0");
-  AmlDisplay->aml_set_drmProperty("dv_debug", DRM_MODE_OBJECT_CRTC, "force_unmap");
+  writes.emplace_back("dv_debug", "enable_fel 0");
+  writes.emplace_back("dv_debug", "enable_mel 0");
+  writes.emplace_back("dv_debug", "force_unmap");
+  AmlDisplay->SetCrtcProperties(writes);
 }
 
 void CAMLCodec::CloseAmlVideo()
@@ -3264,7 +3268,7 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
 
   // the open of a full layer picture enabled its layer, and the picture went off before this open
   if (pictureFEL && !fullLayer)
-    CloseLayers();
+    CloseLayers({});
   m_handback = m_outputModule != OutputModule::NONE;
   // the core can still run on a picture that went off at this take when the first frame shows
   m_handbackOff = !convert;

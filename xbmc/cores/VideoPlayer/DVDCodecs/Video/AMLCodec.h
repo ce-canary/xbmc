@@ -21,8 +21,11 @@
 #include <mutex>
 #include <atomic>
 #include <optional>
+#include <vector>
 
 typedef struct am_private_t am_private_t;
+
+struct AMLCrtcWrite;
 
 class DllLibAmCodec;
 
@@ -180,7 +183,7 @@ private:
   bool          OpenAmlVideo(const CDVDStreamInfo &hints);
   void          CloseAmlVideo();
   static void   CloseOutput(bool dvEnabled, int dvPolicy, int decoderTimeout);
-  static void   CloseLayers();
+  static void   CloseLayers(std::vector<AMLCrtcWrite> writes);
   Hold          HoldOnClose(bool dvEnabled, int& dvPolicy);
   bool          TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& output, bool doviIsFEL);
   void          EndHold(bool failed);
