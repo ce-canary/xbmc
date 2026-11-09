@@ -2199,6 +2199,8 @@ bool pictureDropped{false};
 // as a pre-check
 std::atomic<bool> keptOnScreen{false};
 HeldFormat heldFormat;
+// an open forced the output of the HDR module, which no close has restored since
+std::atomic<bool> outputForced{false};
 
 // whether the next item is known to play `format`
 bool NextPlays(const HeldFormat& format)
@@ -2562,6 +2564,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, const AMLVideoOutput &output,
       outputWrites.emplace_back("dv_policy", AMDV_FOLLOW_SINK);
       outputWrites.emplace_back("hdr_policy", AMDV_FOLLOW_SINK);
       outputWrites.emplace_back("force_output", forceOutput);
+      outputForced = true;
       m_outputModule = OutputModule::NONE;
       m_ownOutput = true;
       m_handback = false;
@@ -2948,8 +2951,7 @@ void CAMLCodec::CloseOutput(bool dvEnabled, int dvPolicy, int decoderTimeout)
 
     writes.emplace_back("dv_enable", 0);
   }
-  else if (CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR) ||
-           CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2SDR))
+  else if (outputForced.exchange(false))
   {
     writes.emplace_back("dv_policy", AMDV_FOLLOW_SOURCE);
     writes.emplace_back("hdr_policy", HDR_FOLLOW_SOURCE);
@@ -3351,6 +3353,7 @@ void CAMLCodec::HandBack()
   {
     AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, HDR_FOLLOW_SOURCE);
     AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, FORCE_OUTPUT_DISABLED);
+    outputForced = false;
   }
   CLog::Log(LOGDEBUG, "CAMLCodec::{}: hands the output back, gate {}", __FUNCTION__, gate);
   m_outputModule = OutputModule::NONE;
@@ -3381,6 +3384,7 @@ void CAMLCodec::RestoreOutput(OutputModule module, int decoderTimeout)
   {
     AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, HDR_FOLLOW_SOURCE);
     AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, FORCE_OUTPUT_DISABLED);
+    outputForced = false;
   }
 
   if (dvEnabled && dvPolicy == AMDV_FORCE_OUTPUT_MODE)
