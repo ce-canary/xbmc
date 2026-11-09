@@ -1057,7 +1057,7 @@ bool CVideoPlayer::OpenDemuxStream()
   m_offset_pts = 0;
   // a playlist stop taken while no demuxer was open left no packets to drop
   if (m_navStop)
-    FlushBuffers(DVD_NOPTS_VALUE, true, true);
+    FlushBuffers(DVD_NOPTS_VALUE, true, true, true);
   m_navStop = false;
   m_navStopped = false;
 
@@ -1634,6 +1634,7 @@ void CVideoPlayer::Prepare()
   m_navTail = false;
   m_inputEnded = false;
   m_videoDrained = false;
+  m_playersFlushed = false;
   m_navStop = false;
   m_navStopped = false;
   m_discAudioPick = false;
@@ -1844,7 +1845,7 @@ void CVideoPlayer::Process()
     // packet read with it belongs to that item
     if (m_navStop)
     {
-      FlushBuffers(DVD_NOPTS_VALUE, true, true);
+      FlushBuffers(DVD_NOPTS_VALUE, true, true, true);
       m_navStop = false;
       m_navStopped = true;
     }
@@ -1973,7 +1974,7 @@ void CVideoPlayer::Process()
     {
       CDVDDemuxUtils::FreeDemuxPacket(pPacket);
       if (m_navStop)
-        FlushBuffers(DVD_NOPTS_VALUE, true, true);
+        FlushBuffers(DVD_NOPTS_VALUE, true, true, true);
       m_navStop = false;
       m_navStopped = true;
       continue;
@@ -1998,7 +1999,7 @@ void CVideoPlayer::Process()
     {
       // a menu jump of the disc program drops the old item instead of playing it out
       if (TakeBlurayItemAbandoned())
-        FlushBuffers(DVD_NOPTS_VALUE, true, true);
+        FlushBuffers(DVD_NOPTS_VALUE, true, true, true);
 
       // when paused, demuxer could be be returning empty
       if (m_playSpeed == DVD_PLAYSPEED_PAUSE)
@@ -2288,6 +2289,7 @@ void CVideoPlayer::ProcessAudioData(CDemuxStream* pStream, DemuxPacket* pPacket)
     pPacket->iSize, pPacket->dts/DVD_TIME_BASE, pPacket->pts/DVD_TIME_BASE, pPacket->duration/1000.0, m_clock.GetClock() / DVD_TIME_BASE, drop, m_VideoPlayerAudio->GetLevel());
 
   m_VideoPlayerAudio->SendMessage(std::make_shared<CDVDMsgDemuxerPacket>(pPacket, drop));
+  m_playersFlushed = false;
 
   if (!drop)
     m_CurrentAudio.packets++;
@@ -2317,6 +2319,7 @@ void CVideoPlayer::ProcessVideoData(CDemuxStream* pStream, DemuxPacket* pPacket)
     pPacket->iSize, pPacket->dts/1000000, pPacket->pts/1000000, pPacket->duration/1000.0,
     m_clock.GetClock()/1000000.0,m_processInfo->GetLevelVQ());
   m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsgDemuxerPacket>(pPacket, drop));
+  m_playersFlushed = false;
 
   if (!drop)
     m_CurrentVideo.packets++;
@@ -2343,6 +2346,7 @@ void CVideoPlayer::ProcessSubData(CDemuxStream* pStream, DemuxPacket* pPacket)
     drop = true;
 
   m_VideoPlayerSubtitle->SendMessage(std::make_shared<CDVDMsgDemuxerPacket>(pPacket, drop));
+  m_playersFlushed = false;
 
   if(m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_DVD))
     m_VideoPlayerSubtitle->UpdateOverlayInfo(std::static_pointer_cast<CDVDInputStreamNavigator>(m_pInputStream), LIBDVDNAV_BUTTON_NORMAL);
@@ -2362,6 +2366,7 @@ void CVideoPlayer::ProcessTeletextData(CDemuxStream* pStream, DemuxPacket* pPack
     drop = true;
 
   m_VideoPlayerTeletext->SendMessage(std::make_shared<CDVDMsgDemuxerPacket>(pPacket, drop));
+  m_playersFlushed = false;
 }
 
 void CVideoPlayer::ProcessRadioRDSData(CDemuxStream* pStream, DemuxPacket* pPacket)
@@ -2378,6 +2383,7 @@ void CVideoPlayer::ProcessRadioRDSData(CDemuxStream* pStream, DemuxPacket* pPack
     drop = true;
 
   m_VideoPlayerRadioRDS->SendMessage(std::make_shared<CDVDMsgDemuxerPacket>(pPacket, drop));
+  m_playersFlushed = false;
 }
 
 void CVideoPlayer::ProcessAudioID3Data(CDemuxStream* pStream, DemuxPacket* pPacket)
@@ -2394,6 +2400,7 @@ void CVideoPlayer::ProcessAudioID3Data(CDemuxStream* pStream, DemuxPacket* pPack
     drop = true;
 
   m_VideoPlayerAudioID3->SendMessage(std::make_shared<CDVDMsgDemuxerPacket>(pPacket, drop));
+  m_playersFlushed = false;
 }
 
 CacheInfo CVideoPlayer::GetCachingTimes()
@@ -5109,6 +5116,7 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
   CDVDStreamInfo hint;
 
   CLog::Log(LOGINFO, "Opening stream: {} source: {}", iStream, source);
+  m_playersFlushed = false;
 
   if(STREAM_SOURCE_MASK(source) == STREAM_SOURCE_DEMUX_SUB)
   {
@@ -5541,6 +5549,7 @@ bool CVideoPlayer::CloseStream(CCurrentStream& current, bool bWaitForBuffers)
     return false;
 
   CLog::Log(LOGINFO, "Closing stream player {}", current.player);
+  m_playersFlushed = false;
 
   if(bWaitForBuffers)
     SetCaching(CACHESTATE_DONE);
@@ -5583,8 +5592,10 @@ void CVideoPlayer::SwitchAudioStream(int64_t demuxerId, int iStream, int source)
   m_messenger.Put(std::make_shared<CDVDMsgPlayerSeek>(mode));
 }
 
-void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
+void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync, bool nav)
 {
+  // a nav stop finds the players empty when nothing was sent to them since the last sync flush
+  const bool flushPlayers = !nav || !m_playersFlushed;
   m_syncStartPtsWait.reset();
   m_seekStart = false;
   m_navTail = false;
@@ -5643,31 +5654,39 @@ void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
   m_CurrentAudioID3.startpts = startpts;
   m_CurrentAudioID3.packets = 0;
 
-  m_VideoPlayerAudio->Flush(sync);
-  m_VideoPlayerVideo->Flush(sync);
-  m_VideoPlayerSubtitle->Flush();
-  m_VideoPlayerTeletext->Flush();
-  m_VideoPlayerRadioRDS->Flush();
-  m_VideoPlayerAudioID3->Flush();
+  if (flushPlayers)
+  {
+    m_VideoPlayerAudio->Flush(sync);
+    m_VideoPlayerVideo->Flush(sync);
+    m_VideoPlayerSubtitle->Flush();
+    m_VideoPlayerTeletext->Flush();
+    m_VideoPlayerRadioRDS->Flush();
+    m_VideoPlayerAudioID3->Flush();
+  }
 
   // drop queued pre-seek frames to avoid starving RenderManager's buffer pool so post-seek overlays/subtitles do not get dropped
-  if (sync)
+  if (sync && flushPlayers)
     m_renderManager.DiscardBuffer();
+  if (sync)
+    m_playersFlushed = true;
 
   if (m_playSpeed == DVD_PLAYSPEED_NORMAL || m_playSpeed == DVD_PLAYSPEED_PAUSE ||
       m_processInfo->IsTempoAllowed(static_cast<float>(m_playSpeed) / DVD_PLAYSPEED_NORMAL))
   {
     // make sure players are properly flushed, should put them in stalled state; a player that is
     // not open never answers
-    unsigned int sources = 0;
-    if (m_VideoPlayerAudio->IsInited())
-      sources |= SYNCSOURCE_AUDIO;
-    if (m_VideoPlayerVideo->IsInited())
-      sources |= SYNCSOURCE_VIDEO;
-    auto msg = std::make_shared<CDVDMsgGeneralSynchronize>(1s, sources);
-    m_VideoPlayerAudio->SendMessage(msg, 1);
-    m_VideoPlayerVideo->SendMessage(msg, 1);
-    msg->Wait(m_bStop, 0);
+    if (flushPlayers)
+    {
+      unsigned int sources = 0;
+      if (m_VideoPlayerAudio->IsInited())
+        sources |= SYNCSOURCE_AUDIO;
+      if (m_VideoPlayerVideo->IsInited())
+        sources |= SYNCSOURCE_VIDEO;
+      auto msg = std::make_shared<CDVDMsgGeneralSynchronize>(1s, sources);
+      m_VideoPlayerAudio->SendMessage(msg, 1);
+      m_VideoPlayerVideo->SendMessage(msg, 1);
+      msg->Wait(m_bStop, 0);
+    }
 
     // purge any pending PLAYER_STARTED messages
     m_messenger.Flush(CDVDMsg::PLAYER_STARTED);

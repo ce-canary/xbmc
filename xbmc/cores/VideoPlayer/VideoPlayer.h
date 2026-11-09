@@ -515,7 +515,7 @@ protected:
   double GetQueueTime();
   CacheInfo GetCachingTimes();
 
-  void FlushBuffers(double pts, bool accurate, bool sync);
+  void FlushBuffers(double pts, bool accurate, bool sync, bool nav = false);
 
   void HandleMessages();
   void HandlePlaySpeed();
@@ -724,6 +724,7 @@ protected:
   // the demuxer has no more for now, the players play out what they hold
   bool m_inputEnded{false};
   bool m_videoDrained{false};
+  bool m_playersFlushed{false};
   bool m_discAudioPick{false};
 
   CEdl m_Edl;
