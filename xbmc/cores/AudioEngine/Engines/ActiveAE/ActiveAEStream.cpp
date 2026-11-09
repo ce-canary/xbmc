@@ -596,6 +596,7 @@ CActiveAEStreamBuffers::CActiveAEStreamBuffers(const AEAudioFormat& inputFormat,
                                                const AEAudioFormat& outputFormat,
                                                AEQuality quality)
   : m_inputFormat(inputFormat),
+    m_outputFormat(outputFormat),
     m_resampleBuffers(
         std::make_unique<CActiveAEBufferPoolResample>(inputFormat, outputFormat, quality)),
     m_atempoBuffers(std::make_unique<CActiveAEBufferPoolAtempo>(outputFormat))
@@ -777,6 +778,30 @@ std::unique_ptr<CActiveAEBufferPool> CActiveAEStreamBuffers::GetResampleBuffers(
 std::unique_ptr<CActiveAEBufferPool> CActiveAEStreamBuffers::GetAtempoBuffers()
 {
   return std::move(m_atempoBuffers);
+}
+
+// moves the buffers of `pool` out of the chain, oldest first, and leaves the rest for `Flush`
+std::deque<CSampleBuffer*> CActiveAEStreamBuffers::TakeInputBuffers(const CActiveAEBufferPool* pool)
+{
+  std::deque<CSampleBuffer*> taken;
+
+  for (auto* samples :
+       {&m_outputSamples, &m_atempoBuffers->m_outputSamples, &m_atempoBuffers->m_inputSamples,
+        &m_resampleBuffers->m_outputSamples, &m_resampleBuffers->m_inputSamples, &m_inputSamples})
+  {
+    for (auto it = samples->begin(); it != samples->end();)
+    {
+      if ((*it)->pool == pool)
+      {
+        taken.push_back(*it);
+        it = samples->erase(it);
+      }
+      else
+        ++it;
+    }
+  }
+
+  return taken;
 }
 
 bool CActiveAEStreamBuffers::HasWork()

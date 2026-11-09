@@ -127,10 +127,12 @@ public:
   bool HasWork();
   std::unique_ptr<CActiveAEBufferPool> GetResampleBuffers();
   std::unique_ptr<CActiveAEBufferPool> GetAtempoBuffers();
+  std::deque<CSampleBuffer*> TakeInputBuffers(const CActiveAEBufferPool* pool);
 
   bool IsAtempoActive() const;
 
   AEAudioFormat m_inputFormat;
+  AEAudioFormat m_outputFormat;
   std::deque<CSampleBuffer*> m_outputSamples;
   std::deque<CSampleBuffer*> m_inputSamples;
 
