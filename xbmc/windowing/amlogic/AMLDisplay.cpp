@@ -7,6 +7,7 @@
 #include <drm_fourcc.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <amcodec/codec.h>
 
@@ -29,6 +30,10 @@ constexpr float FractionalRate(float rate)
 {
   return rate / 1.001f;
 }
+
+// liveness bound only: the kernel gives up each of a commit tail's three waits after 100 ms,
+// and a batch queues at most four tails
+constexpr int CRTC_REQUEST_TIMEOUT_MS = 4 * 3 * 100;
 } // unnamed namespace
 
 void FbDestroyCallback(gbm_bo* bo, void* data)
@@ -198,6 +203,8 @@ CAMLDRMUtils::CAMLDRMUtils()
 
 CAMLDRMUtils::~CAMLDRMUtils()
 {
+  WaitCrtcRequests();
+
   if (m_orig_crtc)
   {
     drmModeSetCrtc(m_fd, m_orig_crtc->crtc_id, m_orig_crtc->buffer_id,
@@ -707,6 +714,7 @@ void CAMLDRMUtils::set_drmProp(unsigned int id, std::string name,
     {
       if (req == NULL)
       {
+        WaitCrtcRequests();
         if ((res = drmModeObjectSetProperty(m_fd, id, obj_type, props->props[i], value)) != 0)
           CLog::Log(LOGERROR, "CAMLDRMUtils::{} - unable to set property '{}', value: {:d}, res: {:d}", __FUNCTION__, prop->name, value, res);
       }
@@ -797,9 +805,8 @@ void CAMLDRMUtils::aml_set_drmProperty(std::string name, unsigned int obj_type, 
 
   switch (obj_type) {
     case DRM_MODE_OBJECT_CRTC:
-      if (m_crtc)
-        id = m_crtc->crtc_id;
-      break;
+      SetCrtcProperties({AMLCrtcWrite(name, value)});
+      return;
     case DRM_MODE_OBJECT_CONNECTOR:
       if (m_connector)
         id = m_connector->connector_id;
@@ -826,6 +833,12 @@ void CAMLDRMUtils::aml_set_drmProperty(std::string name, unsigned int obj_type, 
     return;
   }
 
+  if (obj_type == DRM_MODE_OBJECT_CRTC)
+  {
+    SetCrtcProperties({AMLCrtcWrite(name, value)});
+    return;
+  }
+
   if (drmModeCreatePropertyBlob(m_fd, value.c_str(), value.size(), &mode_blobid))
   {
     CLog::Log(LOGDEBUG, "CAMLDRMUtils::{} - failed to create mode property blob", __FUNCTION__);
@@ -833,6 +846,139 @@ void CAMLDRMUtils::aml_set_drmProperty(std::string name, unsigned int obj_type, 
   }
 
   aml_set_drmProperty(name, obj_type, mode_blobid);
+}
+
+// the setters act when the ioctl parses them, so a blocking commit would only wait for a vblank;
+// libdrm sorts a request by property id and keeps the last write of each, so a request ends
+// before a write that would not come last in it
+void CAMLDRMUtils::SetCrtcProperties(const std::vector<AMLCrtcWrite>& writes)
+{
+  std::unique_lock<CCriticalSection> lock(m_drmSection);
+
+  if (!aml_get_drmDevice_connected())
+  {
+    CLog::Log(LOGWARNING, "CAMLDRMUtils::{} - connector of drmDevice is not connected",
+              __FUNCTION__);
+    return;
+  }
+
+  if (!m_crtc)
+    return;
+
+  const uint32_t crtcId = m_crtc->crtc_id;
+  drmModeObjectPropertiesPtr props = drmModeObjectGetProperties(m_fd, crtcId, DRM_MODE_OBJECT_CRTC);
+  if (!props)
+  {
+    CLog::Log(LOGERROR, "CAMLDRMUtils::{} - failed to get properties", __FUNCTION__);
+    return;
+  }
+
+  std::vector<uint32_t> propIds(writes.size(), 0);
+  uint32_t fencePropId = 0;
+  bool crtcActive = false;
+  for (uint32_t i = 0; i < props->count_props; i++)
+  {
+    drmModePropertyPtr prop = drmModeGetProperty(m_fd, props->props[i]);
+    if (!prop)
+      continue;
+
+    if (StringUtils::EqualsNoCase(prop->name, "OUT_FENCE_PTR"))
+      fencePropId = prop->prop_id;
+    else if (StringUtils::EqualsNoCase(prop->name, "ACTIVE"))
+      crtcActive = props->prop_values[i] != 0;
+    for (size_t j = 0; j < writes.size(); j++)
+    {
+      if (StringUtils::EqualsNoCase(prop->name, writes[j].name))
+        propIds[j] = prop->prop_id;
+    }
+    drmModeFreeProperty(prop);
+  }
+  drmModeFreeObjectProperties(props);
+
+  std::vector<size_t> known;
+  for (size_t j = 0; j < writes.size(); j++)
+  {
+    if (propIds[j])
+      known.push_back(j);
+    else
+      CLog::Log(LOGDEBUG, "CAMLDRMUtils::{} - no property '{}'", __FUNCTION__, writes[j].name);
+  }
+
+  size_t first = 0;
+  while (first < known.size())
+  {
+    size_t end = first + 1;
+    while (end < known.size() && propIds[known[end]] > propIds[known[end - 1]])
+      end++;
+
+    drmModeAtomicReqPtr req = drmModeAtomicAlloc();
+    if (!req)
+    {
+      CLog::Log(LOGERROR, "CAMLDRMUtils::{} - failed to allocate atomic request", __FUNCTION__);
+      return;
+    }
+
+    std::vector<uint32_t> blobIds;
+    for (size_t k = first; k < end; k++)
+    {
+      const AMLCrtcWrite& write = writes[known[k]];
+      uint64_t value = write.value;
+      if (!write.blob.empty())
+      {
+        uint32_t blobId = 0;
+        if (drmModeCreatePropertyBlob(m_fd, write.blob.c_str(), write.blob.size(), &blobId))
+        {
+          CLog::Log(LOGERROR, "CAMLDRMUtils::{} - failed to create property blob for '{}'",
+                    __FUNCTION__, write.name);
+          continue;
+        }
+        blobIds.push_back(blobId);
+        value = blobId;
+      }
+
+      if (drmModeAtomicAddProperty(req, crtcId, propIds[known[k]], value) < 0)
+        CLog::Log(LOGERROR, "CAMLDRMUtils::{} - unable to add property '{}'", __FUNCTION__,
+                  write.name);
+      CLog::Log(LOGDEBUG, LOGWINDOWING, "CAMLDRMUtils::{} - set property '{}', value: {}",
+                __FUNCTION__, write.name, write.blob.empty() ? std::to_string(value) : write.blob);
+    }
+
+    // a blocking commit waits at most 100 ms for a queued one and then runs out of order;
+    // the kernel refuses an out fence on a CRTC that stays off
+    int fenceFd = -1;
+    if (fencePropId && crtcActive)
+      drmModeAtomicAddProperty(req, crtcId, fencePropId, reinterpret_cast<uint64_t>(&fenceFd));
+
+    if (drmModeAtomicCommit(m_fd, req, DRM_MODE_ATOMIC_NONBLOCK, nullptr))
+      CLog::Log(LOGERROR, "CAMLDRMUtils::{} - failed to commit properties: {}", __FUNCTION__,
+                strerror(errno));
+    else if (fenceFd != -1)
+    {
+      if (m_crtcFenceFd != -1)
+        close(m_crtcFenceFd);
+      m_crtcFenceFd = fenceFd;
+    }
+
+    drmModeAtomicFree(req);
+    for (const uint32_t blobId : blobIds)
+      drmModeDestroyPropertyBlob(m_fd, blobId);
+
+    first = end;
+  }
+}
+
+// under m_drmSection
+void CAMLDRMUtils::WaitCrtcRequests()
+{
+  if (m_crtcFenceFd == -1)
+    return;
+
+  pollfd fence = {m_crtcFenceFd, POLLIN, 0};
+  if (poll(&fence, 1, CRTC_REQUEST_TIMEOUT_MS) <= 0)
+    CLog::Log(LOGWARNING, "CAMLDRMUtils::{} - queued CRTC request did not complete", __FUNCTION__);
+
+  close(m_crtcFenceFd);
+  m_crtcFenceFd = -1;
 }
 
 // get modes count and status if current device is connected
@@ -935,6 +1081,7 @@ bool CAMLDRMUtils::aml_set_drmDevice_active(std::string mode, int fractional_rat
       set_drmProp(m_crtc->crtc_id, "MODE_ID", DRM_MODE_OBJECT_CRTC, mode_blobid, req);
       set_drmProp(m_crtc->crtc_id, "ACTIVE", DRM_MODE_OBJECT_CRTC, active ? 1 : 0, req);
 
+      WaitCrtcRequests();
       ret = (drmModeAtomicCommit(m_fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL) == 0);
       if (!ret)
         CLog::Log(LOGDEBUG, "CAMLDRMUtils::{} - failed to set drmDevice mode: {}", __FUNCTION__, drmDevicemode->name);
@@ -1004,6 +1151,7 @@ int CAMLDRMUtils::aml_test_drmDevice_active(uint32_t flags)
   set_drmProp(m_crtc->crtc_id, "MODE_ID", DRM_MODE_OBJECT_CRTC, modeBlobId, req);
   set_drmProp(m_crtc->crtc_id, "ACTIVE", DRM_MODE_OBJECT_CRTC, 1, req);
 
+  WaitCrtcRequests();
   const int ret = drmModeAtomicCommit(m_fd, req, DRM_MODE_ATOMIC_TEST_ONLY | flags, nullptr);
   drmModeAtomicFree(req);
 
