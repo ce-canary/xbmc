@@ -9,6 +9,7 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <memory>
+#include <string>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -22,6 +23,25 @@ struct drm_fb
 {
   uint32_t fb_id;
   uint32_t format;
+};
+
+struct AMLCrtcWrite
+{
+  AMLCrtcWrite(std::string propName, unsigned int propValue)
+    : name(std::move(propName)),
+      value(propValue)
+  {
+  }
+  AMLCrtcWrite(std::string propName, std::string propBlob)
+    : name(std::move(propName)),
+      blob(std::move(propBlob))
+  {
+  }
+
+  std::string name;
+  unsigned int value{0};
+  //! written as a property blob when not empty
+  std::string blob;
 };
 
 class CAMLGBMUtils
@@ -98,6 +118,8 @@ public:
                           int* data_len = nullptr);
   void aml_set_drmProperty(std::string name, unsigned int obj_type, unsigned int value);
   void aml_set_drmProperty(std::string name, unsigned int obj_type, std::string value);
+  //! Writes CRTC properties in call order without waiting for the vblank of the commit
+  void SetCrtcProperties(const std::vector<AMLCrtcWrite>& writes);
   int aml_get_drmDevice_modes_count(drmModeConnection *connection);
   std::string aml_get_drmDevice_preferred_mode();
   bool aml_set_drmDevice_active(std::string mode, int fractional_rate,
@@ -129,6 +151,7 @@ private:
   void set_drmProp(unsigned int id, std::string name,
     unsigned int obj_type, unsigned int value, drmModeAtomicReqPtr req);
   bool SupportsFormat(drmModePlane *plane, uint32_t format);
+  void WaitCrtcRequests();
   int m_fd{-1};
   int m_width;
   int m_height;
@@ -146,6 +169,8 @@ private:
 
   int m_inFenceFd{-1};
   int m_outFenceFd{-1};
+  //! out-fence of the last queued CRTC property request
+  int m_crtcFenceFd{-1};
 };
 
 class CAMLDisplay
@@ -180,6 +205,8 @@ public:
     { m_amlDRMUtils->aml_set_drmProperty(name, obj_type, value); }
   void aml_set_drmProperty(std::string name, unsigned int obj_type, std::string value)
     { m_amlDRMUtils->aml_set_drmProperty(name, obj_type, value); }
+  void SetCrtcProperties(const std::vector<AMLCrtcWrite>& writes)
+    { m_amlDRMUtils->SetCrtcProperties(writes); }
   void FlipPage(uint32_t fb_id) { m_amlDRMUtils->FlipPage(fb_id); }
   bool aml_set_drmDevice_active(bool active) const
     { return m_amlDRMUtils->aml_set_drmDevice_active(
