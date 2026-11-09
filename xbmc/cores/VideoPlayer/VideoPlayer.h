@@ -737,6 +737,7 @@ protected:
   bool m_updateStreamDetails{false};
 
   std::atomic<bool> m_displayLost;
+  CEvent m_displayReset;
 
   double m_messageQueueTimeSize{0.0};
 };
