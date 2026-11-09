@@ -447,6 +447,7 @@ protected:
   void CloseSubtitleForNextStream();
   bool PlayNavTail();
   void SendVideoInputEnd();
+  void SendVideoDrain();
   bool DropInNavTail(CDVDMsg& msg);
   bool SelectDiscStream(const SelectionStream& st);
   bool TakeDiscAudioPick(CDemuxStream* stream);
@@ -722,6 +723,7 @@ protected:
   bool m_videoInputEnded{false};
   // the demuxer has no more for now, the players play out what they hold
   bool m_inputEnded{false};
+  bool m_videoDrained{false};
   bool m_discAudioPick{false};
 
   CEdl m_Edl;
