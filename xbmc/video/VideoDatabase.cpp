@@ -679,13 +679,22 @@ int CVideoDatabase::AddOrUpdateFile(const std::string& fileAndPath,
   std::string sql;
   try
   {
-    const CDateTime finalDateAdded{GetDateAdded(fileAndPath, fileInfo.m_dateAdded)};
+    // the date may stat the file, a network request for a remote one, so only for a written row
+    CDateTime dateAdded;
+    const auto finalDateAdded{[&]() -> const CDateTime&
+                              {
+                                if (!dateAdded.IsValid())
+                                  dateAdded = GetDateAdded(fileAndPath, fileInfo.m_dateAdded);
+                                return dateAdded;
+                              }};
 
     std::string strFileName;
     std::string strPath;
     SplitPath(fileAndPath, strPath, strFileName);
 
-    const int idPath{AddPath(strPath, parentPath, finalDateAdded)};
+    int idPath{GetArchiveOrAliasPathId(strPath)};
+    if (idPath < 0)
+      idPath = AddPath(strPath, parentPath, finalDateAdded());
     if (idPath < 0)
       return -1;
 
@@ -715,7 +724,7 @@ int CVideoDatabase::AddOrUpdateFile(const std::string& fileAndPath,
                              ", "
                              "dateAdded = '%s' "
                              "WHERE idFile = %i",
-                         finalDateAdded.GetAsDBDateTime().c_str(), idFile);
+                         finalDateAdded().GetAsDBDateTime().c_str(), idFile);
 
         m_pDS->exec(sql);
       }
@@ -729,7 +738,7 @@ int CVideoDatabase::AddOrUpdateFile(const std::string& fileAndPath,
         "INSERT INTO files (idFile, idPath, strFileName, playCount, lastPlayed, dateAdded) "
         "VALUES(NULL, %i, '%s', " +
             playCount + ", " + lastPlayed + ", '%s')",
-        idPath, strFileName.c_str(), finalDateAdded.GetAsDBDateTime().c_str());
+        idPath, strFileName.c_str(), finalDateAdded().GetAsDBDateTime().c_str());
 
     m_pDS->exec(sql);
 
