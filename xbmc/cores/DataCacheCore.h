@@ -16,6 +16,16 @@
 #include <string>
 #include <vector>
 
+enum class StreamHdrType;
+
+// the video size and dynamic range of a disc's main title, empty without one
+struct DiscFormat
+{
+  int width{0};
+  int height{0};
+  StreamHdrType hdrType{};
+};
+
 class CDataCacheCore
 {
 public:
@@ -64,6 +74,9 @@ public:
    * @return True if interlaced, otherwise false
    */
   bool IsVideoInterlaced();
+
+  void SetDiscFormat(const DiscFormat& format);
+  DiscFormat GetDiscFormat();
 
   // player audio info
   void SetAudioDecoderName(std::string name);
@@ -245,6 +258,7 @@ protected:
     int liveBitRate;
     int queueLevel;
     int queueDataLevel;
+    DiscFormat discFormat;
   } m_playerVideoInfo;
 
   CCriticalSection m_audioPlayerSection;
