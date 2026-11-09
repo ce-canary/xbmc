@@ -31,6 +31,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -294,6 +295,7 @@ public:
   ~CVideoPlayer() override;
   bool OpenFile(const CFileItem& file, const CPlayerOptions &options) override;
   bool CloseFile(bool reopen = false) override;
+  void PrefetchNextFile(const CFileItem& file) override;
   bool IsPlaying() const override;
   void Pause() override;
   bool HasVideo() const override;
@@ -430,7 +432,12 @@ protected:
   void DestroyPlayers();
 
   void Prepare();
+  bool CanPark() const;
   bool ParkAtEnd();
+  struct PrefetchSlot;
+  static void Prefetch(const std::shared_ptr<PrefetchSlot>& slot);
+  bool TakePrefetch();
+  void CancelPrefetch(std::string_view reason);
   bool ShouldDeferSync(bool ready, std::chrono::steady_clock::time_point now);
   bool ShouldWaitForSync(std::chrono::steady_clock::time_point now);
   std::shared_ptr<CDVDInputStreamBluray> GetBlurayInputStream() const;
@@ -735,6 +742,13 @@ protected:
   bool m_endReported{false};
   // the next item opens in place of a parked one
   bool m_joinPending{false};
+  //! the next item's input, opened on a job once the application answers the ask
+  std::shared_ptr<PrefetchSlot> m_prefetch;
+  bool m_prefetchAsked{false};
+  //! guards m_prefetch and m_prefetchAsked, which the hint reads on the application thread
+  CCriticalSection m_prefetchSection;
+  std::shared_ptr<CDVDInputStream> m_preparedInput;
+  std::unique_ptr<CDVDDemux> m_preparedDemuxer;
 
   CEdl m_Edl;
   bool m_SkipCommercials;
