@@ -249,6 +249,20 @@ bool CDataCacheCore::IsVideoInterlaced()
   return m_playerVideoInfo.m_isInterlaced;
 }
 
+void CDataCacheCore::SetDiscFormat(const DiscFormat& format)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.discFormat = format;
+}
+
+DiscFormat CDataCacheCore::GetDiscFormat()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.discFormat;
+}
+
 // player audio info
 void CDataCacheCore::SetAudioDecoderName(std::string name)
 {

@@ -20,6 +20,7 @@
 
 class CProcessInfo;
 class CDataCacheCore;
+struct DiscFormat;
 
 using CreateProcessControl = CProcessInfo* (*)();
 
@@ -60,6 +61,7 @@ public:
   bool GetDoviIsFEL();
   void SetIsHdr10Plus(bool isHdr10Plus);
   bool GetIsHdr10Plus();
+  void SetDiscFormat(const DiscFormat& format);
   virtual EINTERLACEMETHOD GetFallbackDeintMethod();
   virtual void SetSwDeinterlacingMethods();
   void UpdateDeinterlacingMethods(std::list<EINTERLACEMETHOD> &methods);

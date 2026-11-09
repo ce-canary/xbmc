@@ -325,6 +325,12 @@ bool CProcessInfo::GetIsHdr10Plus()
   return m_IsHdr10Plus;
 }
 
+void CProcessInfo::SetDiscFormat(const DiscFormat& format)
+{
+  if (m_dataCache)
+    m_dataCache->SetDiscFormat(format);
+}
+
 EINTERLACEMETHOD CProcessInfo::GetFallbackDeintMethod()
 {
   return VS_INTERLACEMETHOD_DEINTERLACE;
