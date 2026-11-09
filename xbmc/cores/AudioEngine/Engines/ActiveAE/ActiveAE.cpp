@@ -1492,17 +1492,33 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
         (*it)->InitRemapper();
       }
       double resampleRatio = 1.0;
+      std::deque<CSampleBuffer*> keptSamples;
       if (initSink && (*it)->m_processingBuffers)
       {
-        resampleRatio = (*it)->m_processingBuffers->GetRR();
-        (*it)->m_processingBuffers->Flush();
-        m_discardBufferPools.push_back((*it)->m_processingBuffers->GetResampleBuffers());
-        m_discardBufferPools.push_back((*it)->m_processingBuffers->GetAtempoBuffers());
-        (*it)->m_processingBuffers.reset();
-        // a start cut was measured against the flushed buffers
-        if ((*it)->m_pClock)
-          (*it)->m_pClock->TakeStartCut();
+        CActiveAEStreamBuffers* buffers = (*it)->m_processingBuffers.get();
+        float kept = buffers->GetDelay();
+        float dropped = 0.0f;
+        // a new output format leaves only the input buffers valid
+        if (!CompareFormat(buffers->m_outputFormat, outputFormat) ||
+            buffers->m_outputFormat.m_frames != outputFormat.m_frames)
+        {
+          resampleRatio = buffers->GetRR();
+          keptSamples = buffers->TakeInputBuffers((*it)->m_inputBuffers.get());
+          kept = 0.0f;
+          for (const auto* buf : keptSamples)
+            kept += (*it)->m_inputBuffers->GetPlayingTime(buf);
+          dropped = buffers->GetDelay();
+          buffers->Flush();
+          m_discardBufferPools.push_back(buffers->GetResampleBuffers());
+          m_discardBufferPools.push_back(buffers->GetAtempoBuffers());
+          (*it)->m_processingBuffers.reset();
+          // a start cut was measured against the dropped buffers
+          if (dropped > 0.0f && (*it)->m_pClock)
+            (*it)->m_pClock->TakeStartCut();
+        }
         (*it)->m_syncState = CAESyncInfo::AESyncState::SYNC_START;
+        CLog::Log(LOGDEBUG, LOGAUDIO, "ActiveAE::Configure - reopen kept {:.3f}ms dropped {:.3f}ms",
+                  kept * 1000, dropped * 1000);
       }
       if (!(*it)->m_processingBuffers)
       {
@@ -1516,6 +1532,8 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
         // A stream only sends its resample ratio when it changes, so keep it
         // across a sink change
         (*it)->m_processingBuffers->SetRR(resampleRatio, m_settings.atempoThreshold);
+        (*it)->m_processingBuffers->m_inputSamples = std::move(keptSamples);
+        (*it)->m_processingBuffers->SetDrain((*it)->m_drain);
       }
       if (m_mode == MODE_TRANSCODE || m_streams.size() > 1)
         (*it)->m_processingBuffers->FillBuffer();
