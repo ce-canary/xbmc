@@ -78,6 +78,7 @@ public:
   unsigned GetPacketCount(CDVDMsg::Message type);
   bool ReceivedAbortRequest() { return m_bAbortRequest; }
   void WaitUntilEmpty();
+  void WaitForMessage(std::chrono::milliseconds timeout);
 
   // non messagequeue related functions
   bool IsFull() const { return GetLevel(true) == 100; }

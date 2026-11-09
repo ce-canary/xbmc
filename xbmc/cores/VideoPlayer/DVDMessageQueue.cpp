@@ -307,6 +307,18 @@ void CDVDMessageQueue::WaitUntilEmpty()
   }
 }
 
+void CDVDMessageQueue::WaitForMessage(std::chrono::milliseconds timeout)
+{
+  std::unique_lock lock(m_section);
+
+  if (m_bAbortRequest || !m_messages.empty() || !m_prioMessages.empty())
+    return;
+
+  m_hEvent.Reset();
+  lock.unlock();
+  m_hEvent.Wait(timeout);
+}
+
 int CDVDMessageQueue::GetLevel(bool dataLevel) const
 {
   std::unique_lock lock(m_section);
