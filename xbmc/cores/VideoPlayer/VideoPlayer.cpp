@@ -1641,6 +1641,7 @@ void CVideoPlayer::Prepare()
   m_SpeedState.Reset(DVD_NOPTS_VALUE);
   m_navTail = false;
   m_inputEnded = false;
+  m_videoDrained = false;
   m_navStop = false;
   m_navStopped = false;
   m_discAudioPick = false;
@@ -2104,7 +2105,9 @@ void CVideoPlayer::Process()
           m_State.menuType == MenuType::NATIVE &&
           (ShouldWaitForSync(std::chrono::steady_clock::now()) || PlayNavTail()))
       {
-        PollBlurayEvents();
+        // a held read is the end of the input, and video only stalls once it is drained
+        if (PollBlurayEvents())
+          SendVideoDrain();
         CThread::Sleep(10ms);
         continue;
       }
@@ -2147,16 +2150,8 @@ void CVideoPlayer::Process()
         continue;
       }
 
-      if (!m_inputEnded && m_CurrentVideo.id >= 0 && m_CurrentVideo.packets > 0)
-      {
-        // a demuxer can come back empty on a late read, a disc that gets here has no next item;
-        // the input's EOF needs a read past the last byte, which a demuxer may never make
-        if (m_pInputStream->IsEOF() || (m_pDemuxer && m_pDemuxer->IsAtEnd()) ||
-            std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream))
-          SendVideoInputEnd();
-
-        m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
-      }
+      if (!m_inputEnded)
+        SendVideoDrain();
       m_inputEnded = true;
 
       m_CurrentAudio.inited = false;
@@ -2209,6 +2204,7 @@ void CVideoPlayer::Process()
       m_syncWait.reset();
       m_navTail = false;
       m_inputEnded = false;
+      m_videoDrained = false;
     }
 
     // see if we can find something better to play
@@ -2808,10 +2804,11 @@ bool CVideoPlayer::PlayNavTail()
 
   if (!m_navTail)
   {
-    if (m_CurrentVideo.id >= 0)
+    if (m_CurrentVideo.id >= 0 && !m_videoDrained)
     {
       SendVideoInputEnd();
       m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
+      m_videoDrained = true;
     }
     m_inputEnded = true;
 
@@ -2835,6 +2832,22 @@ void CVideoPlayer::SendVideoInputEnd()
 
   m_videoInputEndSent = true;
   m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_INPUT_END));
+}
+
+// once for each run of input
+void CVideoPlayer::SendVideoDrain()
+{
+  if (m_videoDrained || m_CurrentVideo.id < 0 || m_CurrentVideo.packets == 0)
+    return;
+
+  // a demuxer can come back empty on a late read, a disc that gets here has no next item;
+  // the input's EOF needs a read past the last byte, which a demuxer may never make
+  if (m_pInputStream->IsEOF() || (m_pDemuxer && m_pDemuxer->IsAtEnd()) ||
+      std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream))
+    SendVideoInputEnd();
+
+  m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
+  m_videoDrained = true;
 }
 
 // seeks in the tail are dropped, as they would act on the next item, unless the read is held in
@@ -5726,6 +5739,7 @@ void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
   m_seekStart = false;
   m_navTail = false;
   m_inputEnded = false;
+  m_videoDrained = false;
   m_lastVideoTitleTime = DVD_NOPTS_VALUE;
 #if defined(HAVE_LIBBLURAY)
   if (const auto bluray = GetBlurayInputStream())
