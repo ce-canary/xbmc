@@ -17,6 +17,7 @@
 #include "utils/log.h"
 #include "utils/StringUtils.h"
 #include "ServiceBroker.h"
+#include "cores/DataCacheCore.h"
 #include "cores/VideoPlayer/DVDCodecs/Video/AMLCodec.h"
 #include "utils/RegExp.h"
 #include "settings/Settings.h"
@@ -264,7 +265,9 @@ bool aml_convert_to_sdr(StreamHdrType hdrType)
   return ((!!user_convert_to_sdr) == 1);
 }
 
-bool aml_convert_to_hdr(StreamHdrType hdrType)
+namespace
+{
+bool UserMapsToHdr(StreamHdrType hdrType)
 {
   const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
   bool user_convert_to_hdr = false;
@@ -275,6 +278,57 @@ bool aml_convert_to_hdr(StreamHdrType hdrType)
   bool convert_to_hdr = CServiceBroker::GetWinSystem()->IsHDRDisplay();
 
   return ((convert_to_hdr && !!user_convert_to_hdr) == 1);
+}
+
+bool UserMapsToDv(StreamHdrType hdrType)
+{
+  const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+  bool dv_user_enabled(!settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE));
+  bool user_convert_to_dv;
+
+  if (hdrType == StreamHdrType::HDR_TYPE_NONE)
+    user_convert_to_dv = settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2DV);
+  else
+    user_convert_to_dv = settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2DV);
+
+  bool convert_to_dv = (!!aml_support_dolby_vision() &&
+                        static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())
+                            ->GetAmlDisplay()->aml_display_support_dv());
+
+  return ((convert_to_dv && !!user_convert_to_dv && !!dv_user_enabled) == 1);
+}
+} // namespace
+
+std::optional<StreamHdrType> aml_disc_output_hdr_type()
+{
+  const DiscFormat disc = CServiceBroker::GetDataCacheCore().GetDiscFormat();
+  if (disc.width == 0)
+    return std::nullopt;
+
+  StreamHdrType hdrType = disc.hdrType;
+  // the demuxer opens the base layer of a Dolby Vision stream while Dolby Vision is off
+  if (hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && !aml_dolby_vision_enabled())
+    hdrType = StreamHdrType::HDR_TYPE_HDR10;
+  if (hdrType == StreamHdrType::HDR_TYPE_HDR10 &&
+      !CServiceBroker::GetWinSystem()->GetDisplayHDRCapabilities().SupportsHDR10())
+    hdrType = StreamHdrType::HDR_TYPE_NONE;
+
+  // a mapping to sdr leaves no range to keep
+  if (UserMapsToDv(hdrType) ||
+      (hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && !aml_convert_to_sdr(hdrType) &&
+       (!aml_convert_to_sdr_by_vs_engine(hdrType) || aml_convert_to_hdr_by_vs_engine(hdrType))))
+    return StreamHdrType::HDR_TYPE_DOLBYVISION;
+  if (hdrType == StreamHdrType::HDR_TYPE_HDR10 && !aml_convert_to_sdr(hdrType) &&
+      !aml_convert_to_sdr_by_vs_engine(hdrType))
+    return hdrType;
+  return std::nullopt;
+}
+
+bool aml_convert_to_hdr(StreamHdrType hdrType)
+{
+  if (const auto target = aml_disc_output_hdr_type())
+    return hdrType == StreamHdrType::HDR_TYPE_NONE && *target == StreamHdrType::HDR_TYPE_HDR10;
+  return UserMapsToHdr(hdrType);
 }
 
 bool aml_convert_to_sdr_by_vs_engine(StreamHdrType hdrType)
@@ -306,20 +360,10 @@ bool aml_convert_to_hdr_by_vs_engine(StreamHdrType hdrType)
 
 bool aml_convert_to_dv_by_vs_engine(StreamHdrType hdrType)
 {
-  const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
-  bool dv_user_enabled(!settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE));
-  bool user_convert_to_dv;
-
-  if (hdrType == StreamHdrType::HDR_TYPE_NONE)
-    user_convert_to_dv = settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2DV);
-  else
-    user_convert_to_dv = settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2DV);
-
-  bool convert_to_dv = (!!aml_support_dolby_vision() &&
-                        static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())
-                            ->GetAmlDisplay()->aml_display_support_dv());
-
-  return ((convert_to_dv && !!user_convert_to_dv && !!dv_user_enabled) == 1);
+  if (const auto target = aml_disc_output_hdr_type())
+    return hdrType != StreamHdrType::HDR_TYPE_DOLBYVISION &&
+           *target == StreamHdrType::HDR_TYPE_DOLBYVISION;
+  return UserMapsToDv(hdrType);
 }
 
 static float aml_hdr_module_sdr_white()

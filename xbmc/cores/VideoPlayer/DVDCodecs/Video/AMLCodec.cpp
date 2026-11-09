@@ -2551,10 +2551,14 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, const AMLVideoOutput &output,
   else
   {
     int forceOutput = FORCE_OUTPUT_DISABLED;
+    // the HDR10 clips of a disc session follow the source, only its SDR clips are lifted
+    const bool sdr2hdr = aml_disc_output_hdr_type()
+                             ? hints.hdrType == StreamHdrType::HDR_TYPE_NONE
+                             : settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR);
 
     outputWrites.emplace_back("dv_enable", 0);
-    if (settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR) &&
-        m_output.hdrType == StreamHdrType::HDR_TYPE_HDR10 && !m_processInfo.GetIsHdr10Plus())
+    if (sdr2hdr && m_output.hdrType == StreamHdrType::HDR_TYPE_HDR10 &&
+        !m_processInfo.GetIsHdr10Plus())
       forceOutput = FORCE_OUTPUT_BT2020_PQ;
     else if (settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2SDR))
       forceOutput = FORCE_OUTPUT_BT709;

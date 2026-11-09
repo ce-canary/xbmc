@@ -1153,10 +1153,13 @@ AMLCaptureColor CAMLCapture::GetSignal(const AMLCaptureSource& source) const
 
   bool sourcePQ = source.transfer == AVCOL_TRC_SMPTE2084;
   bool sourceHLG = source.transfer == AVCOL_TRC_ARIB_STD_B67;
-  // hdr2sdr and sdr2hdr rewrite the stream colour to the output colour; the demuxer keeps the type
+  // hdr2sdr and sdr2hdr give the picture the output colour; the stream keeps the source type
   const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
-  if (!source.dolbyVision && (settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2SDR) ||
-                              settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR)))
+  const auto discTarget = aml_disc_output_hdr_type();
+  const bool sdr2hdr = discTarget ? *discTarget == StreamHdrType::HDR_TYPE_HDR10
+                                  : settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR);
+  if (!source.dolbyVision &&
+      (settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2SDR) || sdr2hdr))
   {
     const auto& components = CServiceBroker::GetAppComponents();
     const auto appPlayer = components.GetComponent<CApplicationPlayer>();
