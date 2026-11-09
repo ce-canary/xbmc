@@ -518,7 +518,7 @@ protected:
   double GetQueueTime();
   CacheInfo GetCachingTimes();
 
-  void FlushBuffers(double pts, bool accurate, bool sync);
+  void FlushBuffers(double pts, bool accurate, bool sync, bool nav = false);
 
   void HandleMessages();
   void HandlePlaySpeed();
@@ -728,6 +728,7 @@ protected:
   bool m_inputEnded{false};
   // the video player has a drain for the video input so far
   bool m_videoDrained{false};
+  bool m_playersFlushed{false};
   bool m_discAudioPick{false};
 
   CEdl m_Edl;
