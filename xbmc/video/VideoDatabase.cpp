@@ -657,11 +657,14 @@ int CVideoDatabase::AddFile(const std::string& strFileNameAndPath,
                             int playCount /* = 0 */,
                             const CDateTime& lastPlayed /* = CDateTime() */)
 {
+  // a stream first seen outside a scan is added when played, as a plugin item is
+  const bool addedNow{!dateAdded.IsValid() && URIUtils::IsInternetStream(strFileNameAndPath)};
+
   return AddOrUpdateFile(strFileNameAndPath, parentPath,
                          FileRecord{
                              .m_playCount = playCount,
                              .m_lastPlayed = lastPlayed,
-                             .m_dateAdded = dateAdded,
+                             .m_dateAdded = addedNow ? CDateTime::GetCurrentDateTime() : dateAdded,
                          },
                          FileExistsAction::ACTION_NONE);
 }
@@ -767,8 +770,13 @@ int CVideoDatabase::AddFile(const CFileItem& item)
 
 int CVideoDatabase::AddFile(const CVideoInfoTag& details, const std::string& parentPath /* = "" */)
 {
-  return AddFile(details.GetPath(), parentPath, details.m_dateAdded, details.GetPlayCount(),
-                 details.m_lastPlayed);
+  return AddOrUpdateFile(details.GetPath(), parentPath,
+                         FileRecord{
+                             .m_playCount = details.GetPlayCount(),
+                             .m_lastPlayed = details.m_lastPlayed,
+                             .m_dateAdded = details.m_dateAdded,
+                         },
+                         FileExistsAction::ACTION_NONE);
 }
 
 void CVideoDatabase::UpdateFileDateAdded(CVideoInfoTag& details)
@@ -13766,8 +13774,13 @@ bool CVideoDatabase::AddVideoAsset(VideoDbContentType itemType,
   {
     // DynPath may contain a disc (eg. bluray://) path
     CVideoInfoTag* tag{item.GetVideoInfoTag()};
-    idFile =
-        AddFile(item.GetDynPath(), "", tag->m_dateAdded, tag->GetPlayCount(), tag->m_lastPlayed);
+    idFile = AddOrUpdateFile(item.GetDynPath(), "",
+                             FileRecord{
+                                 .m_playCount = tag->GetPlayCount(),
+                                 .m_lastPlayed = tag->m_lastPlayed,
+                                 .m_dateAdded = tag->m_dateAdded,
+                             },
+                             FileExistsAction::ACTION_NONE);
     tag->m_iFileId = idFile;
   }
   else
