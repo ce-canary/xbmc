@@ -420,6 +420,7 @@ protected:
   void OnStartup() override;
   void OnExit() override;
   void Process() override;
+  void StopThread(bool bWait = true) override;
   void VideoParamsChange() override;
   void GetDebugInfo(std::string &audio, std::string &video, std::string &general) override;
   void UpdateClockSync(bool enabled) override;
@@ -738,6 +739,7 @@ protected:
   bool m_updateStreamDetails{false};
 
   std::atomic<bool> m_displayLost;
+  CEvent m_displayReset;
 
   double m_messageQueueTimeSize{0.0};
 };
