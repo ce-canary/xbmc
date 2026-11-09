@@ -633,6 +633,7 @@ void CDVDDemuxClient::SetStreamProps(CDemuxStream *stream, std::map<int, std::sh
     std::dynamic_pointer_cast<CDemuxStreamClientInternal>(toStream)->m_announced = *stream;
 
   toStream->uniqueId = stream->uniqueId;
+  toStream->demuxerId = GetDemuxerId();
   toStream->codec = stream->codec;
   toStream->codecName = stream->codecName;
   toStream->codec_fourcc = stream->codec_fourcc;
