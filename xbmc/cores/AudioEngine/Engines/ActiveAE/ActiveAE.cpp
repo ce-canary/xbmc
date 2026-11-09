@@ -439,6 +439,7 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
             ReleaseHold();
           return;
         case CActiveAEControlProtocol::DISPLAYRESET:
+          msg->Reply(CActiveAEControlProtocol::ACC);
           return;
         case CActiveAEControlProtocol::APPFOCUSED:
           m_sink.m_controlPort.SendOutMessage(CSinkControlProtocol::APPFOCUSED, msg->data, sizeof(bool));
@@ -981,7 +982,10 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
         {
         case CActiveAEControlProtocol::DISPLAYRESET:
           if (m_extSuspended)
+          {
+            msg->Reply(CActiveAEControlProtocol::ACC);
             return;
+          }
           CLog::Log(LOGDEBUG,"CActiveAE - display reset event");
           displayReset = true;
           [[fallthrough]];
@@ -998,8 +1002,6 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
             ValidateOutputDevices(false);
           }
           Configure();
-          if (!displayReset)
-            msg->Reply(CActiveAEControlProtocol::ACC);
           if (!m_extError)
           {
             m_state = AE_TOP_CONFIGURED_PLAY;
@@ -1012,6 +1014,8 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
           }
           m_stats.SetSuspended(false);
           m_extDeferData = false;
+          // the caller resumes playback once this returns
+          msg->Reply(CActiveAEControlProtocol::ACC);
           return;
         case CActiveAEControlProtocol::DEVICECHANGE:
         case CActiveAEControlProtocol::DEFAULTDEVICECHANGE:
@@ -3629,7 +3633,11 @@ void CActiveAE::OnLostDisplay()
 
 void CActiveAE::OnResetDisplay()
 {
-  m_controlPort.SendOutMessage(CActiveAEControlProtocol::DISPLAYRESET);
+  Message* reply;
+  if (m_controlPort.SendOutMessageSync(CActiveAEControlProtocol::DISPLAYRESET, &reply, 5s))
+    reply->Release();
+  else
+    CLog::Log(LOGERROR, "ActiveAE::{} - timed out", __FUNCTION__);
 }
 
 void CActiveAE::OnAppFocusChange(bool focus)
