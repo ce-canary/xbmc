@@ -20,6 +20,7 @@
 #include "application/AppInboundProtocol.h"
 #include "application/Application.h"
 #include "application/ApplicationEnums.h"
+#include "application/ApplicationPlay.h"
 #include "application/ApplicationPlayer.h"
 #include "application/ApplicationPowerHandling.h"
 #include "application/ApplicationSkinHandling.h"
@@ -40,6 +41,7 @@
 #include "interfaces/generic/ScriptInvocationManager.h"
 #include "interfaces/json-rpc/JSONUtils.h"
 #include "interfaces/python/XBPython.h"
+#include "jobs/JobManager.h"
 #include "messaging/ApplicationMessenger.h"
 #include "messaging/ThreadMessage.h"
 #include "messaging/helpers/DialogOKHelper.h"
@@ -580,7 +582,22 @@ bool CApplicationMessageHandling::OnMessage(const CGUIMessage& message)
         if (URIUtils::IsPlugin(file.GetDynPath()) || !VIDEO::IsVideo(file))
           return true;
 
-        m_app.GetComponent<CApplicationPlayer>()->PrefetchNextFile(file);
+        // the item the play resolves to, on a job as a playlist file or a resolver can read the
+        // network; a plugin runs Python and a PVR item prepares its playback when resolved
+        CServiceBroker::GetJobManager()->Submit(
+            [entry = std::make_shared<CFileItem>(file),
+             appPlayer = m_app.GetComponent<CApplicationPlayer>()]()
+            {
+              PLAYLIST::CPlayList items;
+              items.Add(entry);
+              items.ExpandNested(0);
+              CFileItem item{*items[0]};
+              if (URIUtils::IsPlugin(item.GetDynPath()) || URIUtils::IsPVR(item.GetDynPath()) ||
+                  !CApplicationPlay::ResolvePath(item))
+                return;
+              appPlayer->PrefetchNextFile(item);
+            },
+            CJob::PRIORITY_NORMAL);
         return true;
       }
 
