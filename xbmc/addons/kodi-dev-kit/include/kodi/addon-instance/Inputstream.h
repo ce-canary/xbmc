@@ -644,6 +644,8 @@ public:
   /// | **FPS rate** | Video | Type related required | @ref InputstreamInfo::SetFpsRate "SetFpsRate" | @ref InputstreamInfo::GetFpsRate "GetFpsRate"
   /// | **Height** | Video | Type related required | @ref InputstreamInfo::SetHeight "SetHeight" | @ref InputstreamInfo::GetHeight "GetHeight"
   /// | **Width** | Video | Type related required | @ref InputstreamInfo::SetWidth "SetWidth" | @ref InputstreamInfo::GetWidth "GetWidth"
+  /// | **Maximum height** | Video | no | @ref InputstreamInfo::SetMaxHeight "SetMaxHeight" | @ref InputstreamInfo::GetMaxHeight "GetMaxHeight"
+  /// | **Maximum width** | Video | no | @ref InputstreamInfo::SetMaxWidth "SetMaxWidth" | @ref InputstreamInfo::GetMaxWidth "GetMaxWidth"
   /// | **Aspect** | Video | Type related required | @ref InputstreamInfo::SetAspect "SetAspect" | @ref InputstreamInfo::GetAspect "GetAspect"
   /// | **Channel quantity** | Audio | Type related required | @ref InputstreamInfo::SetChannels "SetChannels" | @ref InputstreamInfo::GetChannels "GetChannels"
   /// | **Sample rate** | Audio | Type related required | @ref InputstreamInfo::SetSampleRate "SetSampleRate" | @ref InputstreamInfo::GetSampleRate "GetSampleRate"
@@ -847,6 +849,30 @@ public:
 
   /// @brief To get with @ref SetWidth changed values.
   unsigned int GetWidth() const { return m_cStructure->m_Width; }
+
+  /// @brief Largest height the stream may switch to, such as its top adaptive representation.
+  ///
+  /// Kodi chooses the display mode for it, so a later switch keeps the mode.
+  ///
+  /// @param[in] height Height to use, 0 if unknown
+  ///
+  /// @note Ignored by a Kodi whose inputstream API is older than 3.5.0.
+  void SetMaxHeight(unsigned int height) { m_cStructure->m_maxHeight = height; }
+
+  /// @brief To get with @ref SetMaxHeight changed values.
+  unsigned int GetMaxHeight() const { return m_cStructure->m_maxHeight; }
+
+  /// @brief Largest width the stream may switch to, such as its top adaptive representation.
+  ///
+  /// Kodi chooses the display mode for it, so a later switch keeps the mode.
+  ///
+  /// @param[in] width Width to use, 0 if unknown
+  ///
+  /// @note Ignored by a Kodi whose inputstream API is older than 3.5.0.
+  void SetMaxWidth(unsigned int width) { m_cStructure->m_maxWidth = width; }
+
+  /// @brief To get with @ref SetMaxWidth changed values.
+  unsigned int GetMaxWidth() const { return m_cStructure->m_maxWidth; }
 
   /// @brief Display aspect of stream.
   ///
@@ -1991,9 +2017,15 @@ private:
                                      int streamId,
                                      struct INPUTSTREAM_INFO* stream))
   {
-    InputstreamInfo infoData(info);
-    bool ret = static_cast<CInstanceInputStream*>(instance->toAddon->addonInstance)
-                   ->GetStream(streamid, infoData);
+    auto* addon = static_cast<CInstanceInputStream*>(instance->toAddon->addonInstance);
+    // a Kodi older than 3.5.0 passes a stream info without m_maxWidth and m_maxHeight, so the
+    // add-on fills its own and Kodi's takes the part it has
+    const bool hasMaxSize = addon->IsInstanceAPIVersionAtLeast(3, 5, 0);
+    InputstreamInfo kodiInfo(info);
+    InputstreamInfo addonInfo;
+    bool ret = addon->GetStream(streamid, hasMaxSize ? kodiInfo : addonInfo);
+    if (!hasMaxSize)
+      std::memcpy(info, addonInfo.GetCStructure(), offsetof(INPUTSTREAM_INFO, m_maxWidth));
     if (ret && transfer_stream)
     {
       // Do this with given callback to prevent memory problems and leaks. This
