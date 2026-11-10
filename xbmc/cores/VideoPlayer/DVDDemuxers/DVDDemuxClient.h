@@ -12,6 +12,7 @@
 #include "DVDInputStreams/DVDInputStream.h"
 
 #include <map>
+#include <set>
 #include <vector>
 
 extern "C" {
@@ -42,6 +43,9 @@ public:
   std::string GetStreamCodecName(int iStreamId) override;
   bool EnableStream(int id, bool enable) override;
   void OpenStream(int id) override;
+  // Opens a stream ahead of the player, which then claims it with OpenStream. The first Read or
+  // seek disables each one it did not claim
+  void PreOpenStream(int id);
   void SetVideoResolution(unsigned int width, unsigned int height) override;
   bool IsStreaming() const override;
 
@@ -52,6 +56,7 @@ protected:
   void DisposeStreams();
   std::shared_ptr<CDemuxStream> GetStreamInternal(int iStreamId);
   bool IsVideoReady();
+  void ReleaseUnclaimedStreams();
 
   std::shared_ptr<CDVDInputStream> m_pInput;
   std::shared_ptr<CDVDInputStream::IDemux> m_IDemux;
@@ -60,6 +65,7 @@ protected:
   double m_dtsAtDisplayTime;
   std::unique_ptr<DemuxPacket> m_packet;
   int m_videoStreamPlaying = -1;
+  std::set<int> m_preOpened;
 
 private:
   static inline bool CodecHasExtraData(AVCodecID id);

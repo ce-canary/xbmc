@@ -335,6 +335,8 @@ DemuxPacket* CDVDDemuxClient::Read()
   if (m_packet)
     return m_packet.release();
 
+  ReleaseUnclaimedStreams();
+
   const auto readStart = std::chrono::steady_clock::now();
   m_packet.reset(m_IDemux->ReadDemux());
   // an add-on's empty packet may replace input it dropped; ask again while it answers at once
@@ -723,6 +725,7 @@ bool CDVDDemuxClient::SeekTime(double timems, bool backwards, double *startpts)
     CLog::Log(LOGDEBUG, LOGVIDEO, "CDVDDemuxClient::SeekTime: {:.3f}", timems / 1000.0);
     m_displayTime = 0;
     m_dtsAtDisplayTime = DVD_NOPTS_VALUE;
+    ReleaseUnclaimedStreams();
     return m_IDemux->SeekTime(timems, backwards, startpts);
   }
   return false;
@@ -746,6 +749,7 @@ void CDVDDemuxClient::FillBuffer(bool mode)
 
 bool CDVDDemuxClient::EnableStream(int id, bool enable)
 {
+  m_preOpened.erase(id);
   if (m_IDemux)
     return m_IDemux->EnableStream(id, enable);
 
@@ -754,6 +758,8 @@ bool CDVDDemuxClient::EnableStream(int id, bool enable)
 
 void CDVDDemuxClient::OpenStream(int id)
 {
+  m_preOpened.erase(id);
+
   // OpenStream may change some parameters
   // in this case we need to reset our stream properties
   if (m_IDemux)
@@ -767,6 +773,23 @@ void CDVDDemuxClient::OpenStream(int id)
     if (bOpenStream)
       SetStreamProps(stream, m_streams, true);
   }
+}
+
+void CDVDDemuxClient::ReleaseUnclaimedStreams()
+{
+  for (const int id : m_preOpened)
+  {
+    m_IDemux->EnableStream(id, false);
+    if (id == m_videoStreamPlaying)
+      m_videoStreamPlaying = -1;
+  }
+  m_preOpened.clear();
+}
+
+void CDVDDemuxClient::PreOpenStream(int id)
+{
+  OpenStream(id);
+  m_preOpened.insert(id);
 }
 
 void CDVDDemuxClient::SetVideoResolution(unsigned int width, unsigned int height)
