@@ -3459,6 +3459,10 @@ void CAMLCodec::Reset()
   m_dll->codec_pause(&am_private->vcodec);
 
   // reset the decoder
+  {
+    std::lock_guard<std::mutex> lock(m_resetMutex);
+    m_resetEpoch++;
+  }
   m_dll->codec_reset(&am_private->vcodec);
   ClearInputEnd();
   m_inputWritten = false;
@@ -3845,12 +3849,18 @@ bool CAMLCodec::WaitPresentStep(uint64_t& seen, int fenceFd)
   return true;
 }
 
-int CAMLCodec::ReleaseFrame(const uint32_t index, bool drop)
+bool CAMLCodec::ReleaseFrame(const uint32_t index, uint32_t resetEpoch, bool drop)
 {
   int ret;
   v4l2_buffer vbuf = v4l2_buffer();
   vbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   vbuf.index = index;
+
+  // amlvideo takes a buffer back by popping its queue up to the index, so a picture from before
+  // a reset would take the new pictures with it
+  std::lock_guard<std::mutex> resetLock(m_resetMutex);
+  if (resetEpoch != m_resetEpoch)
+    return false;
 
   PosixFilePtr amlVideoFile;
   {
@@ -3859,7 +3869,7 @@ int CAMLCodec::ReleaseFrame(const uint32_t index, bool drop)
   }
 
   if (!amlVideoFile)
-    return 0;
+    return false;
 
   if (drop)
     vbuf.flags |= V4L2_BUF_FLAG_DONE;
@@ -3894,7 +3904,7 @@ int CAMLCodec::ReleaseFrame(const uint32_t index, bool drop)
       AmlDisplay->SetCrtcProperties({{"dv_debug", "enable_fel 0"}, {"dv_debug", "enable_mel 0"}});
     }
   }
-  return ret;
+  return ret >= 0;
 }
 
 float CAMLCodec::GetBufferLevel(int new_chunk, int &data_len, int &free_len, int &size)
