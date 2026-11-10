@@ -4024,8 +4024,11 @@ CDVDVideoCodec::VCReturn CAMLCodec::GetPicture(VideoPicture *pVideoPicture)
            std::chrono::system_clock::now() - std::max(m_tp_drain, m_tp_last_frame) >
                std::chrono::seconds(m_decoder_timeout))
   {
-    CLog::Log(LOGWARNING, "CAMLCodec::GetPicture: drain ends without frame, {} queued",
-              queued_frames);
+    if (m_inputEndSent && !inputDrained)
+      CLog::Log(LOGERROR, "CAMLCodec::GetPicture: decoder reports no end of stream");
+    else
+      CLog::Log(LOGWARNING, "CAMLCodec::GetPicture: drain ends without frame, {} queued",
+                queued_frames);
     m_tp_drain = std::chrono::system_clock::now();
     return CDVDVideoCodec::VC_EOF;
   }
