@@ -40,27 +40,27 @@
 using namespace KODI;
 using namespace XFILE;
 
-bool CApplicationPlay::ResolvePath()
+bool CApplicationPlay::ResolvePath(CFileItem& item)
 {
   // Get bluray:// path for resolution if present
-  if (m_item.HasVideoInfoTag() && m_item.GetVideoInfoTag()->GetPath().starts_with("bluray://"))
-    m_item.SetDynPath(m_item.GetVideoInfoTag()->m_strFileNameAndPath);
+  if (item.HasVideoInfoTag() && item.GetVideoInfoTag()->GetPath().starts_with("bluray://"))
+    item.SetDynPath(item.GetVideoInfoTag()->m_strFileNameAndPath);
 
   // Translate/Resolve the url if needed - recursively, but only limited times.
-  std::string lastDynPath{m_item.GetDynPath()};
+  std::string lastDynPath{item.GetDynPath()};
   size_t itemResolveAttempt{0};
   while (itemResolveAttempt < MAX_ITEM_RESOLVE_ATTEMPTS)
   {
     itemResolveAttempt++;
 
-    if (const std::unique_ptr<IDirectory> dir{CDirectoryFactory::Create(m_item)};
-        dir && !dir->Resolve(m_item))
+    if (const std::unique_ptr<IDirectory> dir{CDirectoryFactory::Create(item)};
+        dir && !dir->Resolve(item))
     {
-      CLog::LogF(LOGERROR, "Error resolving item. Item '{}' is not playable.", m_item.GetDynPath());
+      CLog::LogF(LOGERROR, "Error resolving item. Item '{}' is not playable.", item.GetDynPath());
       return false;
     }
 
-    std::string newDynPath{m_item.GetDynPath()};
+    std::string newDynPath{item.GetDynPath()};
     if (newDynPath == lastDynPath)
       break; // done
 
@@ -358,7 +358,7 @@ CApplicationPlay::GatherPlaybackDetailsResult CApplicationPlay::GatherPlaybackDe
   if (PLAYLIST::IsPlayList(m_item) && !m_item.IsGame())
     return GatherPlaybackDetailsResult::RESULT_ERROR; // non-game playlists not supported
 
-  if (!ResolvePath())
+  if (!ResolvePath(m_item))
     return GatherPlaybackDetailsResult::RESULT_ERROR;
 
   if (!isStack)

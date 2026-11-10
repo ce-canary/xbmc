@@ -65,13 +65,14 @@ public:
    */
   const CPlayerOptions& GetPlayerOptions() const { return m_options; }
 
-private:
   /*!
-   * \brief Resolves m_item's vfs dynpath to an actual file path.
+   * \brief Resolves an item's vfs dynpath to an actual file path.
+   * \param item The item to resolve
    * \return true if resolved successfully, false otherwise
    */
-  bool ResolvePath();
+  static bool ResolvePath(CFileItem& item);
 
+private:
   /*!
    * \brief Determines if there is a resume point for m_item, updates the player options accordingly.
    * Also resolves a removable media path if needed
