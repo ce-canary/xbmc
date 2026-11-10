@@ -3977,9 +3977,10 @@ CDVDVideoCodec::VCReturn CAMLCodec::GetPicture(VideoPicture *pVideoPicture)
   // read before the dequeue, a flush that ends after it would leave its pictures behind
   const bool inputDrained = !m_drain || IsInputDrained();
 
-  // queued_frames counts the pictures handed out and not yet returned, a drain dequeues
-  // whatever the decoder has ready
-  if (m_buffer_level_ready && (buffer_level > m_minimum_buffer_level || streambuffer || m_drain) &&
+  // queued_frames counts the pictures handed out and not yet returned; a drain, or an input that
+  // ended and has no level to wait for, dequeues whatever the decoder has ready
+  if ((m_inputEndSent || (m_buffer_level_ready &&
+                          (buffer_level > m_minimum_buffer_level || streambuffer || m_drain))) &&
       (ret = DequeueBuffer()) == 0)
   {
     pVideoPicture->iFlags = 0;
@@ -4047,33 +4048,37 @@ CDVDVideoCodec::VCReturn CAMLCodec::GetPicture(VideoPicture *pVideoPicture)
 
 void CAMLCodec::SendInputEnd()
 {
-  // a reset decoder holds nothing to mark, and a close right after a flush must not wait for it
+  // a reset decoder holds nothing to mark, and a close right after a flush must not wait for it;
+  // single mode has no scheduler to take the end
   if (!m_opened || !m_inputWritten || m_inputEndSent ||
-      am_private->gcodec.dec_mode != STREAM_TYPE_STREAM)
+      am_private->gcodec.dec_mode == STREAM_TYPE_SINGLE)
     return;
 
-  std::vector<unsigned char> padding(HEVC_PADDING_SIZE, 0);
-  am_packet_t* pkt = &am_private->am_pkt;
-  pkt->data = padding.data();
-  pkt->data_size = HEVC_PADDING_SIZE;
-  pkt->isvalid = 1;
-  // no pts and no header, these bytes are no packet
-  pkt->newflag = 0;
-
-  int loop = 0;
-  while (pkt->isvalid && loop < 100 && write_av_packet(am_private, pkt) == PLAYER_SUCCESS)
-    loop++;
-
-  const bool padded = !pkt->isvalid;
-  pkt->isvalid = 0;
-  pkt->newflag = 1;
-  pkt->data = nullptr;
-  pkt->data_size = 0;
-
-  if (!padded)
+  if (am_private->gcodec.dec_mode == STREAM_TYPE_STREAM)
   {
-    CLog::Log(LOGWARNING, "CAMLCodec::{}: no room for the padding", __FUNCTION__);
-    return;
+    std::vector<unsigned char> padding(HEVC_PADDING_SIZE, 0);
+    am_packet_t* pkt = &am_private->am_pkt;
+    pkt->data = padding.data();
+    pkt->data_size = HEVC_PADDING_SIZE;
+    pkt->isvalid = 1;
+    // no pts and no header, these bytes are no packet
+    pkt->newflag = 0;
+
+    int loop = 0;
+    while (pkt->isvalid && loop < 100 && write_av_packet(am_private, pkt) == PLAYER_SUCCESS)
+      loop++;
+
+    const bool padded = !pkt->isvalid;
+    pkt->isvalid = 0;
+    pkt->newflag = 1;
+    pkt->data = nullptr;
+    pkt->data_size = 0;
+
+    if (!padded)
+    {
+      CLog::Log(LOGWARNING, "CAMLCodec::{}: no room for the padding", __FUNCTION__);
+      return;
+    }
   }
 
   const int ret = m_dll->codec_set_eos(&am_private->vcodec, 1);
