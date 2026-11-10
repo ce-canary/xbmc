@@ -443,6 +443,39 @@ public:
   }
 };
 
+namespace
+{
+// The video or audio streams of `streams` a fresh open tries, best first. Subtitles rank by the
+// audio that opened, with `PredicateSubtitlePriority`
+std::vector<SelectionStream> RankDefaultStreams(StreamType type,
+                                                CSelectionStreams& streams,
+                                                const CVideoSettings& settings,
+                                                bool preferStereo,
+                                                CDVDDemux* demuxer)
+{
+  if (type == StreamType::AUDIO)
+    return streams.Get(type, PredicateAudioFilter(settings.m_AudioStream, preferStereo));
+
+  std::vector<SelectionStream> ranked{
+      streams.Get(type, PredicateVideoFilter(settings.m_VideoStream))};
+  // choose video base layer as default if dual layer stream
+  // only demuxer streams can be dual layer, nav and external streams are not
+  // known to the demuxer and must not be probed for it
+  std::erase_if(ranked,
+                [demuxer](const SelectionStream& stream)
+                {
+                  if (!demuxer || STREAM_SOURCE_MASK(stream.source) != STREAM_SOURCE_DEMUX)
+                    return false;
+                  const CDemuxStream* st{demuxer->GetStream(stream.demuxerId, stream.id)};
+                  if (!st || st->type != StreamType::VIDEO)
+                    return false;
+                  const auto* vstream = static_cast<const CDemuxStreamVideo*>(st);
+                  return vstream->isDualStream && vstream->isELStream;
+                });
+  return ranked;
+}
+} // namespace
+
 void CSelectionStreams::Clear(StreamType type, StreamSource source)
 {
   auto new_end = std::remove_if(m_Streams.begin(), m_Streams.end(),
@@ -1149,23 +1182,10 @@ void CVideoPlayer::OpenDefaultStreams(bool reset)
   // open video stream
   valid   = false;
 
-  PredicateVideoFilter vf(m_processInfo->GetVideoSettings().m_VideoStream);
-  for (const auto& stream : m_SelectionStreams.Get(StreamType::VIDEO, vf))
+  for (const auto& stream :
+       RankDefaultStreams(StreamType::VIDEO, m_SelectionStreams, m_processInfo->GetVideoSettings(),
+                          m_playerOptions.preferStereo, m_pDemuxer.get()))
   {
-    // choose video base layer as default if dual layer stream
-    // only demuxer streams can be dual layer, nav and external streams are not
-    // known to the demuxer and must not be probed for it
-    if (m_pDemuxer && STREAM_SOURCE_MASK(stream.source) == STREAM_SOURCE_DEMUX)
-    {
-      CDemuxStream* st = m_pDemuxer->GetStream(stream.demuxerId, stream.id);
-      if (st && st->type == StreamType::VIDEO)
-      {
-        CDemuxStreamVideo* vstream = static_cast<CDemuxStreamVideo*>(st);
-        if (vstream->isDualStream && vstream->isELStream)
-          continue;
-      }
-    }
-
     if (OpenStream(m_CurrentVideo, stream.demuxerId, stream.id, stream.source, reset))
     {
       valid = true;
@@ -1182,8 +1202,9 @@ void CVideoPlayer::OpenDefaultStreams(bool reset)
   valid = false;
   if (!m_playerOptions.videoOnly)
   {
-    PredicateAudioFilter af(m_processInfo->GetVideoSettings().m_AudioStream, m_playerOptions.preferStereo);
-    for (const auto& stream : m_SelectionStreams.Get(StreamType::AUDIO, af))
+    for (const auto& stream : RankDefaultStreams(StreamType::AUDIO, m_SelectionStreams,
+                                                 m_processInfo->GetVideoSettings(),
+                                                 m_playerOptions.preferStereo, m_pDemuxer.get()))
     {
       if(OpenStream(m_CurrentAudio, stream.demuxerId, stream.id, stream.source, reset))
       {
