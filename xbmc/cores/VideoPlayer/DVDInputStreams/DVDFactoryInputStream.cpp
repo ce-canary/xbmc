@@ -248,12 +248,16 @@ std::shared_ptr<CDVDInputStream> CDVDFactoryInputStream::CreateInputStream(IVide
                                                XFILE::READ_TRUNCATED | XFILE::READ_BITRATE);
 }
 
-bool CDVDFactoryInputStream::IsPlainFile(const CFileItem& fileitem)
+DVDStreamType CDVDFactoryInputStream::GetPrefetchType(const CFileItem& fileitem)
 {
   ADDON::AddonInfoPtr addonInfo;
-  return GetInputType(fileitem, addonInfo) == InputType::FILE &&
-         !URIUtils::IsStack(fileitem.GetDynPath()) &&
-         !(NETWORK::IsInternetStream(fileitem) && IsFFmpegStream(fileitem));
+  const InputType type = GetInputType(fileitem, addonInfo);
+  if (type == InputType::ADDON && CInputStreamAddon::SupportsPrefetch(addonInfo))
+    return DVDSTREAM_TYPE_ADDON;
+  if (type == InputType::FILE && !URIUtils::IsStack(fileitem.GetDynPath()) &&
+      !(NETWORK::IsInternetStream(fileitem) && IsFFmpegStream(fileitem)))
+    return DVDSTREAM_TYPE_FILE;
+  return DVDSTREAM_TYPE_NONE;
 }
 
 std::shared_ptr<CDVDInputStream> CDVDFactoryInputStream::CreateInputStream(IVideoPlayer* pPlayer, const CFileItem &fileitem, const std::vector<std::string>& filenames)
