@@ -249,6 +249,20 @@ bool CDataCacheCore::IsVideoInterlaced()
   return m_playerVideoInfo.m_isInterlaced;
 }
 
+void CDataCacheCore::SetVideoMaxSize(int width, int height)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.maxSize = CSizeInt(width, height);
+}
+
+CSizeInt CDataCacheCore::GetVideoMaxSize()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.maxSize;
+}
+
 void CDataCacheCore::SetDiscFormat(const DiscFormat& format)
 {
   std::unique_lock lock(m_videoPlayerSection);

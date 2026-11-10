@@ -10,6 +10,7 @@
 
 #include "EdlEdit.h"
 #include "threads/CriticalSection.h"
+#include "utils/Geometry.h"
 
 #include <atomic>
 #include <chrono>
@@ -74,6 +75,10 @@ public:
    * @return True if interlaced, otherwise false
    */
   bool IsVideoInterlaced();
+
+  // the largest size the video stream may switch to, empty if it declares none
+  void SetVideoMaxSize(int width, int height);
+  CSizeInt GetVideoMaxSize();
 
   void SetDiscFormat(const DiscFormat& format);
   DiscFormat GetDiscFormat();
@@ -258,6 +263,7 @@ protected:
     int liveBitRate;
     int queueLevel;
     int queueDataLevel;
+    CSizeInt maxSize;
     DiscFormat discFormat;
   } m_playerVideoInfo;
 
