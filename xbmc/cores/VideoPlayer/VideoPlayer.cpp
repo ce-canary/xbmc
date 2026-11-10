@@ -2106,6 +2106,8 @@ bool CVideoPlayer::ParkAtEnd()
   if (m_bAbortRequest)
     return false;
 
+  m_VideoPlayerVideo->Park();
+
   // the player plays until its audio played out, as at a stock end
   {
     std::unique_lock lock(m_parkSection);
