@@ -3476,6 +3476,10 @@ void CAMLCodec::Reset()
   m_dll->codec_pause(&am_private->vcodec);
 
   // reset the decoder
+  {
+    std::lock_guard<std::mutex> lock(m_amlVideoFileMutex);
+    m_resetEpoch++;
+  }
   m_dll->codec_reset(&am_private->vcodec);
   {
     // codec_reset empties the amlvideo queue, so frames dequeued before it are not queued back
@@ -3867,19 +3871,23 @@ bool CAMLCodec::WaitPresentStep(uint64_t& seen, int fenceFd)
   return true;
 }
 
-int CAMLCodec::ReleaseFrame(const uint32_t index, bool drop)
+bool CAMLCodec::ReleaseFrame(const uint32_t index, uint32_t resetEpoch, bool drop)
 {
   int ret = 0;
 
   std::lock_guard<std::mutex> lock(m_amlVideoFileMutex);
 
   if (!m_amlVideoFile)
-    return 0;
+    return false;
+
+  // the reset emptied the amlvideo queue of a picture from before it, so amlvideo cannot take it
+  if (resetEpoch != m_resetEpoch)
+    return false;
 
   auto frame = std::find_if(m_dequeuedFrames.begin(), m_dequeuedFrames.end(),
                             [index](const DequeuedFrame& f) { return f.index == index; });
   if (frame == m_dequeuedFrames.end())
-    return 0;
+    return false;
 
   frame->released = true;
   frame->drop = drop;
@@ -3929,7 +3937,7 @@ int CAMLCodec::ReleaseFrame(const uint32_t index, bool drop)
       }
     }
   }
-  return ret;
+  return ret >= 0;
 }
 
 float CAMLCodec::GetBufferLevel(int new_chunk, int &data_len, int &free_len, int &size)
