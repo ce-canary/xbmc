@@ -54,6 +54,7 @@ public:
     PLAYER_REPORT_STATE,
     PLAYER_FRAME_ADVANCE,
     PLAYER_DISPLAY_RESET,           // report display reset event
+    PLAYER_STREAM_DRAINED,          // sent when a sub player's drain ended
 
     // demuxer related messages
     DEMUXER_PACKET,                 // data packet
