@@ -3354,8 +3354,12 @@ void CVideoPlayer::HandlePlaySpeed()
     }
     else
     {
+      // a queue full by time also ends the wait: AcceptsData counts data, which a slow source can
+      // take minutes to fill and a short item never fills
       if ((!m_VideoPlayerAudio->AcceptsData() && m_CurrentAudio.id >= 0) ||
-          (!m_VideoPlayerVideo->AcceptsData() && m_CurrentVideo.id >= 0))
+          (!m_VideoPlayerVideo->AcceptsData() && m_CurrentVideo.id >= 0) ||
+          (m_VideoPlayerAudio->GetLevel() >= 100 && m_CurrentAudio.id >= 0) ||
+          (m_processInfo->GetLevelVQ() >= 100 && m_CurrentVideo.id >= 0))
         SetCaching(CACHESTATE_INIT);
     }
 
