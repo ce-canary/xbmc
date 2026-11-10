@@ -53,6 +53,8 @@ void CDVDStreamInfo::Clear()
   interlaced = false;
   height   = 0;
   width    = 0;
+  maxHeight = 0;
+  maxWidth = 0;
   aspect   = 0.0;
   vfr      = false;
   stills   = false;
@@ -222,6 +224,8 @@ void CDVDStreamInfo::Assign(const CDVDStreamInfo& right, bool withextradata)
   interlaced = right.interlaced;
   height   = right.height;
   width    = right.width;
+  maxHeight = right.maxHeight;
+  maxWidth = right.maxWidth;
   aspect   = right.aspect;
   stills   = right.stills;
   level    = right.level;
@@ -295,6 +299,8 @@ void CDVDStreamInfo::Assign(const CDemuxStream& right, bool withextradata)
     interlaced = stream->interlaced;
     height    = stream->iHeight;
     width     = stream->iWidth;
+    maxHeight = stream->iMaxHeight;
+    maxWidth = stream->iMaxWidth;
     aspect    = stream->fAspect;
     vfr       = stream->bVFR;
     ptsinvalid = stream->bPTSInvalid;

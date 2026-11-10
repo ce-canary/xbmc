@@ -497,6 +497,8 @@ void CDVDDemuxClient::SetStreamProps(CDemuxStream *stream, std::map<int, std::sh
       streamVideo->iFpsRate = source->iFpsRate;
     }
     streamVideo->iBitRate = source->iBitRate;
+    streamVideo->iMaxWidth = source->iMaxWidth;
+    streamVideo->iMaxHeight = source->iMaxHeight;
     if (source->extraData)
     {
       streamVideo->extraData = source->extraData;
