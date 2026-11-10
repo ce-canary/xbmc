@@ -48,6 +48,7 @@ public:
   void PreOpenStream(int id);
   void SetVideoResolution(unsigned int width, unsigned int height) override;
   bool IsStreaming() const override;
+  bool IsAtEnd() const override { return m_atEnd; }
 
 protected:
   void RequestStreams();
@@ -66,6 +67,8 @@ protected:
   std::unique_ptr<DemuxPacket> m_packet;
   int m_videoStreamPlaying = -1;
   std::set<int> m_preOpened;
+  // the last read returned nothing, a later read may return data again
+  bool m_atEnd{false};
 
 private:
   static inline bool CodecHasExtraData(AVCodecID id);
