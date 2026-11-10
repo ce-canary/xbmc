@@ -608,6 +608,8 @@ void CVideoPlayerVideo::Process()
       // not finished while the step runs, the requeued drain is out of the queue
       m_eos = false;
       m_eos = !drainStep(pMsg);
+      if (m_eos)
+        m_messageParent.Put(std::make_shared<CDVDMsg>(CDVDMsg::PLAYER_STREAM_DRAINED));
     }
     else if (pMsg->IsType(CDVDMsg::GENERAL_PAUSE))
     {
