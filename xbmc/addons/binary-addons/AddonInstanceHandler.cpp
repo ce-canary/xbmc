@@ -47,7 +47,6 @@ IAddonInstanceHandler::IAddonInstanceHandler(
   m_info.type = m_type;
   m_info.kodi = this;
   m_info.parent = m_parentInstance;
-  m_info.first_instance = m_addon && !m_addon->Initialized();
   m_info.functions = &m_callbacks;
   m_info.functions->get_instance_user_path = get_instance_user_path;
   m_info.functions->is_instance_setting_using_default = is_instance_setting_using_default;
@@ -115,6 +114,7 @@ ADDON_STATUS IAddonInstanceHandler::CreateInstance()
 
   std::unique_lock lock(m_cdSec);
 
+  m_info.first_instance = !m_addon->Initialized();
   ADDON_STATUS status = m_addon->CreateInstance(&m_ifc);
   if (status != ADDON_STATUS_OK)
   {
