@@ -527,6 +527,10 @@ bool CDVDVideoCodecAmlogic::AddData(const DemuxPacket &packet)
   bool IsHdr10Plus = false;
   int data_added = false;
 
+  // a decoder at its end of stream takes new input only after a reset, as at a seek
+  if (pData && m_Codec->IsInputEnded())
+    Reset();
+
   if (pData)
   {
     // named by how the EL arrives; a track pair can open with solo packets, so
