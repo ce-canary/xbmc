@@ -51,7 +51,7 @@ CPlayList* CPlayListFactory::Create(const CFileItem& item)
   {
     // Ensure the MIME type has been retrieved for http:// and shout:// streams
     if (item.GetMimeType().empty())
-      const_cast<CFileItem&>(item).FillInMimeType();
+      const_cast<CFileItem&>(item).FillInMimeType(item.ContentLookup());
 
     std::string strMimeType = item.GetMimeType();
     StringUtils::ToLower(strMimeType);
