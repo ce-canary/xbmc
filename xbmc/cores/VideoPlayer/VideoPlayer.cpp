@@ -5707,7 +5707,8 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
       if (m_joinPending && m_CurrentVideo.id >= 0)
       {
         aml_continue_presentation(hint);
-        CloseStream(m_CurrentVideo, true);
+        // parking waited for the stream's end, so nothing is left to drain
+        CloseStream(m_CurrentVideo, false);
         m_joinPending = false;
       }
       res = OpenVideoStream(hint, reset);
