@@ -45,6 +45,7 @@ public:
   void Remove(int position);
   bool Swap(int position1, int position2);
   bool Expand(int position); // expands any playlist at position into this playlist
+  void ExpandNested(int position); // expands it again while the first item is a playlist too
   void Clear();
   int size() const;
   int RemoveDVDItems();

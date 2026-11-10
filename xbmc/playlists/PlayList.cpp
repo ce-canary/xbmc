@@ -503,6 +503,17 @@ bool CPlayList::Expand(int position)
   return true;
 }
 
+void CPlayList::ExpandNested(int position)
+{
+  // only allow a few levels, this could end up in a loop
+  // if they refer to each other in a loop
+  for (int i = 0; i < 5; i++)
+  {
+    if (!Expand(position))
+      break;
+  }
+}
+
 void CPlayList::UpdateItem(const CFileItem *item)
 {
   if (!item) return;

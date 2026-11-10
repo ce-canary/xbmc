@@ -344,13 +344,7 @@ bool CPlayListPlayer::Play(int iSong,
     iSong = playlist.size() - 1;
 
   // check if the item itself is a playlist, and can be expanded
-  // only allow a few levels, this could end up in a loop
-  // if they refer to each other in a loop
-  for (int i=0; i<5; i++)
-  {
-    if(!playlist.Expand(iSong))
-      break;
-  }
+  playlist.ExpandNested(iSong);
 
   m_iCurrentSong = iSong;
   CFileItemPtr item = playlist[m_iCurrentSong];
