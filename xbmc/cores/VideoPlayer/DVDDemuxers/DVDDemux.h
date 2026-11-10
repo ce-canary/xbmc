@@ -162,6 +162,8 @@ public:
   bool interlaced = false; // unknown or progressive => false, otherwise true.
   int iHeight = 0; // height of the stream reported by the demuxer
   int iWidth = 0; // width of the stream reported by the demuxer
+  int iMaxHeight = 0; // largest height the stream may switch to, 0 if unknown
+  int iMaxWidth = 0; // largest width the stream may switch to, 0 if unknown
   double fAspect = 0; // display aspect of stream
   bool bVFR = false; // variable framerate
   bool bPTSInvalid = false; // pts cannot be trusted (avi's).
