@@ -629,6 +629,12 @@ extern "C"
 
     //! @brief Dolby Vision config metadata (dvcc atom)
     struct INPUTSTREAM_DVCC_METADATA* m_dvccMetadata;
+
+    //! @brief largest width the stream may switch to, 0 if unknown
+    unsigned int m_maxWidth;
+
+    //! @brief largest height the stream may switch to, 0 if unknown
+    unsigned int m_maxHeight;
   };
 
   struct INPUTSTREAM_TIMES
