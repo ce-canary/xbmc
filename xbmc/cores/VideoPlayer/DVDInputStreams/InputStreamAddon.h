@@ -50,6 +50,8 @@ public:
   ~CInputStreamAddon() override;
 
   static bool Supports(const ADDON::AddonInfoPtr& addonInfo, const CFileItem& fileitem);
+  // whether an instance may open ahead of playback, beside another open instance of the add-on
+  static bool SupportsPrefetch(const ADDON::AddonInfoPtr& addonInfo);
 
   void SetPrefetch(bool prefetch) { m_prefetch = prefetch; }
 

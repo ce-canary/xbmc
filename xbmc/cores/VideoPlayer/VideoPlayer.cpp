@@ -22,6 +22,7 @@
 #include "DVDInputStreams/DVDInputStreamBluray.h"
 #endif
 #include "DVDInputStreams/DVDInputStreamNavigator.h"
+#include "DVDInputStreams/InputStreamAddon.h"
 #include "DVDInputStreams/InputStreamPVRBase.h"
 #include "DVDMessage.h"
 #include "DVDSubtitles/DVDMenuPlane.h"
@@ -1848,6 +1849,15 @@ struct CVideoPlayer::PrefetchSlot
     cancelled = true;
     if (opening)
       opening->Abort();
+    // closing an open input can wait on the network, so it does not run on the player thread
+    if (input || demuxer)
+      CServiceBroker::GetJobManager()->Submit(
+          [in = std::move(input), dmx = std::move(demuxer)]() mutable
+          {
+            dmx.reset();
+            in.reset();
+          },
+          CJob::PRIORITY_NORMAL);
   }
 
   CCriticalSection section;
@@ -1864,6 +1874,25 @@ struct CVideoPlayer::PrefetchSlot
 
 namespace
 {
+// the screen an add-on input reads, for an input that can outlive the player
+class CPrefetchScreen : public IVideoPlayer
+{
+public:
+  int OnDiscNavResult(void*, int) override { return 0; }
+  void GetVideoResolution(unsigned int& width, unsigned int& height) override
+  {
+    // without a window system the caller keeps its default
+    if (auto system = CServiceBroker::GetWinSystem(); system != nullptr)
+    {
+      const RESOLUTION_INFO res = system->GetGfxContext().GetResInfo();
+      width = res.iWidth;
+      height = res.iHeight;
+    }
+  }
+};
+
+CPrefetchScreen prefetchScreen;
+
 // the item fields the input and demuxer open from; the mime type is compared apart
 bool OpensSameInput(const CFileItem& item, const CFileItem& other)
 {
@@ -1884,8 +1913,8 @@ void CVideoPlayer::PrefetchNextFile(const CFileItem& file)
                                           CJob::PRIORITY_NORMAL);
 }
 
-// Opens the input and demuxer of the slot's item as the open of a plain file does, on a job
-// thread. A slot dropped before the job ends gets nothing, and the job releases what it opened.
+// Opens the input and demuxer of the slot's item as the player's open does, on a job thread. A
+// slot dropped before the job ends gets nothing, and the job releases what it opened before done.
 void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
 {
   const auto cancelled = [&slot]()
@@ -1908,7 +1937,7 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
 
   CFFmpegLog::SetLogLevel(1);
   std::shared_ptr<CDVDInputStream> input;
-  std::unique_ptr<CDVDDemuxFFmpeg> demuxer;
+  std::unique_ptr<CDVDDemux> demuxer;
   const std::string_view failure = [&]() -> std::string_view
   {
     // typed as the application and the player type it
@@ -1916,38 +1945,50 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
     if (item.GetMimeType().empty())
       item.FillInMimeType();
 
-    if (CDVDFactoryInputStream::IsPlainFile(item))
-      input = CDVDFactoryInputStream::CreateInputStream(nullptr, item);
-    if (!input || !input->IsStreamType(DVDSTREAM_TYPE_FILE))
-      return "it is not a plain file";
+    const DVDStreamType type{CDVDFactoryInputStream::GetPrefetchType(item)};
+    if (type == DVDSTREAM_TYPE_NONE)
+      return "it does not open early";
+    input = CDVDFactoryInputStream::CreateInputStream(&prefetchScreen, item);
+    if (!input || !input->IsStreamType(type))
+      return "it opens as another input";
+    if (const auto addon = std::dynamic_pointer_cast<CInputStreamAddon>(input))
+      addon->SetPrefetch(true);
     if (cancelled())
       return "it was dropped";
     // the open at the join tries again, as a source that is waking up may answer by then
     if (!input->Open())
       return "its input did not open";
-    // a live stream would play from where it was opened
-    if (input->GetLength() <= 0)
-      return "its length is unknown";
+    // a live stream would play from where it was opened; an add-on knows it once open
+    if (type == DVDSTREAM_TYPE_ADDON ? input->IsRealtime() : input->GetLength() <= 0)
+      return "it can be live";
+    if (input->GetIDemux())
+    {
+      demuxer.reset(CDVDFactoryDemuxer::CreateDemuxer(input));
+      if (!demuxer)
+        return "its demuxer did not open";
+      return {};
+    }
     if (!CDVDFactoryDemuxer::IsFFmpegFile(input))
       return "it has its own demuxer";
 
-    demuxer = std::make_unique<CDVDDemuxFFmpeg>();
+    auto ffmpeg = std::make_unique<CDVDDemuxFFmpeg>();
     {
       std::unique_lock lock(slot->section);
       if (slot->cancelled)
         return "it was dropped";
-      slot->opening = demuxer.get();
+      slot->opening = ffmpeg.get();
     }
-    const bool opened{demuxer->Open(input, true, false)};
+    const bool opened{ffmpeg->Open(input, true, false)};
     {
       std::unique_lock lock(slot->section);
       slot->opening = nullptr;
     }
     if (!opened)
       return "its demuxer did not open";
-    const int64_t time = demuxer->GetStreamLength();
+    const int64_t time = ffmpeg->GetStreamLength();
     if (time > 0)
       input->SetReadRate(static_cast<uint32_t>(input->GetLength() * 1000 / time));
+    demuxer = std::move(ffmpeg);
     return {};
   }();
   CFFmpegLog::ClearLogLevel();
@@ -1955,13 +1996,17 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
   if (!failure.empty())
     CLog::Log(LOGDEBUG, "VideoPlayer: the next item was not prepared, {}", failure);
 
-  std::unique_lock lock(slot->section);
-  if (!slot->cancelled && failure.empty())
   {
-    slot->mimeType = item.GetMimeType();
-    slot->input = std::move(input);
-    slot->demuxer = std::move(demuxer);
+    std::unique_lock lock(slot->section);
+    if (!slot->cancelled && failure.empty())
+    {
+      slot->mimeType = item.GetMimeType();
+      slot->input = std::move(input);
+      slot->demuxer = std::move(demuxer);
+    }
   }
+  demuxer.reset();
+  input.reset();
   slot->done.Set();
 }
 
