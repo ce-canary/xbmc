@@ -436,7 +436,7 @@ protected:
   bool ParkAtEnd();
   struct PrefetchSlot;
   static void Prefetch(const std::shared_ptr<PrefetchSlot>& slot);
-  bool TakePrefetch();
+  bool TakePrefetch(const CFileItem& previous);
   void CancelPrefetch(std::string_view reason);
   bool ShouldDeferSync(bool ready, std::chrono::steady_clock::time_point now);
   bool ShouldWaitForSync(std::chrono::steady_clock::time_point now);

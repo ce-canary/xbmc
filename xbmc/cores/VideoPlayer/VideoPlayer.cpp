@@ -11,6 +11,7 @@
 #include "DVDCodecs/DVDCodecUtils.h"
 #include "DVDDemuxers/DVDDemux.h"
 #include "DVDDemuxers/DVDDemuxCC.h"
+#include "DVDDemuxers/DVDDemuxClient.h"
 #include "DVDDemuxers/DVDDemuxFFmpeg.h"
 #include "DVDDemuxers/DVDDemuxUtils.h"
 #include "DVDDemuxers/DVDDemuxVobsub.h"
@@ -53,6 +54,7 @@
 #include "resources/LocalizeStrings.h"
 #include "resources/ResourcesComponent.h"
 #include "settings/AdvancedSettings.h"
+#include "settings/MediaSettings.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "threads/SingleLock.h"
@@ -67,6 +69,7 @@
 #include "utils/Variant.h"
 #include "utils/log.h"
 #include "video/Bookmark.h"
+#include "video/VideoDatabase.h"
 #include "video/VideoFileItemClassify.h"
 #include "video/VideoInfoTag.h"
 #include "windowing/GraphicContext.h"
@@ -1889,6 +1892,7 @@ struct CVideoPlayer::PrefetchSlot
   //! the demuxer the job probes with, set only while its open runs
   CDVDDemux* opening{nullptr};
   std::string mimeType;
+  CVideoSettings videoSettings;
   std::shared_ptr<CDVDInputStream> input;
   std::unique_ptr<CDVDDemux> demuxer;
 };
@@ -1913,6 +1917,47 @@ public:
 };
 
 CPrefetchScreen prefetchScreen;
+
+// the settings the application loads for an item it plays
+CVideoSettings LoadVideoSettings(const CFileItem& item)
+{
+  CVideoSettings settings{CMediaSettings::GetInstance().GetDefaultVideoSettings()};
+  CVideoDatabase db;
+  if (db.Open())
+  {
+    if (!db.GetVideoSettings(item, settings))
+      settings = CMediaSettings::GetInstance().GetDefaultVideoSettings();
+    db.Close();
+  }
+  return settings;
+}
+
+// Opens the streams the join opens by default with `settings`, so their first data loads while
+// the current item plays. A stream the join picks otherwise costs only its download
+void PreOpenDefaultStreams(const CVideoSettings& settings,
+                           const std::shared_ptr<CDVDInputStream>& input,
+                           CDVDDemuxClient& demuxer)
+{
+  const bool preferStereo{
+      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_videoPreferStereoStream &&
+      CServiceBroker::GetActiveAE()->HasStereoAudioChannelCount()};
+
+  CSelectionStreams streams;
+  streams.Update(input, &demuxer);
+  const std::vector<SelectionStream> video{
+      RankDefaultStreams(StreamType::VIDEO, streams, settings, preferStereo, &demuxer)};
+  const std::vector<SelectionStream> audio{
+      RankDefaultStreams(StreamType::AUDIO, streams, settings, preferStereo, &demuxer)};
+  const PredicateSubtitlePriority psp(audio.empty() ? CLanguageTag{} : audio.front().language,
+                                      settings.m_SubtitleStream);
+  const std::vector<SelectionStream> subtitles{streams.Get(StreamType::SUBTITLE, psp)};
+
+  for (const auto* ranked : {&video, &audio, &subtitles})
+  {
+    if (!ranked->empty())
+      demuxer.PreOpenStream(ranked->front().id);
+  }
+}
 
 // the item fields the input and demuxer open from; the mime type is compared apart
 bool OpensSameInput(const CFileItem& item, const CFileItem& other)
@@ -1959,6 +2004,7 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
   CFFmpegLog::SetLogLevel(1);
   std::shared_ptr<CDVDInputStream> input;
   std::unique_ptr<CDVDDemux> demuxer;
+  CVideoSettings settings;
   const std::string_view failure = [&]() -> std::string_view
   {
     // typed as the application and the player type it
@@ -1982,11 +2028,16 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
     // a live stream would play from where it was opened; an add-on knows it once open
     if (type == DVDSTREAM_TYPE_ADDON ? input->IsRealtime() : input->GetLength() <= 0)
       return "it can be live";
+    settings = LoadVideoSettings(item);
     if (input->GetIDemux())
     {
       demuxer.reset(CDVDFactoryDemuxer::CreateDemuxer(input));
       if (!demuxer)
         return "its demuxer did not open";
+      if (cancelled())
+        return "it was dropped";
+      if (auto* client = dynamic_cast<CDVDDemuxClient*>(demuxer.get()))
+        PreOpenDefaultStreams(settings, input, *client);
       return {};
     }
     if (!CDVDFactoryDemuxer::IsFFmpegFile(input))
@@ -2022,6 +2073,7 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
     if (!slot->cancelled && failure.empty())
     {
       slot->mimeType = item.GetMimeType();
+      slot->videoSettings = settings;
       slot->input = std::move(input);
       slot->demuxer = std::move(demuxer);
     }
@@ -2032,8 +2084,9 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
 }
 
 // Hands the input and demuxer prepared for `m_item` to the open, waiting for a prefetch that
-// started. Returns whether they were taken, with `m_item` typed as the prefetch typed it.
-bool CVideoPlayer::TakePrefetch()
+// started. Returns whether they were taken, with `m_item` typed as the prefetch typed it and its
+// video settings applied, unless `previous` is the same file, whose settings are newer.
+bool CVideoPlayer::TakePrefetch(const CFileItem& previous)
 {
   std::shared_ptr<PrefetchSlot> slot;
   {
@@ -2090,6 +2143,13 @@ bool CVideoPlayer::TakePrefetch()
   m_item.SetMimeType(slot->mimeType);
   m_preparedInput = std::move(slot->input);
   m_preparedDemuxer = std::move(slot->demuxer);
+  CVideoSettings settings{slot->videoSettings};
+  lock.unlock();
+
+  // the application loads the same settings later, behind the previous item's store, and the
+  // default streams open before that
+  if (!previous.IsSamePath(&m_item))
+    SetVideoSettings(settings);
   return true;
 }
 
@@ -4264,7 +4324,7 @@ void CVideoPlayer::HandleMessages()
 
       m_item = msg.GetItem();
       // resolved here, as for a fresh start, so the caller does not wait for a lookup
-      if (!joined || !TakePrefetch())
+      if (!joined || !TakePrefetch(fileItem))
         m_item.SetMimeTypeForInternetFile();
       m_playerOptions = msg.GetOptions();
 
