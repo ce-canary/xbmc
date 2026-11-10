@@ -69,6 +69,7 @@ public:
   bool IsStalled() const override { return m_stalled; }
   bool IsRewindStalled() const override { return m_rewindStalled; }
   bool IsEOS() override;
+  void Park() override { m_parked = true; }
   double GetCurrentPts() override;
   double GetOutputDelay() override; /* returns the expected delay, from that a packet is put in queue */
   std::string GetPlayerInfo() override;
@@ -136,6 +137,7 @@ protected:
   std::atomic_bool m_stalled = false;
   std::atomic_bool m_rewindStalled;
   std::atomic_bool m_eos{false};
+  std::atomic_bool m_parked{false};
   bool m_paused;
   IDVDStreamPlayer::ESyncState m_syncState;
   std::atomic_bool m_bAbortOutput;

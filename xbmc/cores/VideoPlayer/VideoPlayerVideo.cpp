@@ -239,6 +239,7 @@ void CVideoPlayerVideo::OpenStream(CDVDStreamInfo& hint, std::unique_ptr<CDVDVid
   m_stalled = m_messageQueue.GetPacketCount(CDVDMsg::DEMUXER_PACKET) == 0;
   m_rewindStalled = false;
   m_eos = true;
+  m_parked = false;
   m_packets.clear();
   m_syncState = IDVDStreamPlayer::SYNC_STARTING;
   ResetSeekDrop();
@@ -430,6 +431,10 @@ void CVideoPlayerVideo::Process()
     }
     else if (ret == MSGQ_TIMEOUT)
     {
+      // a parked stream's held copy waits for a clock the next item resets
+      if (m_outputSate == OUTPUT_AGAIN && m_parked)
+        m_outputSate = OUTPUT_NORMAL;
+
       if (m_outputSate == OUTPUT_AGAIN &&
           m_picture.videoBuffer)
       {
@@ -477,8 +482,9 @@ void CVideoPlayerVideo::Process()
         pts += frametime * 4;
       }
 
-      // Waiting timed out, output last picture
-      if (m_picture.videoBuffer)
+      // Waiting timed out, output last picture; a parked stream's pictures would be stamped on
+      // the clock of the next item, the renderer holds the last one
+      if (m_picture.videoBuffer && !m_parked)
       {
         m_picture.pts = pts;
         m_outputSate = OutputPicture(&m_picture);
@@ -535,6 +541,7 @@ void CVideoPlayerVideo::Process()
       m_renderManager.ShowVideo(false);
       m_rewindStalled = false;
       m_eos = true;
+      m_parked = false;
     }
     else if (pMsg->IsType(CDVDMsg::GENERAL_FLUSH)) // private message sent by (CVideoPlayerVideo::Flush())
     {
@@ -550,6 +557,7 @@ void CVideoPlayerVideo::Process()
       m_packets.clear();
       pts = 0;
       m_rewindStalled = false;
+      m_parked = false;
       ResetSeekDrop();
 
       m_ptsTracker.Flush();
@@ -647,6 +655,7 @@ void CVideoPlayerVideo::Process()
       }
 
       m_eos = false;
+      m_parked = false;
       if (m_stalled)
       {
         CLog::Log(LOGDEBUG, "CVideoPlayerVideo - Stillframe left, switching to normal playback");
