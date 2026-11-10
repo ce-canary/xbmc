@@ -63,6 +63,8 @@ public:
   bool interlaced;
   int height; // height of the stream reported by the demuxer
   int width; // width of the stream reported by the demuxer
+  int maxHeight; // largest height the stream may switch to, 0 if unknown
+  int maxWidth; // largest width the stream may switch to, 0 if unknown
   double aspect; // display aspect as reported by demuxer
   bool vfr; // variable framerate
   bool stills; // there may be odd still frames in video
