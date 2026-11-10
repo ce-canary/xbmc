@@ -114,6 +114,7 @@ public:
   virtual int GetVideoBitrate() = 0;
   virtual void SetSpeed(int iSpeed) = 0;
   virtual bool IsEOS() { return false; };
+  virtual void Park() {}
   virtual bool SupportsExtention() const = 0;
   virtual int  GetDataLevel() const = 0;
   virtual void SetMaxDataSize(int iMaxDataSize) {}

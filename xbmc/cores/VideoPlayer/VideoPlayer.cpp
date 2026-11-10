@@ -2473,6 +2473,8 @@ void CVideoPlayer::Process()
       if (m_bAbortRequest)
         break;
 
+      m_VideoPlayerVideo->Park();
+
       {
         std::unique_lock lock(m_parkSection);
         if (m_messenger.GetPacketCount(CDVDMsg::PLAYER_OPENFILE) > 0)
