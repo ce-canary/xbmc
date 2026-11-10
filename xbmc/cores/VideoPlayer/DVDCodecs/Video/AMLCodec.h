@@ -96,11 +96,12 @@ public:
   void          SetVideoRate(int videoRate);
   uint64_t      GetOMXPts() const { return m_cur_pts; }
   uint32_t      GetBufferIndex() const { return m_bufferIndex; };
+  uint32_t      GetResetEpoch() const { return m_resetEpoch; }
   float         GetBufferLevel(int new_chunk, int &data_len, int &free_len, int &size);
   static float  OMXPtsToSeconds(int omxpts);
   static int    OMXDurationToNs(int duration);
   int           GetAmlDuration() const;
-  int           ReleaseFrame(const uint32_t index, bool bDrop = false);
+  bool          ReleaseFrame(const uint32_t index, uint32_t resetEpoch, bool bDrop = false);
   bool          IsOpen() const { return m_opened; }
   bool          IsRealtimeStream() const { return m_processInfo.IsRealtimeStream(); }
   double        GetPresentHold() const { return m_presentHold; }
@@ -242,6 +243,9 @@ private:
 
   PosixFilePtr     m_amlVideoFile;
   std::mutex       m_amlVideoFileMutex;
+  // a reset drops the queue its pictures came from; the video thread writes the epoch
+  std::mutex       m_resetMutex;
+  uint32_t         m_resetEpoch{0};
   std::string      m_defaultVfmMap;
 
   static std::atomic_flag  m_pollSync;

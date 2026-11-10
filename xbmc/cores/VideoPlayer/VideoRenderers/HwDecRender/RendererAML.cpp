@@ -244,7 +244,7 @@ void CRendererAML::ReleaseBuffer(int idx)
     {
       if (amli->m_amlCodec)
       {
-        amli->m_amlCodec->ReleaseFrame(amli->m_bufferIndex, true);
+        amli->m_amlCodec->ReleaseFrame(amli->m_bufferIndex, amli->m_resetEpoch, true);
         amli->m_amlCodec = nullptr; // Released
       }
       amli->Release();
@@ -320,12 +320,13 @@ std::shared_ptr<CAMLCodec> CRendererAML::QueueFrame(int index, bool setVideoRect
     // a new decoder can start at the pts the previous one ended on
     if (pts != m_prevVPts || m_prevCodec.lock() != amli->m_amlCodec)
     {
-      const bool dropFrame =
-          m_prevVPts == DVD_NOPTS_VALUE && amli->m_amlCodec->IsRealtimeStream();
+      bool dropFrame = m_prevVPts == DVD_NOPTS_VALUE && amli->m_amlCodec->IsRealtimeStream();
+      // a picture amvideo did not take is not shown
+      if (!amli->m_amlCodec->ReleaseFrame(amli->m_bufferIndex, amli->m_resetEpoch, dropFrame))
+        dropFrame = true;
       if (drop)
         *drop = dropFrame;
 
-      amli->m_amlCodec->ReleaseFrame(amli->m_bufferIndex, dropFrame);
       if (!dropFrame)
       {
         m_releasedToken = amli->m_metadataToken;

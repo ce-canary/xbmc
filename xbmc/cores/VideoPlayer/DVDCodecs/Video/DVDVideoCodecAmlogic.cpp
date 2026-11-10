@@ -61,7 +61,8 @@ void CAMLVideoBufferPool::Return(int id)
   std::unique_lock<CCriticalSection> lock(m_criticalSection);
   if (m_videoBuffers[id]->m_amlCodec)
   {
-    m_videoBuffers[id]->m_amlCodec->ReleaseFrame(m_videoBuffers[id]->m_bufferIndex, true);
+    m_videoBuffers[id]->m_amlCodec->ReleaseFrame(m_videoBuffers[id]->m_bufferIndex,
+                                                 m_videoBuffers[id]->m_resetEpoch, true);
     m_videoBuffers[id]->m_amlCodec = nullptr;
   }
   m_freeBuffers.push_back(id);
@@ -773,7 +774,8 @@ CDVDVideoCodec::VCReturn CDVDVideoCodecAmlogic::GetPicture(VideoPicture* pVideoP
     m_metadataSequencer.Consume(pVideoPicture->pts, m_frameMeta);
     pVideoPicture->videoBuffer = m_videoBufferPool->Get();
     static_cast<CAMLVideoBuffer*>(pVideoPicture->videoBuffer)->Set(this, m_Codec,
-     m_Codec->GetOMXPts(), m_Codec->GetAmlDuration(), m_Codec->GetBufferIndex(), m_metadataToken,
+     m_Codec->GetOMXPts(), m_Codec->GetAmlDuration(), m_Codec->GetBufferIndex(),
+     m_Codec->GetResetEpoch(), m_metadataToken,
      m_frameMeta, m_output.sdrWhite, m_output.sdrGamma);;
   }
 
