@@ -51,6 +51,8 @@ public:
 
   static bool Supports(const ADDON::AddonInfoPtr& addonInfo, const CFileItem& fileitem);
 
+  void SetPrefetch(bool prefetch) { m_prefetch = prefetch; }
+
   // CDVDInputStream
   bool Open() override;
   void Close() override;
@@ -114,6 +116,7 @@ private:
 
   unsigned int m_currentVideoWidth{0};
   unsigned int m_currentVideoHeight{0};
+  bool m_prefetch{false};
 
   std::vector<std::string> m_fileItemProps;
   INPUTSTREAM_CAPABILITIES m_caps;
