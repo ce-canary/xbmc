@@ -992,6 +992,7 @@ bool CVideoPlayer::OpenInputStream()
   m_pInputStream.reset();
   m_blurayMenu = false;
   m_processInfo->SetDiscFormat({});
+  m_processInfo->SetVideoMaxSize(0, 0);
 
   // Flushes keep disc menu overlays, and the closed input stream can no longer remove them
   m_overlayContainer.Clear();
@@ -2707,7 +2708,11 @@ void CVideoPlayer::CheckStreamChanges(CCurrentStream& current, CDemuxStream* str
     /* check so that dmuxer hints or extra data hasn't changed */
     /* if they have, reopen stream */
 
-    if (current.hint != CDVDStreamInfo(*stream, true))
+    CDVDStreamInfo hint(*stream, true);
+    // a new largest size alone reopens nothing and counts at the next mode choice
+    if (stream->type == StreamType::VIDEO)
+      m_processInfo->SetVideoMaxSize(hint.maxWidth, hint.maxHeight);
+    if (current.hint != hint)
     {
       m_SelectionStreams.Clear(StreamType::NONE, STREAM_SOURCE_DEMUX);
       m_SelectionStreams.Update(m_pInputStream, m_pDemuxer.get());
@@ -5873,6 +5878,8 @@ bool CVideoPlayer::OpenVideoStream(CDVDStreamInfo& hint, bool reset)
 
   if (hint.flags & AV_DISPOSITION_ATTACHED_PIC)
     return false;
+
+  m_processInfo->SetVideoMaxSize(hint.maxWidth, hint.maxHeight);
 
   // set desired refresh rate
   if (m_CurrentVideo.id < 0 && m_playerOptions.fullscreen &&

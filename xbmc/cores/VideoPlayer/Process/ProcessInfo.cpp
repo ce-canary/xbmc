@@ -325,6 +325,12 @@ bool CProcessInfo::GetIsHdr10Plus()
   return m_IsHdr10Plus;
 }
 
+void CProcessInfo::SetVideoMaxSize(int width, int height)
+{
+  if (m_dataCache)
+    m_dataCache->SetVideoMaxSize(width, height);
+}
+
 void CProcessInfo::SetDiscFormat(const DiscFormat& format)
 {
   if (m_dataCache)
