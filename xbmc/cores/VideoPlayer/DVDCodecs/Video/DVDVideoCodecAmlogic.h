@@ -35,13 +35,15 @@ class CAMLVideoBuffer : public CVideoBuffer
 public:
   CAMLVideoBuffer(int id) : CVideoBuffer(id) {};
   void Set(CDVDVideoCodecAmlogic *codec, std::shared_ptr<CAMLCodec> amlcodec, uint64_t omxPts, int amlDuration, uint32_t bufferIndex,
-           uint32_t metadataToken, AMLFrameMetadataPtr metadata, float sdrWhite, float sdrGamma)
+           uint32_t resetEpoch, uint32_t metadataToken, AMLFrameMetadataPtr metadata,
+           float sdrWhite, float sdrGamma)
   {
     m_codec = codec;
     m_amlCodec = amlcodec;
     m_omxPts = omxPts;
     m_amlDuration = amlDuration;
     m_bufferIndex = bufferIndex;
+    m_resetEpoch = resetEpoch;
     m_metadataToken = metadataToken;
     m_metadata = std::move(metadata);
     m_sdrWhite = sdrWhite;
@@ -53,6 +55,7 @@ public:
   uint64_t m_omxPts;
   int m_amlDuration;
   uint32_t m_bufferIndex;
+  uint32_t m_resetEpoch{0};
   uint32_t m_metadataToken{0};
   AMLFrameMetadataPtr m_metadata;
   float m_sdrWhite{0.0f};
