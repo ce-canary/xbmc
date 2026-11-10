@@ -1943,7 +1943,7 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
     // typed as the application and the player type it
     item.SetMimeTypeForInternetFile();
     if (item.GetMimeType().empty())
-      item.FillInMimeType();
+      item.FillInMimeType(item.ContentLookup());
 
     const DVDStreamType type{CDVDFactoryInputStream::GetPrefetchType(item)};
     if (type == DVDSTREAM_TYPE_NONE)
