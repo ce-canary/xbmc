@@ -1182,7 +1182,7 @@ private:
 /// | <b>`point`</b> | The identification of the addon instance to inputstream is mandatory <b>`kodi.inputstream`</b>. In addition, the instance declared in the first <b>`<extension ... />`</b> is also
 /// | <b>`extension`</b> | A filename extension is an identifier specified as a suffix to the name of a computer file where supported by addon.
 /// | <b>`listitemprops`</b> | Values that are available to the addon at @ref InputstreamProperty::GetProperties() and that can be passed to @ref CInstanceInputStream::Open() ith the respective values.
-/// | <b>`prefetch`</b> | Optional, <b>`true`</b> if Kodi may open the next playlist item ahead of its playback, while another instance of the addon plays. Such an open is told by @ref InputstreamProperty::IsPrefetch().
+/// | <b>`prefetch`</b> | Optional, <b>`true`</b> if Kodi may open the next playlist item ahead of its playback, on another thread while another instance of the addon plays. Such an open is told by @ref InputstreamProperty::IsPrefetch(). Kodi may also open streams of that item before playback picks them. It opens each picked stream again before the first @ref CInstanceInputStream::DemuxRead(), and that repeated open of an enabled stream must change nothing. Streams playback does not pick are disabled with @ref CInstanceInputStream::EnableStream() before the first read or seek.
 /// | <b>`protocols`</b> | The streaming protocol is a special protocol supported by the addon for the transmission of streaming media data over a network.
 /// | <b>`library_@PLATFORM@`</b> | The runtime library used for the addon. This is usually declared by cmake and correctly displayed in the translated `addon.xml`.
 ///

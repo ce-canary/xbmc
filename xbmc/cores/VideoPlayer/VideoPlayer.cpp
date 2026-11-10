@@ -11,6 +11,7 @@
 #include "DVDCodecs/DVDCodecUtils.h"
 #include "DVDDemuxers/DVDDemux.h"
 #include "DVDDemuxers/DVDDemuxCC.h"
+#include "DVDDemuxers/DVDDemuxClient.h"
 #include "DVDDemuxers/DVDDemuxFFmpeg.h"
 #include "DVDDemuxers/DVDDemuxUtils.h"
 #include "DVDDemuxers/DVDDemuxVobsub.h"
@@ -53,6 +54,7 @@
 #include "resources/LocalizeStrings.h"
 #include "resources/ResourcesComponent.h"
 #include "settings/AdvancedSettings.h"
+#include "settings/MediaSettings.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "threads/SingleLock.h"
@@ -67,6 +69,7 @@
 #include "utils/Variant.h"
 #include "utils/log.h"
 #include "video/Bookmark.h"
+#include "video/VideoDatabase.h"
 #include "video/VideoFileItemClassify.h"
 #include "video/VideoInfoTag.h"
 #include "windowing/GraphicContext.h"
@@ -450,6 +453,39 @@ public:
     return false;
   }
 };
+
+namespace
+{
+// The video or audio streams of `streams` a fresh open tries, best first. Subtitles rank by the
+// audio that opened, with `PredicateSubtitlePriority`
+std::vector<SelectionStream> RankDefaultStreams(StreamType type,
+                                                CSelectionStreams& streams,
+                                                const CVideoSettings& settings,
+                                                bool preferStereo,
+                                                CDVDDemux* demuxer)
+{
+  if (type == StreamType::AUDIO)
+    return streams.Get(type, PredicateAudioFilter(settings.m_AudioStream, preferStereo));
+
+  std::vector<SelectionStream> ranked{
+      streams.Get(type, PredicateVideoFilter(settings.m_VideoStream))};
+  // choose video base layer as default if dual layer stream
+  // only demuxer streams can be dual layer, nav and external streams are not
+  // known to the demuxer and must not be probed for it
+  std::erase_if(ranked,
+                [demuxer](const SelectionStream& stream)
+                {
+                  if (!demuxer || STREAM_SOURCE_MASK(stream.source) != STREAM_SOURCE_DEMUX)
+                    return false;
+                  const CDemuxStream* st{demuxer->GetStream(stream.demuxerId, stream.id)};
+                  if (!st || st->type != StreamType::VIDEO)
+                    return false;
+                  const auto* vstream = static_cast<const CDemuxStreamVideo*>(st);
+                  return vstream->isDualStream && vstream->isELStream;
+                });
+  return ranked;
+}
+} // namespace
 
 void CSelectionStreams::Clear(StreamType type, StreamSource source)
 {
@@ -1168,23 +1204,10 @@ void CVideoPlayer::OpenDefaultStreams(bool reset)
   // open video stream
   valid   = false;
 
-  PredicateVideoFilter vf(m_processInfo->GetVideoSettings().m_VideoStream);
-  for (const auto& stream : m_SelectionStreams.Get(StreamType::VIDEO, vf))
+  for (const auto& stream :
+       RankDefaultStreams(StreamType::VIDEO, m_SelectionStreams, m_processInfo->GetVideoSettings(),
+                          m_playerOptions.preferStereo, m_pDemuxer.get()))
   {
-    // choose video base layer as default if dual layer stream
-    // only demuxer streams can be dual layer, nav and external streams are not
-    // known to the demuxer and must not be probed for it
-    if (m_pDemuxer && STREAM_SOURCE_MASK(stream.source) == STREAM_SOURCE_DEMUX)
-    {
-      CDemuxStream* st = m_pDemuxer->GetStream(stream.demuxerId, stream.id);
-      if (st && st->type == StreamType::VIDEO)
-      {
-        CDemuxStreamVideo* vstream = static_cast<CDemuxStreamVideo*>(st);
-        if (vstream->isDualStream && vstream->isELStream)
-          continue;
-      }
-    }
-
     if (OpenStream(m_CurrentVideo, stream.demuxerId, stream.id, stream.source, reset))
     {
       valid = true;
@@ -1201,8 +1224,9 @@ void CVideoPlayer::OpenDefaultStreams(bool reset)
   valid = false;
   if (!m_playerOptions.videoOnly)
   {
-    PredicateAudioFilter af(m_processInfo->GetVideoSettings().m_AudioStream, m_playerOptions.preferStereo);
-    for (const auto& stream : m_SelectionStreams.Get(StreamType::AUDIO, af))
+    for (const auto& stream : RankDefaultStreams(StreamType::AUDIO, m_SelectionStreams,
+                                                 m_processInfo->GetVideoSettings(),
+                                                 m_playerOptions.preferStereo, m_pDemuxer.get()))
     {
       if(OpenStream(m_CurrentAudio, stream.demuxerId, stream.id, stream.source, reset))
       {
@@ -1889,6 +1913,7 @@ struct CVideoPlayer::PrefetchSlot
   //! the demuxer the job probes with, set only while its open runs
   CDVDDemux* opening{nullptr};
   std::string mimeType;
+  CVideoSettings videoSettings;
   std::shared_ptr<CDVDInputStream> input;
   std::unique_ptr<CDVDDemux> demuxer;
 };
@@ -1952,6 +1977,7 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
   CFFmpegLog::SetLogLevel(1);
   std::shared_ptr<CDVDInputStream> input;
   std::unique_ptr<CDVDDemux> demuxer;
+  CVideoSettings settings;
   const std::string_view failure = [&]() -> std::string_view
   {
     // typed as the application and the player type it
@@ -1975,11 +2001,47 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
     // a live stream would play from where it was opened; an add-on knows it once open
     if (type == DVDSTREAM_TYPE_ADDON ? input->IsRealtime() : input->GetLength() <= 0)
       return "it can be live";
+    // the settings the application loads for an item it plays
+    settings = CMediaSettings::GetInstance().GetDefaultVideoSettings();
+    CVideoDatabase db;
+    if (db.Open())
+    {
+      if (!db.GetVideoSettings(item, settings))
+        settings = CMediaSettings::GetInstance().GetDefaultVideoSettings();
+      db.Close();
+    }
     if (input->GetIDemux())
     {
       demuxer.reset(CDVDFactoryDemuxer::CreateDemuxer(input));
       if (!demuxer)
         return "its demuxer did not open";
+      if (cancelled())
+        return "it was dropped";
+      // the streams the join opens by default with these settings load their first data while
+      // the current item plays; a stream the join picks otherwise costs only its download
+      if (auto* client = dynamic_cast<CDVDDemuxClient*>(demuxer.get()))
+      {
+        const bool preferStereo{CServiceBroker::GetSettingsComponent()
+                                    ->GetAdvancedSettings()
+                                    ->m_videoPreferStereoStream &&
+                                CServiceBroker::GetActiveAE()->HasStereoAudioChannelCount()};
+
+        CSelectionStreams streams;
+        streams.Update(input, client);
+        const std::vector<SelectionStream> video{
+            RankDefaultStreams(StreamType::VIDEO, streams, settings, preferStereo, client)};
+        const std::vector<SelectionStream> audio{
+            RankDefaultStreams(StreamType::AUDIO, streams, settings, preferStereo, client)};
+        const PredicateSubtitlePriority psp(audio.empty() ? CLanguageTag{} : audio.front().language,
+                                            settings.m_SubtitleStream);
+        const std::vector<SelectionStream> subtitles{streams.Get(StreamType::SUBTITLE, psp)};
+
+        for (const auto* ranked : {&video, &audio, &subtitles})
+        {
+          if (!ranked->empty())
+            client->PreOpenStream(ranked->front().id);
+        }
+      }
       return {};
     }
     if (!CDVDFactoryDemuxer::IsFFmpegFile(input))
@@ -2015,6 +2077,7 @@ void CVideoPlayer::Prefetch(const std::shared_ptr<PrefetchSlot>& slot)
     if (!slot->cancelled && failure.empty())
     {
       slot->mimeType = item.GetMimeType();
+      slot->videoSettings = settings;
       slot->input = std::move(input);
       slot->demuxer = std::move(demuxer);
     }
@@ -4324,6 +4387,13 @@ void CVideoPlayer::HandleMessages()
           m_item.SetMimeType(slot->mimeType);
           m_preparedInput = std::move(slot->input);
           m_preparedDemuxer = std::move(slot->demuxer);
+          CVideoSettings settings{slot->videoSettings};
+          lock.unlock();
+
+          // the application loads the same settings later, behind the previous item's store, and
+          // the default streams open before that; the same file played just before has newer ones
+          if (!fileItem.IsSamePath(&m_item))
+            SetVideoSettings(settings);
           prepared = true;
         }
       }
