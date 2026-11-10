@@ -86,6 +86,7 @@ bool CDVDDemuxClient::Open(std::shared_ptr<CDVDInputStream> pInput)
 
   m_displayTime = 0;
   m_dtsAtDisplayTime = DVD_NOPTS_VALUE;
+  m_atEnd = false;
   return true;
 }
 
@@ -123,6 +124,7 @@ void CDVDDemuxClient::Flush()
 
   m_displayTime = 0;
   m_dtsAtDisplayTime = DVD_NOPTS_VALUE;
+  m_atEnd = false;
 }
 
 bool CDVDDemuxClient::ParsePacket(DemuxPacket* pkt)
@@ -327,6 +329,8 @@ DemuxPacket* CDVDDemuxClient::Read()
   ReleaseUnclaimedStreams();
 
   m_packet.reset(m_IDemux->ReadDemux());
+  // a live input that returns nothing has paused, it has not ended
+  m_atEnd = !m_packet && !m_pInput->IsRealtime();
   if (!m_packet)
   {
     return nullptr;
@@ -703,6 +707,7 @@ bool CDVDDemuxClient::SeekTime(double timems, bool backwards, double *startpts)
     CLog::Log(LOGDEBUG, LOGVIDEO, "CDVDDemuxClient::SeekTime: {:.3f}", timems / 1000.0);
     m_displayTime = 0;
     m_dtsAtDisplayTime = DVD_NOPTS_VALUE;
+    m_atEnd = false;
     ReleaseUnclaimedStreams();
     return m_IDemux->SeekTime(timems, backwards, startpts);
   }
