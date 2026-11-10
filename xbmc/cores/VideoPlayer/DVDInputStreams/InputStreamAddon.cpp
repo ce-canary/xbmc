@@ -136,6 +136,11 @@ bool CInputStreamAddon::Supports(const AddonInfoPtr& addonInfo, const CFileItem&
   return false;
 }
 
+bool CInputStreamAddon::SupportsPrefetch(const AddonInfoPtr& addonInfo)
+{
+  return addonInfo->Type(AddonType::INPUTSTREAM)->GetValue("@prefetch").asBoolean();
+}
+
 bool CInputStreamAddon::Open()
 {
   // Create "C" interface structures, used as own parts to prevent API problems on update
