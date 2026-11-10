@@ -114,6 +114,8 @@ extern "C"
 
     const char* m_libFolder;
     const char* m_profileFolder;
+
+    bool m_prefetch;
   };
 
   /*!

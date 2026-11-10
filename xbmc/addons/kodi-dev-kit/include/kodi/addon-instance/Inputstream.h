@@ -141,6 +141,7 @@ public:
   /// | **List of properties** | `std::map<std::string, std::string>` | @ref InputstreamProperty::GetProperties "GetProperties"
   /// | **Get addon library folder** | `std::string` | @ref InputstreamProperty::GetLibFolder "GetLibFolder"
   /// | **Get addon profile/user folder** | `std::string` | @ref InputstreamProperty::GetProfileFolder "GetProfileFolder"
+  /// | **Opened ahead of playback** | `bool` | @ref InputstreamProperty::IsPrefetch "IsPrefetch"
 
   /// @addtogroup cpp_kodi_addon_inputstream_Defs_InputstreamProperty
   ///@{
@@ -176,6 +177,12 @@ public:
   /// @note As alternative can also @ref kodi::GetBaseUserPath used.
   std::string GetProfileFolder() const { return m_cStructure->m_profileFolder; }
 
+  /// @brief Whether Kodi opens the stream ahead of its playback, while another item plays.
+  ///
+  /// @note An add-on that would need the user, such as a dialog, should fail the open instead.
+  /// Always false on a Kodi whose inputstream API is older than 3.5.0.
+  bool IsPrefetch() const { return m_hasPrefetch && m_cStructure->m_prefetch; }
+
   ///@}
 
 private:
@@ -183,6 +190,14 @@ private:
   InputstreamProperty(const InputstreamProperty& stream) = delete;
   InputstreamProperty(const INPUTSTREAM_PROPERTY* stream) : CStructHdl(stream) {}
   InputstreamProperty(INPUTSTREAM_PROPERTY* stream) : CStructHdl(stream) {}
+  InputstreamProperty(INPUTSTREAM_PROPERTY* stream, bool hasPrefetch)
+    : CStructHdl(stream),
+      m_hasPrefetch(hasPrefetch)
+  {
+  }
+
+  // a Kodi older than 3.5.0 passes a property without m_prefetch
+  bool m_hasPrefetch{false};
 };
 ///@}
 //------------------------------------------------------------------------------
@@ -1167,6 +1182,7 @@ private:
 /// | <b>`point`</b> | The identification of the addon instance to inputstream is mandatory <b>`kodi.inputstream`</b>. In addition, the instance declared in the first <b>`<extension ... />`</b> is also
 /// | <b>`extension`</b> | A filename extension is an identifier specified as a suffix to the name of a computer file where supported by addon.
 /// | <b>`listitemprops`</b> | Values that are available to the addon at @ref InputstreamProperty::GetProperties() and that can be passed to @ref CInstanceInputStream::Open() ith the respective values.
+/// | <b>`prefetch`</b> | Optional, <b>`true`</b> if Kodi may open the next playlist item ahead of its playback, while another instance of the addon plays. Such an open is told by @ref InputstreamProperty::IsPrefetch().
 /// | <b>`protocols`</b> | The streaming protocol is a special protocol supported by the addon for the transmission of streaming media data over a network.
 /// | <b>`library_@PLATFORM@`</b> | The runtime library used for the addon. This is usually declared by cmake and correctly displayed in the translated `addon.xml`.
 ///
@@ -1932,7 +1948,8 @@ private:
   inline static bool ADDON_Open(const AddonInstance_InputStream* instance,
                                 INPUTSTREAM_PROPERTY* props)
   {
-    return static_cast<CInstanceInputStream*>(instance->toAddon->addonInstance)->Open(props);
+    auto* addon = static_cast<CInstanceInputStream*>(instance->toAddon->addonInstance);
+    return addon->Open(InputstreamProperty(props, addon->IsInstanceAPIVersionAtLeast(3, 5, 0)));
   }
 
   inline static void ADDON_Close(const AddonInstance_InputStream* instance)

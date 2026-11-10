@@ -189,6 +189,7 @@ bool CInputStreamAddon::Open()
   std::string profileFolder = CSpecialProtocol::TranslatePath(Addon()->Profile());
   props.m_libFolder = libFolder.c_str();
   props.m_profileFolder = profileFolder.c_str();
+  props.m_prefetch = m_prefetch;
 
   DetectScreenResolution();
 
