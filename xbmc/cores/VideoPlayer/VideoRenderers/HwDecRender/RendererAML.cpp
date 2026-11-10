@@ -314,37 +314,34 @@ bool CRendererAML::Flush(bool saveBuffers)
 std::shared_ptr<CAMLCodec> CRendererAML::QueueFrame(int index, bool setVideoRect, bool* drop)
 {
   CAMLVideoBuffer *amli = dynamic_cast<CAMLVideoBuffer *>(m_buffers[index].videoBuffer);
+  // each frame is released once, the move of its codec marks it
   if(amli && amli->m_amlCodec)
   {
     uint64_t pts = amli->m_omxPts;
-    // a new decoder can start at the pts the previous one ended on
-    if (pts != m_prevVPts || m_prevCodec.lock() != amli->m_amlCodec)
-    {
-      bool dropFrame = m_prevVPts == DVD_NOPTS_VALUE && amli->m_amlCodec->IsRealtimeStream();
-      // a picture amvideo did not take is not shown
-      if (!amli->m_amlCodec->ReleaseFrame(amli->m_bufferIndex, amli->m_resetEpoch, dropFrame))
-        dropFrame = true;
-      if (drop)
-        *drop = dropFrame;
+    bool dropFrame = m_prevVPts == DVD_NOPTS_VALUE && amli->m_amlCodec->IsRealtimeStream();
+    // a picture amvideo did not take is not shown
+    if (!amli->m_amlCodec->ReleaseFrame(amli->m_bufferIndex, amli->m_resetEpoch, dropFrame))
+      dropFrame = true;
+    if (drop)
+      *drop = dropFrame;
 
-      if (!dropFrame)
-      {
-        m_releasedToken = amli->m_metadataToken;
-        m_releasedMeta = amli->m_metadata;
-        if (m_capture)
-          m_capture->SetPresented();
-      }
-      if (setVideoRect)
-        amli->m_amlCodec->SetVideoRect(m_sourceRect, m_destRect);
-      m_presentHold = amli->m_amlCodec->GetPresentHold();
-      {
-        std::lock_guard<std::mutex> lock(m_pendingGeometryLock);
-        m_prevCodec = amli->m_amlCodec;
-      }
-      std::shared_ptr<CAMLCodec> codec = std::move(amli->m_amlCodec); //Mark frame as processed
-      m_prevVPts = pts;
-      return codec;
+    if (!dropFrame)
+    {
+      m_releasedToken = amli->m_metadataToken;
+      m_releasedMeta = amli->m_metadata;
+      if (m_capture)
+        m_capture->SetPresented();
     }
+    if (setVideoRect)
+      amli->m_amlCodec->SetVideoRect(m_sourceRect, m_destRect);
+    m_presentHold = amli->m_amlCodec->GetPresentHold();
+    {
+      std::lock_guard<std::mutex> lock(m_pendingGeometryLock);
+      m_prevCodec = amli->m_amlCodec;
+    }
+    std::shared_ptr<CAMLCodec> codec = std::move(amli->m_amlCodec); //Mark frame as processed
+    m_prevVPts = pts;
+    return codec;
   }
   return nullptr;
 }
