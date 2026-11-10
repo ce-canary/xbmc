@@ -3486,7 +3486,11 @@ void CAMLCodec::Reset()
     std::lock_guard<std::mutex> lock(m_amlVideoFileMutex);
     m_dequeuedFrames.clear();
   }
-  ClearInputEnd();
+  if (m_inputEndSent)
+  {
+    m_dll->codec_set_eos(&am_private->vcodec, 0);
+    m_inputEndSent = false;
+  }
   m_inputWritten = false;
   m_dll->codec_set_video_delay_limited_ms(&am_private->vcodec, 1000);
 
@@ -3521,8 +3525,6 @@ bool CAMLCodec::AddData(uint8_t *pData, size_t iSize, double dts, double pts)
   int chunk_size = calc_chunk_size(iSize);
   float new_buffer_level = GetBufferLevel(chunk_size, data_len, free_len, size);
   bool streambuffer(am_private->gcodec.dec_mode == STREAM_TYPE_STREAM);
-
-  ClearInputEnd();
 
   if (!m_buffer_level_ready)
   {
@@ -4130,15 +4132,6 @@ void CAMLCodec::SendInputEnd()
   // the wait up to here was for input, the decoder's timeouts count from this mark
   m_tp_last_frame = std::chrono::system_clock::now();
   m_tp_drain = m_tp_last_frame;
-}
-
-void CAMLCodec::ClearInputEnd()
-{
-  if (!m_inputEndSent)
-    return;
-
-  m_dll->codec_set_eos(&am_private->vcodec, 0);
-  m_inputEndSent = false;
 }
 
 void CAMLCodec::SetDrain(bool drain)
