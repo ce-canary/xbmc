@@ -46,22 +46,29 @@ namespace
 constexpr double UNKNOWN_RELEASE_LEAD_MS = 100.0;
 
 // the size the output mode is chosen for; a smaller clip of a disc takes the size of its main
-// title
+// title, and a stream that may switch to a larger size takes that size
 CSizeInt GetModeSize(const VideoPicture& picture, float fps)
 {
   const CSizeInt size(static_cast<int>(picture.iWidth), static_cast<int>(picture.iHeight));
-  const DiscFormat disc = CServiceBroker::GetDataCacheCore().GetDiscFormat();
-  if (!picture.stereoMode.empty() || disc.width <= size.Width() || disc.height <= size.Height())
+  CDataCacheCore& dataCache = CServiceBroker::GetDataCacheCore();
+  const DiscFormat disc = dataCache.GetDiscFormat();
+  CSizeInt modeSize = size;
+  for (const CSizeInt& larger : {CSizeInt(disc.width, disc.height), dataCache.GetVideoMaxSize()})
+  {
+    if (larger.Width() > modeSize.Width() && larger.Height() > modeSize.Height())
+      modeSize = larger;
+  }
+  if (!picture.stereoMode.empty() || modeSize == size)
     return size;
 
   // Dolby Vision at 2160p50/60 needs the sink's 2160p60 capability
   if (picture.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && fps > 30.0f &&
-      disc.height >= 2160 &&
+      modeSize.Height() >= 2160 &&
       CServiceBroker::GetWinSystem()->GetDisplayHDRCapabilities().SupportsDolbyVision() !=
           DolbyVisionFormat::DOLBYVISION_TYPE_4K60)
     return size;
 
-  return CSizeInt(disc.width, disc.height);
+  return modeSize;
 }
 } // namespace
 
