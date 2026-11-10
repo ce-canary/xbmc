@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "DVDInputStream.h"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,8 +24,8 @@ public:
   static std::shared_ptr<CDVDInputStream> CreateInputStream(IVideoPlayer* pPlayer, const CFileItem &fileitem, bool scanforextaudio = false);
   static std::shared_ptr<CDVDInputStream> CreateInputStream(IVideoPlayer* pPlayer, const CFileItem &fileitem, const std::vector<std::string>& filenames);
 
-  // Whether the item opens as one plain file input, decided without constructing anything.
-  // External audio files and a redirect to a stream still change the input, so a caller checks
-  // the one it creates.
-  static bool IsPlainFile(const CFileItem& fileitem);
+  // The input an item opens as ahead of its playback, decided without constructing anything:
+  // one plain file, an add-on that declares it, or none. External audio files and a redirect to a
+  // stream still change the input, so a caller checks the one it creates.
+  static DVDStreamType GetPrefetchType(const CFileItem& fileitem);
 };
