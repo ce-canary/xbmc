@@ -350,7 +350,7 @@ CApplicationPlay::GatherPlaybackDetailsResult CApplicationPlay::GatherPlaybackDe
 
   // Ensure the MIME type has been retrieved for http:// and shout:// streams
   if (m_item.GetMimeType().empty())
-    m_item.FillInMimeType();
+    m_item.FillInMimeType(m_item.ContentLookup());
 
   if (VIDEO::IsDiscStub(m_item))
     return GatherPlaybackDetailsResult::RESULT_SUCCESS; // all done
