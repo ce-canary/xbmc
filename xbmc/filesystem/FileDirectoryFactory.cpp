@@ -276,7 +276,9 @@ IFileDirectory* CFileDirectoryFactory::Create(const CURL& url, CFileItem* pItem,
     IFileDirectory* pDir=new CSmartPlaylistDirectory;
     return pDir; // treat as directory
   }
-  if (CPlayListFactory::IsPlaylist(url))
+  // online m3u8 files are hls streams, which do not open as a playlist
+  if (CPlayListFactory::IsPlaylist(url) &&
+      !(URIUtils::IsInternetStream(url) && url.HasExtension(".m3u8")))
   { // Playlist file
     // currently we only return the directory if it contains
     // more than one file.  Reason is that .pls and .m3u may be used
