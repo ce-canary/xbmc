@@ -1367,6 +1367,28 @@ bool CVideoPlayer::ReadSubtitlePacket(DemuxPacket*& packet, CDemuxStream*& strea
   return true;
 }
 
+void CVideoPlayer::ProcessSubtitleDemuxer()
+{
+  // a display set is several packets, so this covers a few sets per call
+  constexpr int MAX_PACKETS = 16;
+
+  for (int i = 0; i < MAX_PACKETS && m_pSubtitleDemuxer && !m_bAbortRequest &&
+                  m_VideoPlayerSubtitle->AcceptsData();
+       ++i)
+  {
+    DemuxPacket* packet = nullptr;
+    CDemuxStream* stream = nullptr;
+    ReadSubtitlePacket(packet, stream);
+    if (!packet)
+      break;
+
+    if (stream)
+      ProcessPacket(stream, packet);
+    else
+      CDVDDemuxUtils::FreeDemuxPacket(packet);
+  }
+}
+
 bool CVideoPlayer::ReadPacket(DemuxPacket*& packet, CDemuxStream*& stream)
 {
 
@@ -2403,6 +2425,8 @@ void CVideoPlayer::Process()
           m_pDemuxer->SetSpeed(DVD_PLAYSPEED_PAUSE);
         m_demuxerSpeed = DVD_PLAYSPEED_PAUSE;
       }
+      // subtitle files are not limited by the a/v queues
+      ProcessSubtitleDemuxer();
       CThread::Sleep(10ms);
       continue;
     }
