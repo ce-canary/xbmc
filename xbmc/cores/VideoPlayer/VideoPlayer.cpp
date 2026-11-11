@@ -3819,6 +3819,15 @@ bool CVideoPlayer::CheckContinuity(CCurrentStream& current, DemuxPacket* pPacket
   if( pPacket->dts == DVD_NOPTS_VALUE || current.dts == DVD_NOPTS_VALUE)
     return false;
 
+  // blu-ray packets are on title time, so a gap is the disc's own time, not a discontinuity
+  if (m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY))
+  {
+    if (current.avsync == CCurrentStream::AV_SYNC_CHECK)
+      current.avsync = CCurrentStream::AV_SYNC_CONT;
+    current.lastdts = pPacket->dts;
+    return true;
+  }
+
   double mindts = DVD_NOPTS_VALUE, maxdts = DVD_NOPTS_VALUE;
   UpdateLimits(mindts, maxdts, m_CurrentAudio.dts);
   UpdateLimits(mindts, maxdts, m_CurrentVideo.dts);
