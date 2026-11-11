@@ -2359,8 +2359,13 @@ void CDVDInputStreamBluray::PollEvents()
   // a move away from the held clip start shows only in the read position until the next stream
   if (m_hold == HOLD_HELD)
   {
-    if (IsJoinHeld() && m_title && !m_title->bdj)
-      PollHeldJoin();
+    if (IsJoinHeld() && m_title)
+    {
+      if (m_title->bdj)
+        HoldProgramEvents();
+      else
+        PollHeldJoin();
+    }
     if (!m_clipStart.empty() && bd_tell(m_bd) != m_clipStartEnd)
     {
       m_clipStart.clear();
@@ -2452,30 +2457,11 @@ void CDVDInputStreamBluray::PollHeldJoin()
       break;
     }
     CheckPresentedLeft();
+    if (ProcessPlayingItemEvent())
+      continue;
 
     switch (m_event.event)
     {
-      case BD_EVENT_AUDIO_STREAM:
-      case BD_EVENT_PG_TEXTST:
-      case BD_EVENT_PG_TEXTST_STREAM:
-      case BD_EVENT_IG_STREAM:
-      case BD_EVENT_SECONDARY_AUDIO:
-      case BD_EVENT_SECONDARY_AUDIO_STREAM:
-      case BD_EVENT_SECONDARY_VIDEO:
-      case BD_EVENT_SECONDARY_VIDEO_SIZE:
-      case BD_EVENT_SECONDARY_VIDEO_STREAM:
-      case BD_EVENT_MENU:
-      case BD_EVENT_POPUP:
-      case BD_EVENT_UO_MASK_CHANGED:
-      case BD_EVENT_SOUND_EFFECT:
-      case BD_EVENT_KEY_INTEREST_TABLE:
-        if (m_heldEvents.empty())
-        {
-          ProcessEvent();
-          continue;
-        }
-        break;
-
       case BD_EVENT_SEEK:
       case BD_EVENT_TITLE:
       case BD_EVENT_PLAYLIST:
@@ -2488,6 +2474,50 @@ void CDVDInputStreamBluray::PollHeldJoin()
     m_heldEvents.push(m_event);
   }
   m_event = held;
+}
+
+// a BD-J program acts on its own thread while a join is held; its events stay behind the held
+// event, and a stop or jump leaves the held item
+void CDVDInputStreamBluray::HoldProgramEvents()
+{
+  const BD_EVENT held = m_event;
+  while (bd_get_event(m_bd, &m_event))
+  {
+    CheckPresentedLeft();
+    if (!ProcessPlayingItemEvent())
+      m_heldEvents.push(m_event);
+  }
+  m_event = held;
+}
+
+// a stream or menu change applies to the playing item at once, unless an event before it waits
+bool CDVDInputStreamBluray::ProcessPlayingItemEvent()
+{
+  if (!m_heldEvents.empty())
+    return false;
+
+  switch (m_event.event)
+  {
+    case BD_EVENT_AUDIO_STREAM:
+    case BD_EVENT_PG_TEXTST:
+    case BD_EVENT_PG_TEXTST_STREAM:
+    case BD_EVENT_IG_STREAM:
+    case BD_EVENT_SECONDARY_AUDIO:
+    case BD_EVENT_SECONDARY_AUDIO_STREAM:
+    case BD_EVENT_SECONDARY_VIDEO:
+    case BD_EVENT_SECONDARY_VIDEO_SIZE:
+    case BD_EVENT_SECONDARY_VIDEO_STREAM:
+    case BD_EVENT_MENU:
+    case BD_EVENT_POPUP:
+    case BD_EVENT_UO_MASK_CHANGED:
+    case BD_EVENT_SOUND_EFFECT:
+    case BD_EVENT_KEY_INTEREST_TABLE:
+      ProcessEvent();
+      return true;
+
+    default:
+      return false;
+  }
 }
 
 bool CDVDInputStreamBluray::TakeHeldEvent()
