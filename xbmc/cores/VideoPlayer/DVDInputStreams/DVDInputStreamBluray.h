@@ -383,6 +383,7 @@ protected:
     void PollHeldJoin();
     void HoldProgramEvents();
     bool ProcessPlayingItemEvent();
+    void DropLeftStill();
     bool TakeHeldEvent();
     bool ProcessHeldEvents();
     bool TakeMenuJump(bool joinsInLine, bool dataRead);
