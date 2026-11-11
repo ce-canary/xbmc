@@ -1660,11 +1660,47 @@ bool CDVDInputStreamBluray::IsJoinHeld() const
          !m_clipStart.empty() && m_heldClip;
 }
 
+// a read held at the start of a timed still, which libbluray raises before it leaves the clip
+bool CDVDInputStreamBluray::IsStillHeld() const
+{
+  return m_navmode && m_hold == HOLD_HELD && m_event.event == BD_EVENT_STILL_TIME &&
+         m_event.param > 0;
+}
+
 bool CDVDInputStreamBluray::IsTailInTitle() const
 {
   if (IsTitleEndHeld())
     return true;
   return IsJoinHeld();
+}
+
+// the title time includes the gap between the last picture of a play item and its out time; the
+// end is that of the content whose data ended, which for a title end is the title
+std::optional<double> CDVDInputStreamBluray::GetHeldItemEnd() const
+{
+  if (m_presentedLeft || !m_titleInfo)
+    return {};
+
+  const auto itemEnd = [](const BLURAY_CLIP_INFO& clip)
+  { return clip.start_time + clip.out_time - clip.in_time; };
+  std::optional<uint64_t> end;
+  if (IsJoinHeld())
+  {
+    if (m_heldClip > m_titleInfo->clips)
+      end = itemEnd(*(m_heldClip - 1));
+  }
+  else if (IsStillHeld())
+  {
+    if (m_clip)
+      end = itemEnd(*m_clip);
+  }
+  else if (IsTitleEndHeld())
+    end = m_titleInfo->duration;
+  if (!end)
+    return {};
+
+  return av_rescale_q(static_cast<int64_t>(*end), CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE,
+                      AVRational{1, DVD_TIME_BASE});
 }
 
 // a seek back before the held clip plays on in the same demuxer; a seek into the held clip or past
