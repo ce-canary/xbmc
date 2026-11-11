@@ -6258,6 +6258,9 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
       // the disc program may start another playlist, so only the kept picture goes
       aml_drop_kept_picture(true);
       break;
+    case BD_EVENT_BDJ_GRAPHICS:
+      aml_drop_kept_picture(false);
+      break;
     case BD_EVENT_AUDIO_STREAM:
     {
       m_dvd.iSelectedAudioStream = *static_cast<int*>(pData);

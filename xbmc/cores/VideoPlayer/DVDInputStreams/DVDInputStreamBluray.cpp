@@ -650,6 +650,8 @@ void CDVDInputStreamBluray::Close()
   m_hasMVCExtension = false;
   m_clipStart.clear();
   m_heldEvents = {};
+  m_titlePlaylist = true;
+  m_pageBeforePlaylist = false;
 
 #if defined(HAS_UDFREAD)
   // Released last, as the files opened from the volume are closed above
@@ -836,6 +838,8 @@ void CDVDInputStreamBluray::ProcessEvent() {
     m_isInMainMenu = false;
     m_playlistLeft = true;
     m_pendingMenuRange.reset();
+    m_titlePlaylist = false;
+    m_pageBeforePlaylist = false;
 
     if (m_event.param == BLURAY_TITLE_TOP_MENU)
     {
@@ -859,11 +863,13 @@ void CDVDInputStreamBluray::ProcessEvent() {
     m_titleEndWait = false;
     m_playlistLeft = true;
     m_pendingMenuRange.reset();
+    m_titlePlaylist = true;
     break;
 
   case BD_EVENT_PLAYITEM:
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_PLAYITEM {}", m_event.param);
     ResetTitleEnd();
+    m_titlePlaylist = true;
     if (m_titleInfo && m_event.param < m_titleInfo->clip_count)
     {
       m_clip = &m_titleInfo->clips[m_event.param];
@@ -936,6 +942,16 @@ void CDVDInputStreamBluray::ProcessEvent() {
     if (!m_menu)
       m_isInMainMenu = false;
     m_player->OnDiscNavResult(&m_event.param, BD_EVENT_MENU);
+    break;
+
+  case BD_EVENT_BDJ_GRAPHICS:
+    CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_BDJ_GRAPHICS {}", m_event.param);
+    // a page shown before the title names a playlist shows over black, as the disc presents it
+    if (!m_titlePlaylist)
+    {
+      m_pageBeforePlaylist = true;
+      m_player->OnDiscNavResult(nullptr, BD_EVENT_BDJ_GRAPHICS);
+    }
     break;
 
   case BD_EVENT_IDLE:
@@ -1029,10 +1045,15 @@ void CDVDInputStreamBluray::DisableExtention()
 // counted after the events of the read have opened their clip spans
 int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
 {
+  // the bytes of a read come before the events it returns with them
+  const bool pageBefore = m_pageBeforePlaylist;
   const int result = ReadData(buf, buf_size);
   if (result > 0)
   {
     m_readPos += result;
+    // the video of the title now follows its page
+    if (pageBefore)
+      m_pageBeforePlaylist = false;
     // a read returns the bytes of one clip, which ends where libbluray stands
     if (m_demuxerClipPending)
     {
@@ -2576,7 +2597,7 @@ bool CDVDInputStreamBluray::GetDemuxerFrameRate(int pid, int& rate, int& scale) 
 
 const BLURAY_CLIP_INFO* CDVDInputStreamBluray::GetNextItemClip() const
 {
-  if (m_bMVCPlayback || m_hasMVCExtension)
+  if (m_bMVCPlayback || m_hasMVCExtension || m_pageBeforePlaylist)
     return nullptr;
   return m_nextClip;
 }
