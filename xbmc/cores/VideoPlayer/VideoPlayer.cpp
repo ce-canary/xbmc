@@ -3020,6 +3020,7 @@ void CVideoPlayer::CloseSubtitleForNextStream()
   }
 #endif
   m_CurrentSubtitle.Clear();
+  m_pSubtitleDemuxer.reset();
 }
 
 bool CVideoPlayer::IsBlurayTitleEnded() const
@@ -5659,6 +5660,7 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
 {
   CDemuxStream* stream = NULL;
   CDVDStreamInfo hint;
+  std::shared_ptr<CDVDDemux> subtitleDemuxer;
 
   CLog::Log(LOGINFO, "Opening stream: {} source: {}", iStream, source);
   m_playersFlushed = false;
@@ -5671,7 +5673,6 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
     const SelectionStream& st = m_SelectionStreams.Get(current.type, index);
 
     CLog::Log(LOGINFO, "Opening Subtitle file: {}", CURL::GetRedacted(st.filename));
-    m_pSubtitleDemuxer.reset();
     const auto demux = m_subtitleDemuxerMap.find(demuxerId);
     if (demux == m_subtitleDemuxerMap.end())
     {
@@ -5679,7 +5680,7 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
       return false;
     }
 
-    m_pSubtitleDemuxer = demux->second;
+    subtitleDemuxer = demux->second;
 
     double pts = m_VideoPlayerVideo->GetCurrentPts();
     if(pts == DVD_NOPTS_VALUE)
@@ -5687,13 +5688,13 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
     if(pts == DVD_NOPTS_VALUE)
       pts = 0;
     pts += m_offset_pts;
-    if (!m_pSubtitleDemuxer->SeekTime((int)(1000.0 * pts / (double)DVD_TIME_BASE)))
+    if (!subtitleDemuxer->SeekTime((int)(1000.0 * pts / (double)DVD_TIME_BASE)))
       CLog::Log(LOGDEBUG, "{} - failed to start subtitle demuxing from: {:f}", __FUNCTION__, pts);
-    stream = m_pSubtitleDemuxer->GetStream(demuxerId, iStream);
+    stream = subtitleDemuxer->GetStream(demuxerId, iStream);
     if(!stream || stream->disabled)
       return false;
 
-    m_pSubtitleDemuxer->EnableStream(demuxerId, iStream, true);
+    subtitleDemuxer->EnableStream(demuxerId, iStream, true);
 
     hint.Assign(*stream, true);
   }
@@ -5821,6 +5822,9 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
 
   if (res)
   {
+    if (current.type == StreamType::SUBTITLE)
+      m_pSubtitleDemuxer = subtitleDemuxer;
+
     int oldId = current.id;
     current.id = iStream;
     current.demuxerId = demuxerId;
@@ -6114,6 +6118,9 @@ bool CVideoPlayer::CloseStream(CCurrentStream& current, bool bWaitForBuffers)
   //! stream enable/disable is actually intended, avoiding stale stream
   //! identification from reaching the demuxer.
   SetEnableStream(current, false);
+
+  if (STREAM_SOURCE_MASK(current.source) == STREAM_SOURCE_DEMUX_SUB)
+    m_pSubtitleDemuxer.reset();
 
   IDVDStreamPlayer* player = GetStreamPlayer(current.player);
   if (player)
