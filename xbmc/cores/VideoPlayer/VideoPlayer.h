@@ -545,6 +545,7 @@ protected:
   IDVDStreamPlayer* GetStreamPlayer(unsigned int player);
   void SendPlayerMessage(std::shared_ptr<CDVDMsg> pMsg, unsigned int target);
 
+  bool ReadSubtitlePacket(DemuxPacket*& packet, CDemuxStream*& stream);
   bool ReadPacket(DemuxPacket*& packet, CDemuxStream*& stream);
   void HandleDynamicBufferLevel();
   bool IsValidStream(const CCurrentStream& stream);

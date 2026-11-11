@@ -1342,35 +1342,40 @@ void CVideoPlayer::OpenDefaultStreams(bool reset)
     SynchronizeDemuxer();
 }
 
+bool CVideoPlayer::ReadSubtitlePacket(DemuxPacket*& packet, CDemuxStream*& stream)
+{
+  packet = m_pSubtitleDemuxer->Read();
+  if (!packet)
+    return false;
+
+  UpdateCorrection(packet, m_offset_pts);
+  if (packet->iStreamId < 0)
+    return true;
+
+  stream = m_pSubtitleDemuxer->GetStream(packet->demuxerId, packet->iStreamId);
+  if (!stream)
+  {
+    CLog::Log(LOGERROR, "{} - Error demux packet doesn't belong to a valid stream", __FUNCTION__);
+    return false;
+  }
+  if (stream->source == STREAM_SOURCE_NONE)
+  {
+    m_SelectionStreams.Clear(StreamType::NONE, STREAM_SOURCE_DEMUX_SUB);
+    m_SelectionStreams.Update(nullptr, m_pSubtitleDemuxer.get());
+    UpdateContent();
+  }
+  return true;
+}
+
 bool CVideoPlayer::ReadPacket(DemuxPacket*& packet, CDemuxStream*& stream)
 {
 
   // check if we should read from subtitle demuxer
   if (m_pSubtitleDemuxer && m_VideoPlayerSubtitle->AcceptsData())
   {
-    packet = m_pSubtitleDemuxer->Read();
-
-    if(packet)
-    {
-      UpdateCorrection(packet, m_offset_pts);
-      if(packet->iStreamId < 0)
-        return true;
-
-      stream = m_pSubtitleDemuxer->GetStream(packet->demuxerId, packet->iStreamId);
-      if (!stream)
-      {
-        CLog::Log(LOGERROR, "{} - Error demux packet doesn't belong to a valid stream",
-                  __FUNCTION__);
-        return false;
-      }
-      if (stream->source == STREAM_SOURCE_NONE)
-      {
-        m_SelectionStreams.Clear(StreamType::NONE, STREAM_SOURCE_DEMUX_SUB);
-        m_SelectionStreams.Update(NULL, m_pSubtitleDemuxer.get());
-        UpdateContent();
-      }
-      return true;
-    }
+    const bool valid = ReadSubtitlePacket(packet, stream);
+    if (packet)
+      return valid;
   }
 
   // read a data frame from stream.
