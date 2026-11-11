@@ -3261,6 +3261,7 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
 {
   std::lock_guard<std::mutex> lock(holdMutex);
   m_outputModule = OutputModule::NONE;
+  m_lowerLayers = false;
   if (holdKept && !holdOwner)
     holdOwner = m_holdGen;
   if (!holdKept || holdOwner != m_holdGen)
@@ -3292,6 +3293,11 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
     ReleaseKept();
     return false;
   }
+
+  // the core reads the layer switches a kept picture's open raised also for that picture, so a
+  // decoder without a full enhancement layer lowers them only at its first frame
+  m_lowerLayers = RunsDolbyVision(hints, output) &&
+                  !(doviIsFEL && (hints.dovi.dv_profile == 4 || hints.dovi.dv_profile == 7));
 
   if (convert)
   {
@@ -3332,9 +3338,6 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
     return true;
   }
 
-  // the open of a full layer picture enabled its layer, and the picture went off before this open
-  if (pictureLayers == CoreLayers::FEL && !fullLayer)
-    CloseLayers({});
   // a native Dolby Vision open forces no mode; the core would leave a mapping's held IPT for the
   // tunnel only at the handback, on video
   const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
@@ -3924,6 +3927,13 @@ bool CAMLCodec::ReleaseFrame(const uint32_t index, uint32_t resetEpoch, bool dro
   }
   else if (!drop && m_handback)
     HandBack();
+
+  if (ret >= 0 && !drop && m_lowerLayers.exchange(false))
+  {
+    auto* AmlDisplay =
+        static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+    AmlDisplay->SetCrtcProperties({{"dv_debug", "enable_fel 0"}, {"dv_debug", "enable_mel 0"}});
+  }
   return ret >= 0;
 }
 

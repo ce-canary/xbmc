@@ -213,6 +213,7 @@ private:
   std::atomic<bool> m_handback{false};
   bool             m_handbackFrame{false};
   bool             m_handbackOff{false};
+  std::atomic<bool> m_lowerLayers{false};
   bool             m_drainPrebuffer{false};
   bool             m_streamStartGate{false};
   bool             m_inputWritten{false};
