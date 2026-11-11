@@ -3101,6 +3101,21 @@ double CVideoPlayer::GetBlurayPresentedTime()
   return presented + m_offset_pts;
 }
 
+// the clock is on title time while a stream plays in sync
+std::optional<double> CVideoPlayer::GetBlurayItemEnd() const
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  const auto inSync = [](const CCurrentStream& current)
+  { return current.id >= 0 && current.syncState == IDVDStreamPlayer::SYNC_INSYNC; };
+  if (!bluray || (!inSync(m_CurrentAudio) && !inSync(m_CurrentVideo)))
+    return {};
+  return bluray->GetHeldItemEnd();
+#else
+  return {};
+#endif
+}
+
 void CVideoPlayer::ReportBlurayPresented()
 {
 #if defined(HAVE_LIBBLURAY)
@@ -3166,7 +3181,8 @@ bool CVideoPlayer::PollBlurayEvents()
 }
 
 // plays out the old item without blocking, as at the end of file; waits for the players that
-// CloseStream would wait for, video until its decoder has drained
+// CloseStream would wait for, video until its decoder has drained, and for the clock to reach
+// the end of a held Blu-ray play item, whose last picture stays up until then
 bool CVideoPlayer::PlayNavTail()
 {
   const bool audio = m_CurrentAudio.id >= 0 &&
@@ -3175,14 +3191,22 @@ bool CVideoPlayer::PlayNavTail()
   const bool video = m_CurrentVideo.id >= 0 &&
                      m_CurrentVideo.syncState == IDVDStreamPlayer::SYNC_INSYNC &&
                      (m_VideoPlayerVideo->HasData() || !m_VideoPlayerVideo->IsEOS());
-  if (m_playSpeed <= 0 || (!audio && !video))
+  const auto itemEnd = GetBlurayItemEnd();
+  const bool item = itemEnd && m_clock.GetClock() + m_offset_pts < *itemEnd;
+  if (m_playSpeed <= 0 || (!audio && !video && !item))
   {
+    if (m_navTail)
+      CLog::Log(LOGDEBUG, "CVideoPlayer::PlayNavTail - tail ends at clock {:.3f}",
+                (m_clock.GetClock() + m_offset_pts) / DVD_TIME_BASE);
     m_navTail = false;
     return false;
   }
 
   if (!m_navTail)
   {
+    if (itemEnd)
+      CLog::Log(LOGDEBUG, "CVideoPlayer::PlayNavTail - held play item ends at {:.3f}",
+                *itemEnd / DVD_TIME_BASE);
     if (m_CurrentVideo.id >= 0 && !m_videoDrained)
     {
       SendVideoInputEnd();

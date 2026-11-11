@@ -448,6 +448,7 @@ protected:
   bool TakeBlurayItemAbandoned();
   bool IsBlurayJumpPending() const;
   bool PollBlurayEvents();
+  std::optional<double> GetBlurayItemEnd() const;
   double GetBlurayPresentedTime();
   void ReportBlurayPresented();
   void ReportBlurayReadPresented();
