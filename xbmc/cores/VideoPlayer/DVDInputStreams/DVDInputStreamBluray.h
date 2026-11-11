@@ -223,6 +223,10 @@ public:
   //! whether a seek while the read is held stays in the title being played out
   bool IsTailInTitle() const;
 
+  //! the title time (DVD time) at which the play item whose data the read is held after ends,
+  //! nothing once the disc program or a seek has left it
+  std::optional<double> GetHeldItemEnd() const;
+
   //! whether a menu action made the disc program leave the item being played out, reset by the call
   bool TakeItemAbandoned();
 
@@ -383,6 +387,7 @@ protected:
     bool AbandonsItem(bool menuJump, bool fromStill) const;
     void MarkMenuInput();
     bool IsJoinHeld() const;
+    bool IsStillHeld() const;
     void DropClipStartOnSeek(bool joinHeld);
     const BLURAY_CLIP_INFO* GetClipAt(uint64_t titlePos) const;
 
