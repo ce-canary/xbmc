@@ -1671,7 +1671,7 @@ bool CDVDInputStreamBluray::IsTailInTitle() const
 {
   if (IsTitleEndHeld())
     return true;
-  return IsJoinHeld();
+  return IsJoinHeld() || IsStillHeld();
 }
 
 // the title time includes the gap between the last picture of a play item and its out time; the
@@ -2171,6 +2171,10 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
     ProcessEvent();
   };
 
+  // the events queued behind a held still decide whether it is still due
+  if (IsStillHeld())
+    HoldProgramEvents();
+
   /* process any current event */
   processEvent();
   while (TakeHeldEvent())
@@ -2359,7 +2363,7 @@ void CDVDInputStreamBluray::PollEvents()
   // a move away from the held clip start shows only in the read position until the next stream
   if (m_hold == HOLD_HELD)
   {
-    if (IsJoinHeld() && m_title)
+    if ((IsJoinHeld() || IsStillHeld()) && m_title)
     {
       if (m_title->bdj)
         HoldProgramEvents();
@@ -2435,9 +2439,9 @@ void CDVDInputStreamBluray::PollEvents()
   }
 }
 
-// an HDMV program waits in the playlist while a join is held and runs only on a key, a menu call
-// or a page action; a stream or menu change it makes applies to the playing item at once, other
-// events stay behind the held event, and a jump leaves the held item
+// an HDMV program waits in the playlist while a join or still is held and runs only on a key, a
+// menu call or a page action; a stream or menu change it makes applies to the playing item at
+// once, other events stay behind the held event, and a jump leaves the held item
 void CDVDInputStreamBluray::PollHeldJoin()
 {
   const BD_EVENT held = m_event;
@@ -2474,10 +2478,12 @@ void CDVDInputStreamBluray::PollHeldJoin()
     m_heldEvents.push(m_event);
   }
   m_event = held;
+  DropLeftStill();
 }
 
-// a BD-J program acts on its own thread while a join is held; its events stay behind the held
-// event, and a stop or jump leaves the held item
+// a BD-J program acts on its own thread while a join or still is held; a stream or menu change it
+// makes applies to the playing item at once, other events stay behind the held event, and a stop
+// or jump leaves the held item
 void CDVDInputStreamBluray::HoldProgramEvents()
 {
   const BD_EVENT held = m_event;
@@ -2488,6 +2494,14 @@ void CDVDInputStreamBluray::HoldProgramEvents()
       m_heldEvents.push(m_event);
   }
   m_event = held;
+  DropLeftStill();
+}
+
+// a held still belongs to the position the disc program left, as one a seek leaves
+void CDVDInputStreamBluray::DropLeftStill()
+{
+  if (m_presentedLeft && IsStillHeld())
+    m_event.event = BD_EVENT_NONE;
 }
 
 // a stream or menu change applies to the playing item at once, unless an event before it waits
