@@ -251,12 +251,13 @@ public:
                          m_aborted || m_titleEndWait);
   }
 
-  //! the clip the item opened by the last NextStream starts with, when its events named it
+  //! the clip the item opened by the last NextStream starts with, when its events named it and
+  //! the title showed no page before its playlist
   const BLURAY_CLIP_INFO* GetNextItemClip() const;
 
   //! whether the item opened by the last NextStream follows a jump of the disc program that has
-  //! not named its clip yet
-  bool NextItemFollowsJump() const { return m_nextJump; }
+  //! not named its clip yet, to a title that showed no page before its playlist
+  bool NextItemFollowsJump() const { return m_nextJump && !m_pageBeforePlaylist; }
 
   //! whether the item opened by the last NextStream continues the playlist of the item before it
   bool NextItemContinuesPlaylist() const { return m_nextItemInPlaylist; }
@@ -464,6 +465,10 @@ protected:
     int64_t m_playedItemEnd{-1};
     const BLURAY_CLIP_INFO* m_nextClip{nullptr};
     bool m_nextJump{false};
+    //! the title has named a playlist since its title event
+    bool m_titlePlaylist{true};
+    //! the title showed BD-J graphics before it named a playlist, and no data of it was read since
+    bool m_pageBeforePlaylist{false};
     bool m_playlistLeft{false};
     bool m_nextItemInPlaylist{false};
     bool m_itemSeeked{false};
