@@ -2147,10 +2147,8 @@ static inline int calc_chunk_size(int size)
 namespace
 {
 
-constexpr int DOVI_DUAL_LAYER_PROFILE = 7;
-
-// what the output of a decoder was set up for; the decoder of the next item takes a kept picture
-// only when it would set up the same
+// what the output of a decoder was set up for; outside a held dv output the decoder of the next
+// item takes a kept picture only when it would set up the same
 struct HeldFormat
 {
   AVCodecID codec{AV_CODEC_ID_NONE};
@@ -2190,22 +2188,12 @@ bool pictureTaken{false};
 bool pictureHdr10{false};
 // the decoder that kept the picture, or took it, runs the Dolby Vision core
 bool pictureDv{false};
-// the layers the core runs a Dolby Vision picture with
-enum class CoreLayers
-{
-  SINGLE,
-  MEL,
-  FEL
-};
-// the layers of a kept picture; a full enhancement layer, which its open enabled, stays set also
-// once the picture went off
-CoreLayers pictureLayers{CoreLayers::SINGLE};
-// the open of a kept Dolby Vision picture forced the mode of the core
-bool pictureForced{false};
+// the kept picture holds the dv output, so the core runs it for a next decoder of any format
+bool pictureDvHold{false};
 // the mode the core keeps a kept Dolby Vision picture's output in
 int pictureDvMode{-1};
-// the output hold a picture kept for a next not known yet falls back to at the open of another
-// format, the one its close would have kept without the picture
+// the output hold a kept picture falls back to at an open that does not take it, the one its
+// close would have kept without the picture
 CAMLCodec::OutputModule pictureFallback{CAMLCodec::OutputModule::NONE};
 // the taken picture went off before the first frame of its taker, which plays under the forced
 // output of the picture's module from then on
@@ -2239,23 +2227,6 @@ bool RunsDolbyVision(const CDVDStreamInfo& hints, const AMLVideoOutput& output)
            (displaySupportDv || hints.dovi.dv_profile == 5)) ||
           ((output.hdrType != StreamHdrType::HDR_TYPE_NONE && dv2sdr) ||
            (output.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && dv2hdr)));
-}
-
-CoreLayers GetCoreLayers(const CDVDStreamInfo& hints, bool doviIsFEL)
-{
-  if (hints.dovi.el_present_flag == 0 || hints.dovi.dv_profile != DOVI_DUAL_LAYER_PROFILE)
-    return CoreLayers::SINGLE;
-  return doviIsFEL ? CoreLayers::FEL : CoreLayers::MEL;
-}
-
-// whether OpenDecoder forces the mode of the core for `hints`, as a VS10 mapping of a non Dolby
-// Vision item or a tone map does
-bool ForcesCoreMode(const CDVDStreamInfo& hints)
-{
-  const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
-  return hints.dovi.dv_profile == 0 ||
-         settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2SDR) ||
-         settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2HDR);
 }
 
 // whether a decoder for `hints` put out as `output` sends HDR10 through the HDR module; forced PQ
@@ -3117,8 +3088,8 @@ void CAMLCodec::ClaimHold()
 }
 
 // the armed close of an open decoder keeps its last picture and its output for a next decoder of
-// the same format, or hands its output on to the next decoder; a decoder that closes before it
-// took the hold it claimed passes the hold on unclaimed
+// the same format, or of any format under a held dv output, or hands its output on to the next
+// decoder; a decoder that closes before it took the hold it claimed passes the hold on unclaimed
 CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
 {
   std::lock_guard<std::mutex> lock(holdMutex);
@@ -3149,7 +3120,8 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
     }
     holdOwner = 0;
   }
-  if (armed && holdKept && !holdOwner && heldPicture && !armJump && !NextPlays(heldFormat))
+  if (armed && holdKept && !holdOwner && heldPicture && !pictureDvHold && !armJump &&
+      !NextPlays(heldFormat))
   {
     ShowMainVideo(false);
     keptOnScreen = false;
@@ -3167,14 +3139,16 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   // the keeper does not keep deinterlaced or MVC frames; a running core keeps a picture only where
   // it could hold the dv output or runs a VS10 mapping
   const bool corePicture = dvEnabled && (dvOutputHold || dvPolicy == AMDV_FORCE_OUTPUT_MODE);
+  const bool dvPicture = dvEnabled && dvOutputHold;
   if (!dropped && (!dvEnabled || corePicture) && !format.interlaced && !format.mvc &&
-      (armJump || NextPlays(format)))
+      (dvPicture || armJump || NextPlays(format)))
   {
     heldFormat = format;
     heldModule = m_outputModule;
     heldPicture = true;
     pictureHdr10 = PlaysHdr10Output(m_hints, m_output, m_processInfo.GetIsHdr10Plus());
     pictureDv = corePicture;
+    pictureDvHold = dvPicture;
     pictureDvMode = dvMode;
     hold = Hold::PICTURE;
   }
@@ -3229,16 +3203,12 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   {
     holdDecoderTimeout = m_decoder_timeout;
     holdKept = true;
-    // the setup of the next item shows only at its open, so it takes the picture or else the dv
-    // output
-    const bool kept = hold == Hold::PICTURE && corePicture;
-    pictureLayers =
-        kept ? GetCoreLayers(m_hints, m_processInfo.GetDoviIsFEL()) : CoreLayers::SINGLE;
-    pictureForced = kept && m_ownOutput;
-    pictureFallback = hold != Hold::PICTURE || !armJump ? OutputModule::NONE
-                      : dvEnabled && dvOutputHold       ? OutputModule::DV
-                      : hdrOutputHold                   ? OutputModule::HDR
-                                                        : OutputModule::NONE;
+    pictureFallback =
+        hold != Hold::PICTURE ? OutputModule::NONE
+        : dvPicture && (!armNext || armNext->hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION)
+            ? OutputModule::DV
+        : armJump && hdrOutputHold ? OutputModule::HDR
+                                   : OutputModule::NONE;
   }
   CLog::Log(LOGDEBUG, "CAMLCodec::{}: armed close keeps {}, next {}, dv core {}, dv policy {}",
             __FUNCTION__,
@@ -3253,10 +3223,10 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   return hold;
 }
 
-// a decoder set up for the held format shows its first frame over the kept picture; a decoder
-// that plays the format of a held output plays under it until the module runs on its video, or
-// else to its close, which ends the hold or hands it on; any other ends the hold before it sets
-// up its own output
+// a decoder set up for the held format, or one that runs the core under a held dv output, shows
+// its first frame over the kept picture; a decoder that plays the format of a held output plays
+// under it until the module runs on its video, or else to its close, which ends the hold or hands
+// it on; any other ends the hold before it sets up its own output
 bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& output, bool doviIsFEL)
 {
   std::lock_guard<std::mutex> lock(holdMutex);
@@ -3267,23 +3237,17 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
   if (!holdKept || holdOwner != m_holdGen)
     return false;
 
-  const bool pictureTake =
-      heldPicture && GetHeldFormat(hints, output, m_processInfo.GetIsHdr10Plus()) == heldFormat;
+  const HeldFormat format = GetHeldFormat(hints, output, m_processInfo.GetIsHdr10Plus());
+  const bool pictureTake = heldPicture && (pictureDvHold ? RunsDolbyVision(hints, output) &&
+                                                               !format.interlaced && !format.mvc
+                                                         : format == heldFormat);
   // a picture this open does not match falls back to the output hold of its close
   const OutputModule outputModule = heldPicture ? pictureFallback : heldModule;
   const bool take = pictureTake ||
                     (outputModule == OutputModule::DV && RunsDolbyVision(hints, output)) ||
                     (outputModule == OutputModule::HDR &&
                      PlaysHdr10Output(hints, output, m_processInfo.GetIsHdr10Plus()));
-  // the core runs a kept picture with the setup of its open; a picture goes only to an open that
-  // forces the mode alike and has the same layers, a minimum layer also to a full one
-  const CoreLayers layers = GetCoreLayers(hints, doviIsFEL);
-  const bool fullLayer = layers == CoreLayers::FEL;
-  const bool convert =
-      take && heldPicture &&
-      (!pictureTake || (pictureDv && (ForcesCoreMode(hints) != pictureForced ||
-                                      (layers != pictureLayers &&
-                                       !(pictureLayers == CoreLayers::MEL && fullLayer)))));
+  const bool convert = take && heldPicture && !pictureTake;
   // a picture under the core goes only to a decoder that runs the core
   const bool takes = take && (!(heldPicture && pictureDv) || RunsDolbyVision(hints, output));
   CLog::Log(LOGDEBUG, "CAMLCodec::{}: {} the held {}", __FUNCTION__, takes ? "takes" : "releases",
@@ -3301,7 +3265,7 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
 
   if (convert)
   {
-    const OutputModule module = pictureTake ? OutputModule::DV : pictureFallback;
+    const OutputModule module = pictureFallback;
     auto* AmlDisplay =
         static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
     // the mode is stored only once the policy is forced
@@ -3319,6 +3283,12 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
     }
     ShowMainVideo(false);
     keptOnScreen = false;
+    // the picture is off, so the switches of its full layer go now, as at a close
+    if (m_lowerLayers)
+    {
+      CloseLayers({});
+      m_lowerLayers = false;
+    }
     heldModule = module;
     heldPicture = false;
     CLog::Log(LOGDEBUG, "CAMLCodec::{}: the picture goes off, the taker keeps the {} output",
@@ -3326,17 +3296,10 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
   }
 
   m_outputModule = heldModule;
+  // a taker that forces no mode follows the source once the core runs on its video
+  if (heldPicture && pictureDvHold)
+    m_outputModule = OutputModule::DV;
   m_handbackFrame = false;
-  if (heldPicture)
-  {
-    // the module runs on the kept picture until the first frame of this decoder replaces it
-    m_handback = m_outputModule != OutputModule::NONE;
-    m_handbackOff = false;
-    m_keptPicture = true;
-    pictureTaken = true;
-    pictureHdr10 = PlaysHdr10Output(hints, output, m_processInfo.GetIsHdr10Plus());
-    return true;
-  }
 
   // a native Dolby Vision open forces no mode; the core would leave a mapping's held IPT for the
   // tunnel only at the handback, on video
@@ -3350,6 +3313,18 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
     if (AmlDisplay->aml_get_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC) == AMDV_OUTPUT_MODE_IPT)
       AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC, AMDV_OUTPUT_MODE_IPT_TUNNEL);
   }
+
+  if (heldPicture)
+  {
+    // the module runs on the kept picture until the first frame of this decoder replaces it
+    m_handback = m_outputModule != OutputModule::NONE;
+    m_handbackOff = false;
+    m_keptPicture = true;
+    pictureTaken = true;
+    pictureHdr10 = PlaysHdr10Output(hints, output, m_processInfo.GetIsHdr10Plus());
+    return true;
+  }
+
   m_handback = m_outputModule != OutputModule::NONE;
   // the core can still run on a picture that went off at this take when the first frame shows
   m_handbackOff = !convert;
