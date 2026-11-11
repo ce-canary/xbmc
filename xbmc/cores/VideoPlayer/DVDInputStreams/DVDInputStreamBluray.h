@@ -254,6 +254,10 @@ public:
   //! the clip the item opened by the last NextStream starts with, when its events named it
   const BLURAY_CLIP_INFO* GetNextItemClip() const;
 
+  //! whether the item opened by the last NextStream follows a jump of the disc program that has
+  //! not named its clip yet
+  bool NextItemFollowsJump() const { return m_nextJump; }
+
   //! whether the item opened by the last NextStream continues the playlist of the item before it
   bool NextItemContinuesPlaylist() const { return m_nextItemInPlaylist; }
 
@@ -459,6 +463,7 @@ protected:
     int64_t m_reportedTime{-1};
     int64_t m_playedItemEnd{-1};
     const BLURAY_CLIP_INFO* m_nextClip{nullptr};
+    bool m_nextJump{false};
     bool m_playlistLeft{false};
     bool m_nextItemInPlaylist{false};
     bool m_itemSeeked{false};

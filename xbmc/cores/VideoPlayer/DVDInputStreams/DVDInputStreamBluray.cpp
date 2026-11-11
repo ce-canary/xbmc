@@ -2062,6 +2062,7 @@ void CDVDInputStreamBluray::ResetTitleEnd()
 CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
 {
   m_nextClip = nullptr;
+  m_nextJump = false;
   if (!m_navmode || m_aborted || m_hold == HOLD_ERROR || HasGivenUpReading())
     return NEXTSTREAM_NONE;
 
@@ -2196,6 +2197,7 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   // a title end before the next stream reports a picture waits for none of the old one
   m_lastPictureTime = -1;
   m_nextClip = clipKnown && m_clip && !programStop ? (joinClip ? joinClip : m_clip) : nullptr;
+  m_nextJump = programJump && !programStop && !m_nextClip;
   m_nextItemInPlaylist = !m_playlistLeft;
   m_nextItemSeekTime.reset();
   if (m_nextItemInPlaylist && m_itemSeeked)
