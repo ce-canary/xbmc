@@ -2511,8 +2511,10 @@ void CVideoPlayer::Process()
         CloseStream(m_CurrentAudio, true);
 #if defined(HAVE_LIBBLURAY)
         if (m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) && !m_bAbortRequest)
-          aml_continue_presentation(
-              std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)->GetNextItemClip());
+        {
+          const auto bluray = std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream);
+          aml_continue_presentation(bluray->GetNextItemClip(), bluray->NextItemFollowsJump());
+        }
 #endif
         CloseStream(m_CurrentVideo, true);
         ReportBlurayItemPlayedOut();

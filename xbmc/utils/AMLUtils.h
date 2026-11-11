@@ -98,8 +98,9 @@ bool aml_video_started();
 bool aml_display_reset_pending();
 // when the last delayed display reset ended, the clock's epoch when none ran
 std::chrono::steady_clock::time_point aml_display_reset_end();
-// `next` is the clip of the next item, nullptr when unknown
-void aml_continue_presentation(const BLURAY_CLIP_INFO* next);
+// `next` is the clip of the next item, nullptr when unknown; `jump` when the disc program jumped
+// to a next it has not named yet
+void aml_continue_presentation(const BLURAY_CLIP_INFO* next, bool jump);
 // `next` is the stream the next decoder opens with
 void aml_continue_presentation(const CDVDStreamInfo& next);
 void aml_end_presentation(bool stop);

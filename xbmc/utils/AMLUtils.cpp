@@ -536,14 +536,14 @@ std::optional<NextVideoFormat> GetClipVideoFormat(const BLURAY_CLIP_INFO& clip)
 } // namespace
 #endif
 
-void aml_continue_presentation(const BLURAY_CLIP_INFO* next)
+void aml_continue_presentation(const BLURAY_CLIP_INFO* next, bool jump)
 {
   std::optional<NextVideoFormat> format;
 #if defined(HAVE_LIBBLURAY)
   if (next)
     format = GetClipVideoFormat(*next);
 #endif
-  CAMLCodec::ContinuePresentation(format);
+  CAMLCodec::ContinuePresentation(format, jump);
 }
 
 void aml_continue_presentation(const CDVDStreamInfo& next)
