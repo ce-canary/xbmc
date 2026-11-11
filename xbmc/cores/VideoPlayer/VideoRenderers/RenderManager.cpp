@@ -1188,6 +1188,11 @@ void CRenderManager::VideoStreamClosed()
   std::unique_lock lock(m_statelock);
 
   m_awaitConfigure = false;
+
+  // a picture kept on the plane is off the timeline of the next stream
+  std::unique_lock lock2(m_presentlock);
+  m_displayedPts = DVD_NOPTS_VALUE;
+  m_offTimelineSource = m_presentsource;
 }
 
 void CRenderManager::ToggleDebug()
