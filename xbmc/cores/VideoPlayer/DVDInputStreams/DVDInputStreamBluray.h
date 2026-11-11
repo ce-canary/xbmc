@@ -381,6 +381,8 @@ protected:
     void HoldClipStart(const uint8_t* buf, int size);
     void DropClipStartOnJump();
     void PollHeldJoin();
+    void HoldProgramEvents();
+    bool ProcessPlayingItemEvent();
     bool TakeHeldEvent();
     bool ProcessHeldEvents();
     bool TakeMenuJump(bool joinsInLine, bool dataRead);
