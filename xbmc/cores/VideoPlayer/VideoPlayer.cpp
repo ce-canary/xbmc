@@ -2402,20 +2402,29 @@ void CVideoPlayer::Process()
       if (navWait && !ShouldWaitForSync(std::chrono::steady_clock::now()))
       {
         // the tail plays out the old item without blocking, as at the end of file, and waits for
-        // the players CloseStream would wait for, video until its decoder has drained
+        // the players CloseStream would wait for, video until its decoder has drained, and for the
+        // clock to reach the end of a held Blu-ray play item while its last picture stays up
         const bool audio =
             m_CurrentAudio.id >= 0 && m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_INSYNC &&
             m_VideoPlayerAudio->HasData() && !CServiceBroker::GetActiveAE()->IsSuspended();
         const bool video = m_CurrentVideo.id >= 0 &&
                            m_CurrentVideo.syncState == IDVDStreamPlayer::SYNC_INSYNC &&
                            (m_VideoPlayerVideo->HasData() || !m_VideoPlayerVideo->IsEOS());
-        if (m_playSpeed <= 0 || (!audio && !video))
+        const auto itemEnd = GetBlurayItemEnd();
+        const bool item = itemEnd && m_clock.GetClock() + m_offset_pts < *itemEnd;
+        if (m_playSpeed <= 0 || (!audio && !video && !item))
         {
+          if (m_navTail)
+            CLog::Log(LOGDEBUG, "CVideoPlayer::Process - nav tail ends at clock {:.3f}",
+                      (m_clock.GetClock() + m_offset_pts) / DVD_TIME_BASE);
           m_navTail = false;
           navWait = false;
         }
         else if (!m_navTail)
         {
+          if (itemEnd)
+            CLog::Log(LOGDEBUG, "CVideoPlayer::Process - held play item ends at {:.3f}",
+                      *itemEnd / DVD_TIME_BASE);
           SendVideoDrain();
           m_inputEnded = true;
 
@@ -3136,6 +3145,21 @@ double CVideoPlayer::GetBlurayPresentedTime()
     presented = m_clock.GetClock();
   }
   return presented + m_offset_pts;
+}
+
+// the clock is on title time while a stream plays in sync
+std::optional<double> CVideoPlayer::GetBlurayItemEnd() const
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  const auto inSync = [](const CCurrentStream& current)
+  { return current.id >= 0 && current.syncState == IDVDStreamPlayer::SYNC_INSYNC; };
+  if (!bluray || (!inSync(m_CurrentAudio) && !inSync(m_CurrentVideo)))
+    return {};
+  return bluray->GetHeldItemEnd();
+#else
+  return {};
+#endif
 }
 
 void CVideoPlayer::ReportBlurayPresented()
