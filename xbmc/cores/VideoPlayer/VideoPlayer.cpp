@@ -5181,13 +5181,6 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
       res = OpenAudioStream(hint, reset);
       break;
     case StreamType::VIDEO:
-      // fake Dolby Vision type when using Dolby Vision VS-Engine
-      if (aml_convert_to_dv_by_vs_engine(hint.hdrType))
-        hint.hdrType = StreamHdrType::HDR_TYPE_DOLBYVISION;
-      else if (aml_convert_to_sdr(hint.hdrType))
-        hint.hdrType = StreamHdrType::HDR_TYPE_NONE;
-      else if (aml_convert_to_hdr(hint.hdrType))
-        hint.hdrType = StreamHdrType::HDR_TYPE_HDR10;
       res = OpenVideoStream(hint, reset);
       // a presentation kept for this stream ends when no AML decoder claimed it
       aml_end_presentation(false);
@@ -5213,23 +5206,13 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
       if (hint.codec == AV_CODEC_ID_HDMV_PGS_SUBTITLE)
       {
         CDemuxStreamSubtitleFFmpeg* pSubStream = dynamic_cast<CDemuxStreamSubtitleFFmpeg*>(stream);
-        // the demux stream keeps the source type when the hint is faked for VS-Engine
-        StreamHdrType videoHdrType = m_CurrentVideo.hint.hdrType;
-        if (m_pDemuxer && STREAM_SOURCE_MASK(m_CurrentVideo.source) == STREAM_SOURCE_DEMUX)
-        {
-          CDemuxStream* st = m_pDemuxer->GetStream(m_CurrentVideo.demuxerId, m_CurrentVideo.id);
-          if (st && st->type == StreamType::VIDEO)
-            videoHdrType = static_cast<CDemuxStreamVideo*>(st)->hdr_type;
-        }
         if (pSubStream && StringUtils::Contains(pSubStream->m_description, "SDR"))
         {
           hint.colorSpace = AVCOL_SPC_BT709;
           hint.colorPrimaries = AVCOL_PRI_BT709;
           hint.colorTransferCharacteristic = AVCOL_TRC_BT709;
         }
-        else if (m_CurrentVideo.hint.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION &&
-                 (videoHdrType == StreamHdrType::HDR_TYPE_DOLBYVISION ||
-                  videoHdrType == StreamHdrType::HDR_TYPE_HDR10))
+        else if (m_CurrentVideo.hint.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION)
         {
           // dolby vision may expose IPT or unspecified base-layer fields,
           // while its associated PGS is authored as BT.2020/PQ graphics

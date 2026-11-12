@@ -2162,9 +2162,9 @@ struct HeldFormat
   bool operator==(const HeldFormat&) const = default;
 };
 
-HeldFormat GetHeldFormat(const CDVDStreamInfo& hints, bool hdr10Plus)
+HeldFormat GetHeldFormat(const CDVDStreamInfo& hints, const AMLVideoOutput& output, bool hdr10Plus)
 {
-  return {hints.codec, hints.hdrType, hdr10Plus, hints.interlaced,
+  return {hints.codec, output.hdrType, hdr10Plus, hints.interlaced,
           hints.codec_tag == CODEC_TAG_AMVC || hints.codec_tag == CODEC_TAG_MVC1};
 }
 
@@ -2207,8 +2207,8 @@ bool NextPlays(const HeldFormat& format)
          armNext->interlaced == format.interlaced;
 }
 
-// whether OpenDecoder runs the Dolby Vision core for `hints`
-bool RunsDolbyVision(const CDVDStreamInfo& hints)
+// whether OpenDecoder runs the Dolby Vision core for `hints` put out as `output`
+bool RunsDolbyVision(const CDVDStreamInfo& hints, const AMLVideoOutput& output)
 {
   const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
   const bool dv2sdr = settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2SDR);
@@ -2218,19 +2218,20 @@ bool RunsDolbyVision(const CDVDStreamInfo& hints)
                                     ->aml_display_support_dv();
   return aml_support_dolby_vision() &&
          !settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE) &&
-         ((hints.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION &&
+         ((output.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION &&
            (displaySupportDv || hints.dovi.dv_profile == 5)) ||
-          ((hints.hdrType != StreamHdrType::HDR_TYPE_NONE && dv2sdr) ||
-           (hints.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && dv2hdr)));
+          ((output.hdrType != StreamHdrType::HDR_TYPE_NONE && dv2sdr) ||
+           (output.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && dv2hdr)));
 }
 
-// whether a decoder for `hints` sends HDR10 through the HDR module; forced PQ caps the sink at
-// HDR10, so an HDR10+ stream qualifies only where the sink drops its dynamic metadata anyway
-bool PlaysHdr10Output(const CDVDStreamInfo& hints, bool hdr10Plus)
+// whether a decoder for `hints` put out as `output` sends HDR10 through the HDR module; forced PQ
+// caps the sink at HDR10, so an HDR10+ stream qualifies only where the sink drops its dynamic
+// metadata anyway
+bool PlaysHdr10Output(const CDVDStreamInfo& hints, const AMLVideoOutput& output, bool hdr10Plus)
 {
   const auto hdrCap = CServiceBroker::GetWinSystem()->GetDisplayHDRCapabilities();
-  return !RunsDolbyVision(hints) && hints.hdrType == StreamHdrType::HDR_TYPE_HDR10 &&
-         hints.colorTransferCharacteristic == AVCOL_TRC_SMPTE2084 && hdrCap.SupportsHDR10() &&
+  return !RunsDolbyVision(hints, output) && output.hdrType == StreamHdrType::HDR_TYPE_HDR10 &&
+         output.colorTransfer == AVCOL_TRC_SMPTE2084 && hdrCap.SupportsHDR10() &&
          (!hdr10Plus || !hdrCap.SupportsHDR10Plus());
 }
 
@@ -2305,7 +2306,7 @@ void CAMLCodec::SetDoviZeroLevel5(bool value)
     am_private->dovi_zero_level5 = value;
 }
 
-bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
+bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, const AMLVideoOutput &output, bool doviIsFEL)
 {
   m_speed = DVD_PLAYSPEED_NORMAL;
   m_drain = false;
@@ -2318,6 +2319,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
   m_brightness = -1;
   m_vadj1_enabled = false;
   m_hints = hints;
+  m_output = output;
   m_state = 0;
   m_hints.pClock = hints.pClock;
   m_tp_last_frame = std::chrono::system_clock::now();
@@ -2325,7 +2327,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
   m_buffer_level_ready = false;
   m_setUp = true;
 
-  const bool kept = TakeHold(hints, doviIsFEL);
+  const bool kept = TakeHold(hints, output, doviIsFEL);
 
   if (!OpenAmlVideo(hints))
   {
@@ -2484,7 +2486,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
   bool dv2hdr(settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV2HDR));
   bool display_support_dv(static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay()->aml_display_support_dv());
   bool user_dv_disable(settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE));
-  bool dv_enable(RunsDolbyVision(hints));
+  bool dv_enable(RunsDolbyVision(hints, m_output));
   CLog::Log(LOGINFO, "CAMLCodec::OpenDecoder Amlogic device {} support DV, DV is {} by user, display {} support DV, DV system is {}",
     device_support_dv ? "does" : "does not", user_dv_disable ? "disabled" : "enabled",
     display_support_dv ? "does" : "does not", dv_enable ? "enabled" : "disabled");
@@ -2549,7 +2551,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
 
     AmlDisplay->aml_set_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC, 0);
     if (settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR) &&
-        hints.hdrType == StreamHdrType::HDR_TYPE_HDR10 && !m_processInfo.GetIsHdr10Plus())
+        m_output.hdrType == StreamHdrType::HDR_TYPE_HDR10 && !m_processInfo.GetIsHdr10Plus())
       forceOutput = FORCE_OUTPUT_BT2020_PQ;
     else if (settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2SDR))
       forceOutput = FORCE_OUTPUT_BT709;
@@ -3113,7 +3115,7 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
     return Hold::NONE;
 
   Hold hold = Hold::NONE;
-  const HeldFormat format = GetHeldFormat(m_hints, m_processInfo.GetIsHdr10Plus());
+  const HeldFormat format = GetHeldFormat(m_hints, m_output, m_processInfo.GetIsHdr10Plus());
   const int dvMode =
       dvEnabled ? AmlDisplay->aml_get_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC) : -1;
   const bool dvOutputHold =
@@ -3132,7 +3134,7 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
     heldFormat = format;
     heldModule = m_outputModule;
     heldPicture = true;
-    pictureHdr10 = PlaysHdr10Output(m_hints, m_processInfo.GetIsHdr10Plus());
+    pictureHdr10 = PlaysHdr10Output(m_hints, m_output, m_processInfo.GetIsHdr10Plus());
     pictureDv = dualLayers;
     pictureDvMode = dvMode;
     hold = Hold::PICTURE;
@@ -3160,7 +3162,7 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   // forced PQ keeps HDR10 on the wire over the gap without video, where the HDR module sends
   // SDR otherwise; a user mapping keeps its own close
   if (hold == Hold::NONE && !dvEnabled &&
-      PlaysHdr10Output(m_hints, m_processInfo.GetIsHdr10Plus()) &&
+      PlaysHdr10Output(m_hints, m_output, m_processInfo.GetIsHdr10Plus()) &&
       (!armNext || armNext->hdrType == StreamHdrType::HDR_TYPE_HDR10) &&
       (m_outputModule == OutputModule::HDR ||
        (AmlDisplay->aml_get_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC) == HDR_FOLLOW_SOURCE &&
@@ -3199,7 +3201,7 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
 // that plays the format of a held output plays under it until the module runs on its video, or
 // else to its close, which ends the hold or hands it on; any other ends the hold before it sets
 // up its own output
-bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, bool doviIsFEL)
+bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& output, bool doviIsFEL)
 {
   std::lock_guard<std::mutex> lock(holdMutex);
   m_outputModule = OutputModule::NONE;
@@ -3209,17 +3211,17 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, bool doviIsFEL)
     return false;
 
   const bool take =
-      heldPicture ? GetHeldFormat(hints, m_processInfo.GetIsHdr10Plus()) == heldFormat
-                  : (heldModule == OutputModule::DV && RunsDolbyVision(hints)) ||
+      heldPicture ? GetHeldFormat(hints, output, m_processInfo.GetIsHdr10Plus()) == heldFormat
+                  : (heldModule == OutputModule::DV && RunsDolbyVision(hints, output)) ||
                         (heldModule == OutputModule::HDR &&
-                         PlaysHdr10Output(hints, m_processInfo.GetIsHdr10Plus()));
+                         PlaysHdr10Output(hints, output, m_processInfo.GetIsHdr10Plus()));
   // the core runs a kept picture with the enhancement layer type of its open; a full layer goes
   // only to a full one, a minimum layer to either
   const bool dualLayer =
       hints.dovi.el_present_flag != 0 && hints.dovi.dv_profile == DOVI_DUAL_LAYER_PROFILE;
   const bool fullLayer = dualLayer && doviIsFEL;
   const bool convert = take && heldPicture && pictureDv && !(pictureFEL ? fullLayer : dualLayer);
-  const bool takes = take && (!convert || RunsDolbyVision(hints));
+  const bool takes = take && (!convert || RunsDolbyVision(hints, output));
   CLog::Log(LOGDEBUG, "CAMLCodec::{}: {} the held {}", __FUNCTION__, takes ? "takes" : "releases",
             heldPicture ? "picture" : "output");
   if (!takes)
@@ -3255,8 +3257,8 @@ bool CAMLCodec::TakeHold(const CDVDStreamInfo& hints, bool doviIsFEL)
     m_handbackOff = false;
     m_keptPicture = true;
     pictureTaken = true;
-    pictureHdr10 = PlaysHdr10Output(hints, m_processInfo.GetIsHdr10Plus());
-    pictureDv = pictureDv && RunsDolbyVision(hints);
+    pictureHdr10 = PlaysHdr10Output(hints, output, m_processInfo.GetIsHdr10Plus());
+    pictureDv = pictureDv && RunsDolbyVision(hints, output);
     return true;
   }
 

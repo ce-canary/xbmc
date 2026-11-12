@@ -13,6 +13,7 @@
 #include "DVDStreamInfo.h"
 #include "threads/CriticalSection.h"
 #include "cores/VideoPlayer/Buffers/VideoBuffer.h"
+#include "utils/AMLUtils.h"
 #include "utils/BitstreamConverter.h"
 #include "utils/MVCFrameNumRewriter.h"
 
@@ -101,6 +102,7 @@ protected:
   bool            m_opened;
   int             m_codecControlFlags;
   CDVDStreamInfo  m_hints;
+  AMLVideoOutput  m_output;
   double          m_framerate;
   int             m_video_rate;
   float           m_aspect_ratio;

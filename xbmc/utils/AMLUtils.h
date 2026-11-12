@@ -6,7 +6,16 @@
  *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
 #include "utils/StreamDetails.h"
+
+extern "C"
+{
+#include <libavutil/pixfmt.h>
+}
+
+class CDVDStreamInfo;
 
 struct bd_clip;
 using BLURAY_CLIP_INFO = bd_clip;
@@ -67,6 +76,16 @@ bool aml_convert_to_hdr(StreamHdrType hdrType);
 bool aml_convert_to_sdr_by_vs_engine(StreamHdrType hdrType);
 bool aml_convert_to_hdr_by_vs_engine(StreamHdrType hdrType);
 bool aml_convert_to_dv_by_vs_engine(StreamHdrType hdrType);
+
+// what the decoder puts out for a source under the conversion settings
+struct AMLVideoOutput
+{
+  StreamHdrType hdrType{StreamHdrType::HDR_TYPE_NONE};
+  AVColorSpace colorSpace{AVCOL_SPC_UNSPECIFIED};
+  AVColorPrimaries colorPrimaries{AVCOL_PRI_UNSPECIFIED};
+  AVColorTransferCharacteristic colorTransfer{AVCOL_TRC_UNSPECIFIED};
+};
+AMLVideoOutput aml_video_output(const CDVDStreamInfo& source);
 bool aml_video_started();
 // `next` is the clip of the next item, nullptr when unknown
 void aml_continue_presentation(const BLURAY_CLIP_INFO* next);

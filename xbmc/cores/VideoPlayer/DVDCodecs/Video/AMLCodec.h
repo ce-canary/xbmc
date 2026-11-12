@@ -13,6 +13,7 @@
 #include "cores/IPlayer.h"
 #include "windowing/Resolution.h"
 #include "rendering/RenderSystem.h"
+#include "utils/AMLUtils.h"
 #include "utils/BitstreamConverter.h"
 #include "utils/Geometry.h"
 
@@ -75,7 +76,7 @@ public:
   CAMLCodec(CProcessInfo &processInfo);
   virtual ~CAMLCodec();
 
-  bool          OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL);
+  bool          OpenDecoder(CDVDStreamInfo &hints, const AMLVideoOutput &output, bool doviIsFEL);
   bool          Enable_vadj1();
   void          CloseDecoder();
   void          Reset();
@@ -179,7 +180,7 @@ private:
   static void   CloseOutput(bool dvEnabled, int dvPolicy, int decoderTimeout);
   static void   CloseLayers();
   Hold          HoldOnClose(bool dvEnabled, int& dvPolicy);
-  bool          TakeHold(const CDVDStreamInfo& hints, bool doviIsFEL);
+  bool          TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& output, bool doviIsFEL);
   void          EndHold(bool failed);
   void          HandBack();
   static void   ReleaseKept();
@@ -209,6 +210,7 @@ private:
   std::atomic<double> m_presentHold{0.0};
   am_private_t    *am_private;
   CDVDStreamInfo   m_hints;
+  AMLVideoOutput   m_output;
   int              m_speed;
   uint64_t         m_cur_pts;
   uint64_t         m_last_pts;
