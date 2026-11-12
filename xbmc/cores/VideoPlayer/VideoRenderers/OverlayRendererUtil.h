@@ -15,6 +15,7 @@
 class CDVDOverlayImage;
 class CDVDOverlaySpu;
 class CDVDOverlaySSA;
+struct HdrOverlayMapping;
 typedef struct ass_image ASS_Image;
 
 namespace OVERLAY
@@ -46,6 +47,15 @@ bool ShouldConvertPQPaletteToSRGB(bool isHDROverlay);
 //! sRGB white and brighter colours scaled down to it, hue kept. Alpha is
 //! untouched.
 void ConvertPQPaletteToSRGB(std::vector<uint32_t>& palette);
+
+//! True when an SDR PGS palette is drawn over the video at the video's SDR
+//! white instead of in the GUI: the GUI is composited to PQ and the platform
+//! knows that white.
+bool ShouldConvertSDRPaletteToPQ(const HdrOverlayMapping& mapping);
+
+//! Converts a PGS palette in place from BT.709 (power law gamma, black at zero)
+//! to BT.2020 ST.2084 (PQ), with white at whiteNits. Alpha is untouched.
+void ConvertSDRPaletteToPQ(std::vector<uint32_t>& palette, float whiteNits, float gamma);
 
 //! paletteOverride, when non-null, is used in place of o.palette - e.g.
 //! a palette already converted by ConvertPQPaletteToSRGB() above. o.pixels

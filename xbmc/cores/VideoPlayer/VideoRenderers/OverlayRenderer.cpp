@@ -129,10 +129,11 @@ void CRenderer::ReleaseCache()
 void CRenderer::CheckCompositeState()
 {
   const bool hdrComposite = CServiceBroker::GetWinSystem()->IsHdrComposite();
-  if (hdrComposite == m_hdrComposite)
+  if (hdrComposite == m_hdrComposite && m_videoMapping == m_cacheMapping)
     return;
 
   m_hdrComposite = hdrComposite;
+  m_cacheMapping = m_videoMapping;
   ReleaseCache();
 }
 
@@ -480,6 +481,13 @@ void CRenderer::SetStereoMode(const std::string &stereomode)
   m_stereomode = stereomode;
 }
 
+void CRenderer::SetVideoMapping(const HdrOverlayMapping& mapping)
+{
+  std::unique_lock lock(m_section);
+
+  m_videoMapping = mapping;
+}
+
 void CRenderer::SetSubtitleVerticalPosition(const int value, bool save)
 {
   std::unique_lock lock(m_section);
@@ -733,7 +741,19 @@ std::shared_ptr<COverlay> CRenderer::Convert(SElement& e)
   }
 
   if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE))
-    r = COverlay::Create(static_cast<CDVDOverlayImage&>(o), m_rs);
+  {
+    const CDVDOverlayImage& image = static_cast<CDVDOverlayImage&>(o);
+    // an sdr pgs is drawn like an authored pq one, at the video's sdr white
+    if (image.m_isSDRPgs && ShouldConvertSDRPaletteToPQ(m_videoMapping))
+    {
+      CDVDOverlayImage pq(image);
+      ConvertSDRPaletteToPQ(pq.palette, m_videoMapping.sdrWhite, m_videoMapping.sdrGamma);
+      pq.m_isHDROverlay = true;
+      r = COverlay::Create(pq, m_rs);
+    }
+    else
+      r = COverlay::Create(image, m_rs);
+  }
   else if (o.IsOverlayType(DVDOVERLAY_TYPE_SPU))
     r = COverlay::Create(static_cast<CDVDOverlaySpu&>(o));
 

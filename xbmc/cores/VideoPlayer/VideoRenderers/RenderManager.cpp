@@ -376,6 +376,7 @@ void CRenderManager::FrameMove()
     if (!m_presenting)
       CheckEnableClockSync();
   }
+  HdrOverlayMapping videoMapping;
   {
     std::unique_lock lock2(m_presentlock);
 
@@ -403,9 +404,11 @@ void CRenderManager::FrameMove()
       }
     }
 
+    videoMapping = m_pRenderer->GetOverlayMapping(GuiSource());
     m_playerPort->UpdateRenderBuffers(m_queued.size(), m_discard.size(), m_free.size());
     m_bRenderGUI = true;
   }
+  m_overlays.SetVideoMapping(videoMapping);
 
   m_overlays.PrepareMenu();
 

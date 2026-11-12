@@ -169,6 +169,7 @@ namespace OVERLAY {
     bool HasVisibleOverlay(int idx) const;
     void SetVideoRect(CRect &source, CRect &dest, CRect &view);
     void SetStereoMode(const std::string &stereomode);
+    void SetVideoMapping(const HdrOverlayMapping& mapping);
 
     /*!
      * \brief Set the subtitle vertical position,
@@ -254,6 +255,8 @@ namespace OVERLAY {
     std::map<unsigned int, std::shared_ptr<COverlay>> m_textureCache;
     static unsigned int m_textureid;
     bool m_hdrComposite{false};
+    HdrOverlayMapping m_videoMapping;
+    HdrOverlayMapping m_cacheMapping;
     CRect m_rv; // Frame size
     CRect m_rs; // Source size
     CRect m_rd; // Video size, may be influenced by video settings (e.g. zoom)
