@@ -462,6 +462,11 @@ KODI_HANDLE CInputStreamAddon::cb_get_stream_transfer(KODI_HANDLE handle,
     else
       videoStream->hdr_type = StreamHdrType::HDR_TYPE_NONE;
 
+    if (videoStream->colorSpace == AVCOL_SPC_UNSPECIFIED &&
+        (videoStream->colorTransferCharacteristic == AVCOL_TRC_SMPTE2084 ||
+         videoStream->colorTransferCharacteristic == AVCOL_TRC_ARIB_STD_B67))
+      videoStream->colorSpace = AVCOL_SPC_BT2020_NCL;
+
     if (stream->m_masteringMetadata)
     {
       videoStream->masteringMetaData = std::make_shared<AVMasteringDisplayMetadata>();
