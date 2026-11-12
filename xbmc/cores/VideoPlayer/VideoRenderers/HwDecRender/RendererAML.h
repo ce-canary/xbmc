@@ -58,6 +58,8 @@ public:
   virtual bool Supports(ESCALINGMETHOD method) const override { return false; };
   virtual bool Supports(ERENDERFEATURE feature) const override;
 
+  virtual HdrOverlayMapping GetOverlayMapping(int idx) override;
+
 private:
   void Reset();
   std::shared_ptr<CAMLCodec> QueueFrame(int index, bool setVideoRect, bool* drop = nullptr);
@@ -70,11 +72,14 @@ private:
     BUFFER() : videoBuffer(nullptr) {};
     CVideoBuffer *videoBuffer;
     int duration;
+    float sdrWhite{0.0f};
+    float sdrGamma{0.0f};
   } m_buffers[m_numRenderBuffers];
 
   uint64_t m_prevVPts;
   std::weak_ptr<CAMLCodec> m_prevCodec;
   uint64_t m_hdrGuiOwner{0};
+  int m_hdrGuiTransfer{0};
   bool m_bConfigured;
 
   std::atomic<bool> m_vsyncPresent{false};

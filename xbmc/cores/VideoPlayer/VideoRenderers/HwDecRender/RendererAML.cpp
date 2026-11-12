@@ -146,6 +146,7 @@ bool CRendererAML::Configure(const VideoPicture &picture, float fps, unsigned in
     winSystem->ReleaseHdrGuiSession(m_hdrGuiOwner);
     m_hdrGuiOwner = 0;
   }
+  m_hdrGuiTransfer = m_hdrGuiOwner != 0 ? color_transfer : 0;
 
   if (!m_capture)
     m_capture = CAMLCapture::Get();
@@ -203,11 +204,28 @@ CRenderInfo CRendererAML::GetRenderInfo()
   return info;
 }
 
+HdrOverlayMapping CRendererAML::GetOverlayMapping(int idx)
+{
+  HdrOverlayMapping mapping;
+  mapping.transfer = m_hdrGuiTransfer;
+  if (idx >= 0)
+  {
+    mapping.sdrWhite = m_buffers[idx].sdrWhite;
+    mapping.sdrGamma = m_buffers[idx].sdrGamma;
+  }
+  return mapping;
+}
+
 void CRendererAML::AddVideoPicture(const VideoPicture &picture, int index)
 {
   ReleaseBuffer(index);
 
   BUFFER &buf(m_buffers[index]);
+  // kept past ReleaseBuffer: the frame on screen outlives its released buffer
+  CAMLVideoBuffer *amli(dynamic_cast<CAMLVideoBuffer*>(picture.videoBuffer));
+  buf.sdrWhite = amli ? amli->m_sdrWhite : 0.0f;
+  buf.sdrGamma = amli ? amli->m_sdrGamma : 0.0f;
+
   if (picture.videoBuffer)
   {
     buf.videoBuffer = picture.videoBuffer;

@@ -44,6 +44,16 @@ enum RenderMethods
 
 struct VideoPicture;
 
+// how the composited HDR output shows SDR, for overlays drawn over the video
+struct HdrOverlayMapping
+{
+  int transfer{0}; // composited transfer (AVCOL_TRC_*), 0 when the GUI is not composited
+  float sdrWhite{0.0f}; // nits of SDR white on a PQ output, 0 when unknown
+  float sdrGamma{0.0f};
+
+  bool operator==(const HdrOverlayMapping&) const = default;
+};
+
 namespace KODI::RENDERING::CAPTURE
 {
 struct CaptureSpec;
@@ -142,6 +152,9 @@ public:
 
   // Gets debug info from render buffer
   virtual DEBUG_INFO_VIDEO GetDebugInfo(int idx) { return {}; }
+
+  // how the output shows SDR under the picture in buffer idx
+  virtual HdrOverlayMapping GetOverlayMapping(int idx) { return {}; }
 
 protected:
   void CalcDestRect(float offsetX,
