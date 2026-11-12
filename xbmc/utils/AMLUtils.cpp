@@ -322,6 +322,26 @@ bool aml_convert_to_dv_by_vs_engine(StreamHdrType hdrType)
   return ((convert_to_dv && !!user_convert_to_dv && !!dv_user_enabled) == 1);
 }
 
+static float aml_hdr_module_sdr_white()
+{
+  // a sink tone mapping lut replaces the gain, and the driver fills it only once video runs
+  CSysfsPath sbtmEnable{"/sys/module/aml_media/parameters/sbtm_en"};
+  CSysfsPath sbtmMode{"/sys/module/aml_media/parameters/sbtm_mode"};
+  if (sbtmEnable.Get<int>().value_or(0) != 0 && sbtmMode.Get<int>().value_or(0) != 0)
+    return 0.0f;
+
+  // sdr to hdr ootf gain, 512 is 1.0 on the 10000 nit pq scale, last entry at sdr white
+  constexpr size_t OOTF_LUT_SIZE = 149;
+  constexpr float OOTF_GAIN_ONE = 512.0f;
+  CSysfsPath gainLut{"/sys/module/aml_media/parameters/oo_y_lut_sdr_hdr"};
+  const std::vector<std::string> gains =
+      StringUtils::Split(gainLut.Get<std::string>().value_or(""), ",");
+  if (gains.size() != OOTF_LUT_SIZE)
+    return 0.0f;
+
+  return StringUtils::ToUint32(gains.back()) * 10000.0f / OOTF_GAIN_ONE;
+}
+
 AMLVideoOutput aml_video_output(const CDVDStreamInfo& source)
 {
   const StreamHdrType hdrType = source.hdrType;
@@ -342,6 +362,14 @@ AMLVideoOutput aml_video_output(const CDVDStreamInfo& source)
     toSdr = !toHdr && (aml_convert_to_sdr(hdrType) || aml_convert_to_sdr_by_vs_engine(hdrType));
   }
 
+  // dovi.ko draws an sdr source as bt.1886 at its default 300 nits and does not expose it
+  constexpr float DV_SDR_WHITE = 300.0f;
+  constexpr float BT1886_GAMMA = 2.4f;
+  // the hdr module's sdr eotf, eo_y_lut_sdr, is a 2.2 power law
+  constexpr float HDR_MODULE_SDR_GAMMA = 2.2f;
+  // ITU-R BT.2408 graphics white
+  constexpr float REFERENCE_WHITE = 203.0f;
+
   AMLVideoOutput output;
   output.hdrType = hdrType;
   output.colorSpace = source.colorSpace;
@@ -352,12 +380,19 @@ AMLVideoOutput aml_video_output(const CDVDStreamInfo& source)
     output.colorSpace = AVCOL_SPC_BT2020_NCL;
     output.colorPrimaries = AVCOL_PRI_BT2020;
     output.colorTransfer = AVCOL_TRC_SMPTE2084;
+    output.sdrWhite = dvByVsEngine ? DV_SDR_WHITE : aml_hdr_module_sdr_white();
+    output.sdrGamma = dvByVsEngine ? BT1886_GAMMA : HDR_MODULE_SDR_GAMMA;
   }
   else if (toSdr)
   {
     output.colorSpace = AVCOL_SPC_BT709;
     output.colorPrimaries = AVCOL_PRI_BT709;
     output.colorTransfer = AVCOL_TRC_BT709;
+  }
+  else if (hdrType != StreamHdrType::HDR_TYPE_NONE)
+  {
+    output.sdrWhite = REFERENCE_WHITE;
+    output.sdrGamma = BT1886_GAMMA;
   }
 
   if (dvByVsEngine)
