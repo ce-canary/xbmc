@@ -39,6 +39,7 @@ public:
   // player management
   void ClosePlayer();
   void ResetPlayer();
+  void OnStreamChange();
   std::string GetCurrentPlayer() const;
   float GetPlaySpeed() const;
   float GetPlayTempo() const;
@@ -236,6 +237,10 @@ private:
   CSeekHandler m_seekHandler;
 
   // cache player state
+  // keeps a refresh of the audio or video index from overwriting the AV change expiry; a
+  // player reference is taken before the lock, as a player's destructor waits for the AV
+  // change job that takes the lock
+  CCriticalSection m_streamCacheLock;
   XbmcThreads::EndTime<> m_audioStreamUpdate;
   int m_iAudioStream;
   XbmcThreads::EndTime<> m_videoStreamUpdate;

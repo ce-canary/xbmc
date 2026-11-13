@@ -70,6 +70,13 @@ void CApplicationPlayer::ResetPlayer()
   m_pPlayer.reset();
 }
 
+void CApplicationPlayer::OnStreamChange()
+{
+  std::unique_lock lock(m_streamCacheLock);
+  m_audioStreamUpdate.SetExpired();
+  m_videoStreamUpdate.SetExpired();
+}
+
 void CApplicationPlayer::CloseFile(bool reopen)
 {
   std::shared_ptr<IPlayer> player = GetInternal();
@@ -512,10 +519,11 @@ int CApplicationPlayer::GetSubtitleCount() const
 
 int CApplicationPlayer::GetAudioStream()
 {
+  std::shared_ptr<IPlayer> player = GetInternal();
+  std::unique_lock lock(m_streamCacheLock);
   if (!m_audioStreamUpdate.IsTimePast())
     return m_iAudioStream;
 
-  std::shared_ptr<IPlayer> player = GetInternal();
   if (player)
   {
     m_iAudioStream = player->GetAudioStream();
@@ -698,10 +706,11 @@ int CApplicationPlayer::GetAudioStreamCount() const
 
 int CApplicationPlayer::GetVideoStream()
 {
+  std::shared_ptr<IPlayer> player = GetInternal();
+  std::unique_lock lock(m_streamCacheLock);
   if (!m_videoStreamUpdate.IsTimePast())
     return m_iVideoStream;
 
-  std::shared_ptr<IPlayer> player = GetInternal();
   if (player)
   {
     m_iVideoStream = player->GetVideoStream();
