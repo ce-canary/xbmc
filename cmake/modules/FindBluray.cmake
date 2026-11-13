@@ -226,6 +226,7 @@ if(NOT TARGET ${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME})
       set(CMAKE_REQUIRED_LIBRARIES ${${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME}_LINK_LIBRARIES})
       foreach(symbol bd_presented
                      bd_set_presentation_hold
+                     bd_set_presentation_clock
                      BD_PRESENTED_ALL
                      BD_SEEK_REARMS_PLAYLIST_END
                      BD_PRESENTED_TITLE_END)
