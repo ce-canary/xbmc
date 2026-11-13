@@ -148,6 +148,24 @@ public:
    */
   double GetDisplayedPts();
 
+  struct OnScreenClock
+  {
+    double clock{DVD_NOPTS_VALUE};
+  };
+
+  /**
+   * The clock time of the picture on screen: the clock without the release lead, with the video
+   * delay
+   */
+  OnScreenClock GetOnScreenClock();
+
+  /**
+   * The time on screen: the displayed pts while it is the last picture known, else the on-screen
+   * clock floored at the displayed pts and capped at the next picture; DVD_NOPTS_VALUE while the
+   * displayed pts is unknown
+   */
+  double GetPresentedPts();
+
   /**
    * Video player call this on flush in order to discard any queued frames
    */
@@ -195,6 +213,9 @@ protected:
   void UpdateLatencyTweak();
   //! Release lead in ms without the video delay; needs m_pRenderer
   double CalcReleaseLead();
+  //! Under m_presentlock: the released frame not yet on the plane, else the first queued one, -1
+  //! for none
+  int GetNextPictureSource() const;
   void CheckEnableClockSync();
 
   //! The vsync thread picks and presents; the render loop draws the frame it last presented
@@ -259,7 +280,8 @@ protected:
   /// Display latency updated in PrepareNextRender in DVD clock units, includes m_latencyTweak
   std::atomic<double> m_displayLatency = 0.0;
   std::atomic_int m_videoDelay = {};
-  // the video delay the release and the clock sync phase use, presenter or render thread only
+  // the video delay the release and the clock sync phase use, set by the presenter or render
+  // thread under m_presentlock
   int m_appliedVideoDelay{0};
   std::atomic_bool m_videoDelayCommit{false};
 
