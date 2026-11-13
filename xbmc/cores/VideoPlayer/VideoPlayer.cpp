@@ -2411,7 +2411,7 @@ void CVideoPlayer::Process()
                            m_CurrentVideo.syncState == IDVDStreamPlayer::SYNC_INSYNC &&
                            (m_VideoPlayerVideo->HasData() || !m_VideoPlayerVideo->IsEOS());
         const auto itemEnd = GetBlurayItemEnd();
-        const bool item = itemEnd && m_clock.GetClock() + m_offset_pts < *itemEnd;
+        const bool item = itemEnd && GetPictureClock() + m_offset_pts < *itemEnd;
         if (m_playSpeed <= 0 || (!audio && !video && !item))
         {
           if (m_navTail)
@@ -3128,18 +3128,26 @@ bool CVideoPlayer::IsBlurayJumpPending() const
 #endif
 }
 
+// the clock time of the picture on screen, the clock while no video is open
+double CVideoPlayer::GetPictureClock()
+{
+  return m_CurrentVideo.id >= 0 ? m_renderManager.GetOnScreenClock().clock : m_clock.GetClock();
+}
+
 double CVideoPlayer::GetBlurayPresentedTime()
 {
+  // the clock is on title time once every open stream plays in sync
+  const auto inSync = [](const CCurrentStream& current)
+  { return current.id < 0 || current.syncState == IDVDStreamPlayer::SYNC_INSYNC; };
+  const bool known = (m_CurrentAudio.id >= 0 || m_CurrentVideo.id >= 0) && inSync(m_CurrentAudio) &&
+                     inSync(m_CurrentVideo);
   // the frame on the plane holds its title time before the streams are in sync, and the
   // renderer releases frames a display latency ahead of the clock
-  double presented = m_CurrentVideo.id >= 0 ? m_renderManager.GetDisplayedPts() : DVD_NOPTS_VALUE;
+  double presented = DVD_NOPTS_VALUE;
+  if (m_CurrentVideo.id >= 0)
+    presented = known ? m_renderManager.GetPresentedPts() : m_renderManager.GetDisplayedPts();
   if (presented == DVD_NOPTS_VALUE)
   {
-    // the clock is on title time once every open stream plays in sync
-    const auto inSync = [](const CCurrentStream& current)
-    { return current.id < 0 || current.syncState == IDVDStreamPlayer::SYNC_INSYNC; };
-    const bool known = (m_CurrentAudio.id >= 0 || m_CurrentVideo.id >= 0) &&
-                       inSync(m_CurrentAudio) && inSync(m_CurrentVideo);
     if (!known)
       return DVD_NOPTS_VALUE;
     presented = m_clock.GetClock();
@@ -3149,7 +3157,7 @@ double CVideoPlayer::GetBlurayPresentedTime()
   if (const auto itemEnd = GetBlurayItemEnd())
   {
     if (m_videoDrained && !m_VideoPlayerVideo->HasData() && m_VideoPlayerVideo->IsEOS())
-      presented = std::max(presented, m_clock.GetClock());
+      presented = std::max(presented, GetPictureClock());
     const double tick = DVD_TIME_BASE * av_q2d(CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE);
     return std::min(presented + m_offset_pts, *itemEnd - tick);
   }
@@ -3207,7 +3215,7 @@ void CVideoPlayer::ReportBlurayReadPresented()
     const bool drained = !clockRuns && !m_VideoPlayerAudio->HasData() &&
                          !m_VideoPlayerVideo->HasData();
     bluray->SetLastPictureTime(drained ? DVD_NOPTS_VALUE : m_lastVideoTitleTime,
-                               clockRuns ? m_clock.GetClock() + m_offset_pts : DVD_NOPTS_VALUE);
+                               clockRuns ? GetPictureClock() + m_offset_pts : DVD_NOPTS_VALUE);
   }
 #endif
 }

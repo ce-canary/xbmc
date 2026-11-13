@@ -1673,6 +1673,33 @@ double CRenderManager::GetDisplayedPts()
   return m_displayedPts;
 }
 
+CRenderManager::OnScreenClock CRenderManager::GetOnScreenClock()
+{
+  std::unique_lock lock(m_presentlock);
+
+  return {m_dvdClock.GetClock() - DVD_MSEC_TO_TIME(m_appliedVideoDelay)};
+}
+
+double CRenderManager::GetPresentedPts()
+{
+  std::unique_lock lock(m_presentlock);
+
+  const int next = GetNextPictureSource();
+  if (m_displayedPts == DVD_NOPTS_VALUE || next < 0)
+    return m_displayedPts;
+
+  // the picture on screen stays until the next one, which waits for its pts
+  const double onScreen = m_dvdClock.GetClock() - DVD_MSEC_TO_TIME(m_appliedVideoDelay);
+  return std::max(m_displayedPts, std::min(onScreen, m_Queue[next].pts));
+}
+
+int CRenderManager::GetNextPictureSource() const
+{
+  if (m_presentsource >= 0 && m_presentsource != m_planeSource)
+    return m_presentsource;
+  return m_queued.empty() ? -1 : m_queued.front();
+}
+
 void CRenderManager::CheckEnableClockSync()
 {
   // refresh rate can be a multiple of video fps

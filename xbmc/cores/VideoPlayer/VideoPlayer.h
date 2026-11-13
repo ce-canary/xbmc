@@ -450,6 +450,7 @@ protected:
   bool IsBlurayJumpPending() const;
   bool PollBlurayEvents();
   std::optional<double> GetBlurayItemEnd() const;
+  double GetPictureClock();
   double GetBlurayPresentedTime();
   void ReportBlurayPresented();
   void ReportBlurayReadPresented();
