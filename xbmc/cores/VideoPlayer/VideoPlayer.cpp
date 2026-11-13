@@ -3217,7 +3217,45 @@ void CVideoPlayer::ReportBlurayPresented()
     return;
 
   bluray->SetPresentedTime(GetBlurayPresentedTime());
+  if (bluray->IsNavMode())
+  {
+    const auto [time, speed] = GetBlurayPresentationClock();
+    bluray->SetPresentationClock(time, speed);
+  }
 #endif
+}
+
+// the title time on screen as a line at the clock speed, for the disc program to run on between
+// samples; DVD_NOPTS_VALUE while the picture is not known to advance
+std::pair<double, double> CVideoPlayer::GetBlurayPresentationClock()
+{
+  if (!IsBlurayClockKnown())
+    return {DVD_NOPTS_VALUE, 0.0};
+
+  const auto itemEnd = GetBlurayItemEnd();
+  double time = m_clock.GetClock();
+  double speed = m_clock.IsPaused() ? 0.0 : m_clock.GetClockSpeed();
+  if (m_CurrentVideo.id >= 0)
+  {
+    const auto onScreen = m_renderManager.GetOnScreenClock();
+    const bool held = itemEnd && IsBlurayLastPictureHeld();
+    // with nothing to follow mid-item the picture on the plane may be late
+    if (!onScreen.hasNextPicture && !held)
+      return {DVD_NOPTS_VALUE, 0.0};
+    time = onScreen.clock;
+  }
+  time += m_offset_pts;
+
+  if (itemEnd)
+  {
+    const double tick = DVD_TIME_BASE * av_q2d(CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE);
+    if (time >= *itemEnd - tick)
+    {
+      time = *itemEnd - tick;
+      speed = 0.0;
+    }
+  }
+  return {time, speed};
 }
 
 // at the end of the data with no stream in sync the clock tells nothing

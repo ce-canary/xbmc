@@ -455,6 +455,7 @@ protected:
   bool IsBlurayLastPictureHeld();
   double GetBlurayPresentedTime();
   void ReportBlurayPresented();
+  std::pair<double, double> GetBlurayPresentationClock();
   void ReportBlurayReadPresented();
   void ReportBlurayItemPlayedOut();
   void CloseSubtitleForNextStream();
