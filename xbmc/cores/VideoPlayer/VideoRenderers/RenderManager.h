@@ -151,11 +151,12 @@ public:
   struct OnScreenClock
   {
     double clock{DVD_NOPTS_VALUE};
+    bool hasNextPicture{false};
   };
 
   /**
    * The clock time of the picture on screen: the clock without the release lead, with the video
-   * delay
+   * delay; and whether a picture is released or queued to follow the one on the plane
    */
   OnScreenClock GetOnScreenClock();
 

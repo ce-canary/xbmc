@@ -237,6 +237,12 @@ public:
   //! tell the disc program the title time on screen, DVD_NOPTS_VALUE when not known
   void SetPresentedTime(double time);
 
+  bool IsNavMode() const { return m_navmode; }
+
+  //! tell the disc program the title time on screen and the speed it runs at, DVD_NOPTS_VALUE
+  //! when not known
+  void SetPresentationClock(double time, double speed);
+
   //! tell the disc program that everything read is on screen or will not be shown
   void SetReadPresented();
 

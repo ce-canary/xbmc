@@ -2301,6 +2301,20 @@ void CDVDInputStreamBluray::SetPresentedTime(double time)
   ReportPresented(titleTime);
 }
 
+void CDVDInputStreamBluray::SetPresentationClock(double time, double speed)
+{
+  if (!m_bd)
+    return;
+
+  const int64_t titleTime =
+      time == DVD_NOPTS_VALUE || m_presentedLeft
+          ? -1
+          : av_rescale_q(static_cast<int64_t>(time), AVRational{1, DVD_TIME_BASE},
+                         CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE);
+  bd_set_presentation_clock(m_bd, titleTime,
+                            static_cast<int>(std::lround(speed * BLURAY_RATE_NORMAL)));
+}
+
 void CDVDInputStreamBluray::SetLastPictureTime(double time, double clockTime)
 {
   const auto toClipTime = [](double value)
