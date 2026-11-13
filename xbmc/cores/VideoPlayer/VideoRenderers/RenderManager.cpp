@@ -1677,7 +1677,8 @@ CRenderManager::OnScreenClock CRenderManager::GetOnScreenClock()
 {
   std::unique_lock lock(m_presentlock);
 
-  return {m_dvdClock.GetClock() - DVD_MSEC_TO_TIME(m_appliedVideoDelay)};
+  return {m_dvdClock.GetClock() - DVD_MSEC_TO_TIME(m_appliedVideoDelay),
+          GetNextPictureSource() >= 0};
 }
 
 double CRenderManager::GetPresentedPts()

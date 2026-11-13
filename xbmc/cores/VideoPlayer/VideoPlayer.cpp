@@ -2123,6 +2123,8 @@ void CVideoPlayer::Process()
     if (m_displayLost)
     {
       emptySince.reset();
+      // the disc program runs on the clock the display loss paused
+      ReportBlurayPresented();
       m_displayReset.Wait(50ms);
       continue;
     }
@@ -3128,6 +3130,21 @@ bool CVideoPlayer::IsBlurayJumpPending() const
 #endif
 }
 
+// the clock is on title time once every open stream plays in sync
+bool CVideoPlayer::IsDiscClockKnown() const
+{
+  const auto inSync = [](const CCurrentStream& current)
+  { return current.id < 0 || current.syncState == IDVDStreamPlayer::SYNC_INSYNC; };
+  return (m_CurrentAudio.id >= 0 || m_CurrentVideo.id >= 0) && inSync(m_CurrentAudio) &&
+         inSync(m_CurrentVideo);
+}
+
+// the picture on screen is the last of the video input and stays up until the item ends
+bool CVideoPlayer::IsBlurayLastPictureHeld() const
+{
+  return m_videoDrained && !m_VideoPlayerVideo->HasData() && m_VideoPlayerVideo->IsEOS();
+}
+
 // the clock time of the picture on screen, the clock while no video is open
 double CVideoPlayer::GetPictureClock()
 {
@@ -3136,11 +3153,7 @@ double CVideoPlayer::GetPictureClock()
 
 double CVideoPlayer::GetBlurayPresentedTime()
 {
-  // the clock is on title time once every open stream plays in sync
-  const auto inSync = [](const CCurrentStream& current)
-  { return current.id < 0 || current.syncState == IDVDStreamPlayer::SYNC_INSYNC; };
-  const bool known = (m_CurrentAudio.id >= 0 || m_CurrentVideo.id >= 0) && inSync(m_CurrentAudio) &&
-                     inSync(m_CurrentVideo);
+  const bool known = IsDiscClockKnown();
   // the frame on the plane holds its title time before the streams are in sync, and the
   // renderer releases frames a display latency ahead of the clock
   double presented = DVD_NOPTS_VALUE;
@@ -3152,11 +3165,11 @@ double CVideoPlayer::GetBlurayPresentedTime()
       return DVD_NOPTS_VALUE;
     presented = m_clock.GetClock();
   }
-  // once video has played out, the last picture of a held play item is shown at the clock until
-  // the item ends, one title tick before the next item starts
+  // the last picture of a held play item is shown at the clock until the item ends, one title
+  // tick before the next item starts
   if (const auto itemEnd = GetBlurayItemEnd())
   {
-    if (m_videoDrained && !m_VideoPlayerVideo->HasData() && m_VideoPlayerVideo->IsEOS())
+    if (IsBlurayLastPictureHeld())
       presented = std::max(presented, GetPictureClock());
     const double tick = DVD_TIME_BASE * av_q2d(CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE);
     return std::min(presented + m_offset_pts, *itemEnd - tick);
@@ -3187,6 +3200,44 @@ void CVideoPlayer::ReportBlurayPresented()
     return;
 
   bluray->SetPresentedTime(GetBlurayPresentedTime());
+  if (!bluray->IsNavMode())
+    return;
+
+  // the title time on screen as a line at the clock speed, for the disc program to run on between
+  // samples; DVD_NOPTS_VALUE while the picture is not known to advance
+  if (!IsDiscClockKnown())
+  {
+    bluray->SetPresentationClock(DVD_NOPTS_VALUE, 0.0);
+    return;
+  }
+
+  const auto itemEnd = GetBlurayItemEnd();
+  double time = m_clock.GetClock();
+  double speed = m_clock.IsPaused() ? 0.0 : m_clock.GetClockSpeed();
+  if (m_CurrentVideo.id >= 0)
+  {
+    const auto onScreen = m_renderManager.GetOnScreenClock();
+    const bool held = itemEnd && IsBlurayLastPictureHeld();
+    // with nothing to follow mid-item the picture on the plane may be late
+    if (!onScreen.hasNextPicture && !held)
+    {
+      bluray->SetPresentationClock(DVD_NOPTS_VALUE, 0.0);
+      return;
+    }
+    time = onScreen.clock;
+  }
+  time += m_offset_pts;
+
+  if (itemEnd)
+  {
+    const double tick = DVD_TIME_BASE * av_q2d(CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE);
+    if (time >= *itemEnd - tick)
+    {
+      time = *itemEnd - tick;
+      speed = 0.0;
+    }
+  }
+  bluray->SetPresentationClock(time, speed);
 #endif
 }
 
