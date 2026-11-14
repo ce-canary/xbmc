@@ -177,6 +177,10 @@ private:
     bool read{false};
     //! the engine placement gave it, -1 for none
     int engine{-1};
+    //! width x height as vdin bounds it on the stream `bounded`
+    std::weak_ptr<CStream> bounded{};
+    int boundWidth{0};
+    int boundHeight{0};
   };
 
   //! what an engine's stream carries
@@ -212,10 +216,10 @@ private:
   //! A continuous consumer holds one from its tap on, every read for its own duration.
   std::shared_ptr<void> Lease(AMLCaptureInput input, int width, int height);
   void ReleaseLease(AMLCaptureInput input, int width, int height);
-  //! `open` holds the open lock of `engine`, which an NV12 read releases once its stream runs; `use`
-  //! runs on buffer `index`, which is returned after it. `refused` tells that a refused open
-  //! changed the placement, so the reader reads again. With `logCause`, it logs why it gets no
-  //! frame
+  //! `open` holds the open lock of `engine`, which an NV12 read releases once its stream runs or
+  //! while its buffers grow; `use` runs on buffer `index`, which is returned after it. `refused`
+  //! tells that a refused open changed the placement, so the reader reads again. With `logCause`,
+  //! it logs why it gets no frame
   bool ReadStream(std::unique_lock<std::mutex>& open,
                   size_t engine,
                   AMLCaptureInput input,
