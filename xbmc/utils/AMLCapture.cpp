@@ -809,6 +809,7 @@ public:
 private:
   //! the turns of `inputs` to vdin; 0, else the errno
   int Schedule(uint32_t inputs);
+  //! a failure loses a running stream
   bool Queue(unsigned int index);
   //! `input` is the AMLCaptureInput of the frame, -1 for one the stream lacks; `entries` and
   //! `generation` the length and the wrapping count of the turns vdin filled it under
@@ -843,6 +844,7 @@ private:
   float m_framePeriodMs{0.0f};
   bool m_streaming{false};
   std::atomic<bool> m_stopped{false};
+  std::atomic<bool> m_lost{false};
   std::vector<std::pair<void*, size_t>> m_maps;
   std::function<void()> m_closed;
 
@@ -1157,7 +1159,19 @@ bool CAMLCapture::CStream::Queue(unsigned int index)
   buffer.memory = V4L2_MEMORY_MMAP;
   buffer.m.planes = &plane;
   buffer.length = 1;
-  return ioctl(m_fd, VIDIOC_QBUF, &buffer) == 0;
+  if (ioctl(m_fd, VIDIOC_QBUF, &buffer) == 0)
+    return true;
+
+  // vdin would never finish another frame in it
+  if (m_streaming && !m_stopped && !m_lost.exchange(true))
+  {
+    CLog::Log(LOGWARNING, "CAMLCapture::{}: buffer {} not queued: {}", __FUNCTION__, index,
+              strerror(errno));
+    const uint64_t wake = 1;
+    if (write(m_eventFd, &wake, sizeof(wake)) < 0)
+      CLog::Log(LOGDEBUG, "CAMLCapture::{}: wake failed: {}", __FUNCTION__, strerror(errno));
+  }
+  return false;
 }
 
 bool CAMLCapture::CStream::Dequeue(unsigned int& index,
@@ -1206,6 +1220,8 @@ CAMLCapture::CStream::Wake CAMLCapture::CStream::Poll(AMLCaptureInput input, int
     ret = poll(fds, 3, timeoutMs);
   while (ret < 0 && errno == EINTR);
 
+  if (m_lost)
+    return Wake::LOST;
   if (m_stopped || (fds[1].revents & POLLIN) || (fds[2].revents & POLLIN))
     return Wake::STOPPED;
   if (fds[0].revents & POLLERR)
