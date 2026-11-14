@@ -12,13 +12,11 @@
 #include "utils/AMLCaptureConvert.h"
 #include "utils/Geometry.h"
 
-#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -158,13 +156,31 @@ private:
   using StreamFunc =
       std::function<bool(CStream& stream, unsigned int index, const AMLCaptureFrame& frame)>;
 
+  struct ConsumerConvert
+  {
+    std::mutex lock;
+    CAMLCaptureConvert convert;
+  };
+
+  //! the leases of one input and size
+  struct Consumer
+  {
+    AMLCaptureInput input{AMLCaptureInput::VIDEO};
+    int width{0};
+    int height{0};
+    int leases{0};
+    //! kept while the leases last, so a consumer converts beside the others
+    std::shared_ptr<ConsumerConvert> convert;
+  };
+
   //! Keeps a stream of input at least width x height running until the last lease is released.
   //! A continuous consumer holds one from its tap on, every read for its own duration.
   std::shared_ptr<void> Lease(AMLCaptureInput input, int width, int height);
   void ReleaseLease(AMLCaptureInput input, int width, int height);
-  //! m_readLock must be held; `use` runs on buffer `index`, which is queued again after it.
-  //! With `logCause`, it logs why it gets no frame
-  bool ReadStream(AMLCaptureInput input,
+  //! `open` holds m_readLock, which an NV12 read releases once its stream runs; `use` runs on
+  //! buffer `index`, which is returned after it. With `logCause`, it logs why it gets no frame
+  bool ReadStream(std::unique_lock<std::mutex>& open,
+                  AMLCaptureInput input,
                   uint32_t pixelFormat,
                   unsigned int buffers,
                   int width,
@@ -175,21 +191,23 @@ private:
   bool CanRead(AMLCaptureInput input) const;
   //! m_lock must be held; false, after logging why the video cannot be read when `log`
   bool Unreadable(bool log) const;
-  //! takes m_stream for Close; m_lock must be held
+  //! takes m_stream for Close; m_lock must be held, and the caller drops the stream after it
   std::shared_ptr<CStream> TakeStream();
-  void Close(std::shared_ptr<CStream> stream);
+  void Close(const std::shared_ptr<CStream>& stream);
+  //! m_lock must be held
+  std::vector<Consumer>::iterator FindConsumer(AMLCaptureInput input, int width, int height);
+  //! m_lock must be held
+  bool HasLease(AMLCaptureInput input) const;
   AMLCaptureColor GetSignal(const AMLCaptureSource& source) const;
   //! m_lock must be held
   void UpdateStatics(std::shared_ptr<const AMLFrameMetadata> meta);
 
   std::mutex m_lock;
   std::shared_ptr<CStream> m_stream;
-  //! taken streams not closed yet; the node refuses a new input while one is open
+  //! taken streams not gone yet; the node refuses a new input while one is open
   int m_closing{0};
   std::condition_variable m_closed;
-  //! per AMLCaptureInput
-  std::array<int, 2> m_leases{};
-  std::vector<std::tuple<AMLCaptureInput, int, int>> m_continuousSizes;
+  std::vector<Consumer> m_consumers;
   bool m_displayLost{false};
   uint32_t m_displayEpoch{0};
   //! the last video open found the node busy; every video read retries it
@@ -202,10 +220,10 @@ private:
   CRect m_videoRect;
   std::atomic<bool> m_presented{false};
 
-  //! serializes consumers; held across the frame wait, never taken by Stop
+  //! serializes stream opens and closes by readers; a shot holds it across its stream, never
+  //! taken by Stop or by a frame's return
   std::mutex m_readLock;
   //! the last open failed on a node that was not busy: open failures log at debug until one
   //! succeeds
   bool m_openFailed{false};
-  CAMLCaptureConvert m_convert;
 };
