@@ -31,21 +31,21 @@ struct AMLCaptureSource
   float titlePeak{0.0f};
 };
 
-//! The vdin1 loopback inputs: the video layer, and the screen as shown
+//! The vdin loopback inputs: the video layer, and the screen as shown
 enum class AMLCaptureInput
 {
   VIDEO,
   SCREEN,
 };
 
-//! A vdin1 frame, valid only inside CAMLCapture::Read
+//! A vdin frame, valid only inside CAMLCapture::Read
 struct AMLCaptureFrame
 {
   AMLCaptureImage image;
   AMLCaptureColor color;
 };
 
-//! A 10-bit vdin1 frame copied out of its stream
+//! A 10-bit vdin frame copied out of its stream
 struct AMLCaptureShotFrame
 {
   //! frame.image points into data
@@ -71,7 +71,7 @@ struct AMLCaptureVideoSpec
 {
   int width{0};
   int height{0};
-  //! the visible video, normalized to the output; vdin1 holds it at the frame origin
+  //! the visible video, normalized to the output; vdin holds it at the frame origin
   CRect rect;
   bool continuous{false};
   KODI::RENDERING::CAPTURE::CaptureScreenshot shot{
@@ -126,7 +126,7 @@ public:
   //! output mode shows no picture.
   bool Read(AMLCaptureInput input, int width, int height, const ReadFunc& use);
   //! Consumer thread: copy out a frame of a one-shot 10-bit video stream of the size asked for;
-  //! vdin1 settles what it delivers. The stream closes before this returns; a continuous reader
+  //! vdin settles what it delivers. The stream closes before this returns; a continuous reader
   //! reopens its own.
   bool ReadShot(KODI::RENDERING::CAPTURE::CaptureScreenshot shot,
                 int width,
@@ -152,7 +152,7 @@ public:
   void CreateCompositePixels(KODI::RENDERING::CAPTURE::CaptureResult& result);
 
   //! Render thread: continuous sRGB BGRA pixels of the screen in result, read at each Lock, so they
-  //! outlast a stretch with no drawn frame. No pixels without a vdin1 screen input.
+  //! outlast a stretch with no drawn frame. No pixels without a vdin screen input.
   static void CreateLivePixels(int width,
                                int height,
                                KODI::RENDERING::CAPTURE::CaptureResult& result);

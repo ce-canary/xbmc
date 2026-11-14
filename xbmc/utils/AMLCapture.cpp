@@ -34,6 +34,7 @@
 #include <filesystem>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -64,7 +65,7 @@ constexpr uint32_t PIX_FMT_YUV422_10P = v4l2_fourcc('A', 'Y', '2', 'P');
 // its payload in turn, one per frame, at its size
 constexpr uint32_t CID_CAPTURE_INPUT_SCHEDULE = V4L2_CID_USER_BASE + 0x2100 + 9;
 constexpr size_t SCHEDULE_ENTRIES = 7;
-// vdin1 raises this to the fewest it allows
+// vdin raises this to the fewest it allows
 constexpr unsigned int SHOT_BUFFERS = 1;
 // V4L2_PIX_FMT_FLAG_AML_COSITED_CHROMA in the vendor tvin.h
 constexpr uint8_t PIX_FMT_FLAG_COSITED_CHROMA = 0x80;
@@ -120,10 +121,12 @@ struct CaptureSchedule
 struct AMLCaptureDevice
 {
   std::string path;
+  bool vdin1{false};
   //! per AMLCaptureInput, the node input of its tap, -1 without one
   std::array<int, 2> inputs{-1, -1};
   //! the widest scaled capture
   int maxWidth{0};
+  bool shot{false};
 
   bool Offers(AMLCaptureInput input) const { return inputs[static_cast<size_t>(input)] >= 0; }
 };
@@ -140,7 +143,7 @@ void FitOutput(int maxWidth, int& width, int& height)
 
 std::vector<AMLCaptureDevice> Discover()
 {
-  AMLCaptureDevice device;
+  std::vector<AMLCaptureDevice> devices;
 
   // only vdin nodes are opened: other V4L2 drivers allocate on open
   std::error_code ec;
@@ -155,45 +158,55 @@ std::vector<AMLCaptureDevice> Discover()
     if (fd < 0)
       continue;
 
+    // a node is an engine by its loopback taps; vdin binds a tap to a write-back channel itself,
+    // so the first input of a tap names it
+    AMLCaptureDevice device;
+    device.path = path;
     v4l2_capability cap{};
-    if (ioctl(fd, VIDIOC_QUERYCAP, &cap) == 0 &&
-        std::string(reinterpret_cast<const char*>(cap.bus_info)) == "vdin1 v4l2")
+    device.vdin1 = ioctl(fd, VIDIOC_QUERYCAP, &cap) == 0 &&
+                   std::string(reinterpret_cast<const char*>(cap.bus_info)) == "vdin1 v4l2";
+    v4l2_input input{};
+    for (input.index = 0; ioctl(fd, VIDIOC_ENUMINPUT, &input) == 0; input.index++)
     {
-      v4l2_input input{};
-      for (input.index = 0; ioctl(fd, VIDIOC_ENUMINPUT, &input) == 0; input.index++)
-      {
-        const std::string inputName(reinterpret_cast<const char*>(input.name));
-        if (inputName == "VIU1_WB0_VD1")
-        {
-          device.path = path;
-          device.inputs[static_cast<size_t>(AMLCaptureInput::VIDEO)] =
-              static_cast<int>(input.index);
-        }
-        else if (inputName == "VIU1_WB0_POST_BLEND")
-          device.inputs[static_cast<size_t>(AMLCaptureInput::SCREEN)] =
-              static_cast<int>(input.index);
-      }
-      v4l2_frmsizeenum size{};
-      size.pixel_format = V4L2_PIX_FMT_NV12;
-      if (ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &size) == 0)
-        device.maxWidth = static_cast<int>(size.stepwise.max_width);
-      else
-        device.inputs[static_cast<size_t>(AMLCaptureInput::VIDEO)] = -1;
+      const std::string inputName(reinterpret_cast<const char*>(input.name));
+      if (!inputName.starts_with("VIU1_"))
+        continue;
+      int* port = nullptr;
+      if (inputName.ends_with("_VD1"))
+        port = &device.inputs[static_cast<size_t>(AMLCaptureInput::VIDEO)];
+      else if (inputName.ends_with("_POST_BLEND"))
+        port = &device.inputs[static_cast<size_t>(AMLCaptureInput::SCREEN)];
+      if (port && *port < 0)
+        *port = static_cast<int>(input.index);
     }
+    v4l2_fmtdesc format{};
+    format.type = BUFFER_TYPE;
+    for (format.index = 0; ioctl(fd, VIDIOC_ENUM_FMT, &format) == 0; format.index++)
+      device.shot = device.shot || format.pixelformat == PIX_FMT_YUV422_10P;
+    v4l2_frmsizeenum size{};
+    size.pixel_format = V4L2_PIX_FMT_NV12;
+    if (ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &size) == 0)
+      device.maxWidth = static_cast<int>(size.stepwise.max_width);
+    else
+      device.inputs = {-1, -1};
     close(fd);
-    if (device.Offers(AMLCaptureInput::VIDEO))
-      break;
+
+    if (!device.Offers(AMLCaptureInput::VIDEO) && !device.Offers(AMLCaptureInput::SCREEN))
+      continue;
+    CLog::Log(LOGINFO, "CAMLCapture::{}: capture on {}: video input {}, screen input {}{}",
+              __FUNCTION__, device.path, device.inputs[static_cast<size_t>(AMLCaptureInput::VIDEO)],
+              device.inputs[static_cast<size_t>(AMLCaptureInput::SCREEN)],
+              device.shot ? ", 10-bit shots" : "");
+    devices.push_back(device);
   }
 
-  if (!device.Offers(AMLCaptureInput::VIDEO))
-  {
-    CLog::Log(LOGINFO, "CAMLCapture::{}: no vdin1 video capture node", __FUNCTION__);
-    return {};
-  }
-  CLog::Log(LOGINFO, "CAMLCapture::{}: video capture on {} input {}, screen input {}", __FUNCTION__,
-            device.path, device.inputs[static_cast<size_t>(AMLCaptureInput::VIDEO)],
-            device.inputs[static_cast<size_t>(AMLCaptureInput::SCREEN)]);
-  return {device};
+  // placement breaks ties by engine index, so vdin1, the node of a capture alone, is engine 0; the
+  // others follow in path order, as the directory order varies
+  std::sort(devices.begin(), devices.end(), [](const AMLCaptureDevice& a, const AMLCaptureDevice& b)
+            { return a.vdin1 != b.vdin1 ? a.vdin1 : a.path < b.path; });
+  if (devices.empty())
+    CLog::Log(LOGINFO, "CAMLCapture::{}: no vdin capture node", __FUNCTION__);
+  return devices;
 }
 
 const std::vector<AMLCaptureDevice>& FindDevices()
@@ -793,7 +806,6 @@ private:
   uint32_t m_pixelFormat{V4L2_PIX_FMT_NV12};
   int m_width{0};
   int m_height{0};
-  // the size vdin1 agreed to deliver for the size asked for
   int m_imageWidth{0};
   int m_imageHeight{0};
   int m_stride{0};
@@ -1609,26 +1621,31 @@ bool CAMLCapture::ReadShot(CaptureScreenshot shot,
                            AMLCaptureShotFrame& frame)
 {
   const std::vector<AMLCaptureDevice>& devices = FindDevices();
-  size_t engine = devices.size();
+  std::vector<size_t> engines;
   {
     std::lock_guard lock(m_lock);
-    // the engine whose stream carries the video, else the one with the fewest consumers
+    // an idle engine first, so no consumer stops; else the one whose stream carries the video,
+    // then the one with the fewest consumers
     const std::vector<Plan> plans = Place();
     const auto rank = [&plans](size_t e)
     {
-      return std::make_pair((plans[e].inputs & Bit(AMLCaptureInput::VIDEO)) == 0,
-                            plans[e].consumers);
+      return std::make_tuple(plans[e].inputs != 0,
+                             (plans[e].inputs & Bit(AMLCaptureInput::VIDEO)) == 0,
+                             plans[e].consumers);
     };
     for (size_t e = 0; e < devices.size(); e++)
     {
-      if (devices[e].Offers(AMLCaptureInput::VIDEO) &&
-          (engine == devices.size() || rank(e) < rank(engine)))
-        engine = e;
+      if (devices[e].shot && devices[e].Offers(AMLCaptureInput::VIDEO))
+        engines.push_back(e);
     }
+    std::stable_sort(engines.begin(), engines.end(),
+                     [&rank](size_t a, size_t b) { return rank(a) < rank(b); });
   }
-  if (engine == devices.size())
+  if (engines.empty())
+  {
+    CLog::Log(LOGWARNING, "CAMLCapture::{}: no node captures 10-bit video", __FUNCTION__);
     return false;
-  std::unique_lock open(m_engines[engine].open);
+  }
 
   // a full frame copy takes longer than a continuous reader can wait, so it runs from a dmabuf of
   // the frame after the stream closes
@@ -1655,26 +1672,33 @@ bool CAMLCapture::ReadShot(CaptureScreenshot shot,
         close(dmabuf);
       return false;
     }
-    // vdin1 must not refill the exported buffer once it is queued again
+    // vdin must not refill the exported buffer once it is queued again
     stream.Stop();
     return true;
   };
 
-  bool refused = false;
-  const bool ok = ReadStream(open, engine, AMLCaptureInput::VIDEO, PIX_FMT_YUV422_10P, width,
-                             height, copy, refused, shot == CaptureScreenshot::NATIVE);
-
-  // close the shot stream whatever leases remain
-  std::shared_ptr<CStream> stream;
+  bool ok = false;
+  for (const size_t engine : engines)
   {
-    std::lock_guard lock(m_lock);
-    const std::shared_ptr<CStream>& current = m_engines[engine].stream;
-    if (current && current->GetPixelFormat() == PIX_FMT_YUV422_10P)
-      stream = TakeStream(engine);
+    std::unique_lock open(m_engines[engine].open);
+    bool refused = false;
+    ok = ReadStream(open, engine, AMLCaptureInput::VIDEO, PIX_FMT_YUV422_10P, width, height, copy,
+                    refused, shot == CaptureScreenshot::NATIVE);
+
+    // close the shot stream whatever leases remain
+    std::shared_ptr<CStream> stream;
+    {
+      std::lock_guard lock(m_lock);
+      const std::shared_ptr<CStream>& current = m_engines[engine].stream;
+      if (current && current->GetPixelFormat() == PIX_FMT_YUV422_10P)
+        stream = TakeStream(engine);
+    }
+    Close(stream);
+    stream.reset();
+    open.unlock();
+    if (!refused)
+      break;
   }
-  Close(stream);
-  stream.reset();
-  open.unlock();
 
   if (map != MAP_FAILED)
   {
@@ -1818,7 +1842,9 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
       node.openFailed = !stream;
 
     std::lock_guard lock(m_lock);
-    if (!shot)
+    if (shot)
+      refused = !stream;
+    else
     {
       // a mode set, a change of our own streams and a shot meanwhile refuse an open too
       const bool ours =
@@ -1856,8 +1882,9 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
       const bool unscheduled = refusal == CStream::Refusal::NO_TURNS;
       CLog::Log(LOGWARNING, "CAMLCapture::{}: {} refused inputs {:#x}: {}", __FUNCTION__,
                 device.path, inputs, unscheduled ? "no turns" : "no room");
-      // the consumers it was refused for are placed again; without turns the reader's stays
-      const uint32_t moved = unscheduled ? ~Bit(input) : node.busy;
+      // the consumers it was refused for are placed again; without turns the reader's stays; a
+      // shot moves itself
+      const uint32_t moved = shot ? 0 : unscheduled ? ~Bit(input) : node.busy;
       for (Consumer& consumer : m_consumers)
       {
         if (consumer.engine == static_cast<int>(engine) && (moved & Bit(consumer.input)))
@@ -1894,7 +1921,7 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
     stream->Return(index);
     return ok;
   }
-  // vdin1 stopped the stream without the reader, so the next read opens a new one
+  // vdin stopped the stream without the reader, so the next read opens a new one
   if (wake == CStream::Wake::LOST)
   {
     {
@@ -1904,10 +1931,11 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
     }
     for (const auto& old : stale)
       Close(old);
-    CLog::Log(LOGWARNING, "CAMLCapture::{}: vdin1 stopped the stream", __FUNCTION__);
+    CLog::Log(LOGWARNING, "CAMLCapture::{}: vdin stopped the stream on {}", __FUNCTION__,
+              device.path);
     return false;
   }
-  // vdin1 gives no frames while the output is muted, so a stream stays open through silence
+  // vdin gives no frames while the output is muted, so a stream stays open through silence
   if (wake == CStream::Wake::TIMEOUT)
   {
     std::lock_guard lock(m_lock);
@@ -1965,7 +1993,7 @@ AMLCaptureColor CAMLCapture::GetSignal(const AMLCaptureSource& source) const
   bool mapped = !sourcePQ;
 
   // hdr_conversion_ctrl does not follow the DV core, so it is read only without DV; under DV,
-  // vdin1 sees the core3 input in every mode
+  // vdin sees the core3 input in every mode
   if (display->aml_get_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC) == 1 &&
       display->aml_get_drmProperty("dv_video_on", DRM_MODE_OBJECT_CRTC) == 1)
   {
