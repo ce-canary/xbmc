@@ -134,11 +134,8 @@ struct GuiReadback
 class CAMLCompositePixels : public ICapturePixels
 {
 public:
-  CAMLCompositePixels(std::weak_ptr<CAMLCapture> session,
-                      std::shared_ptr<void> lease,
-                      GuiReadback gui)
+  CAMLCompositePixels(std::weak_ptr<CAMLCapture> session, GuiReadback gui)
     : m_session(std::move(session)),
-      m_lease(std::move(lease)),
       m_gui(std::move(gui))
   {
   }
@@ -171,8 +168,6 @@ public:
       ok = session->ReadVideo(m_gui.shot, m_gui.streamWidth, m_gui.streamHeight,
                               [this](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
                               { return Blend(frame, convert); });
-    if (m_gui.shot != CaptureScreenshot::NONE)
-      m_lease.reset();
     // a native screenshot that is only the GUI would pass for a capture of the screen, and a GUI
     // in an HDR coding for SDR
     if (!ok && (native || m_gui.coding.transfer != AMLCaptureCoding::Transfer::SDR))
@@ -390,7 +385,6 @@ private:
   }
 
   std::weak_ptr<CAMLCapture> m_session;
-  std::shared_ptr<void> m_lease;
   GuiReadback m_gui;
   std::mutex m_lock;
   bool m_read{false};
@@ -475,7 +469,7 @@ void CScreenshotSurfaceAML::TakePixels(const CaptureSpec& requested, CaptureResu
   gui.shot = spec.screenshot;
 
   const bool rgb = spec.screenshot == CaptureScreenshot::STANDARD;
-  result.pixels = std::make_shared<CAMLCompositePixels>(session, session->Lease(), std::move(gui));
+  result.pixels = std::make_shared<CAMLCompositePixels>(session, std::move(gui));
   result.width = static_cast<unsigned int>(m_width);
   result.height = static_cast<unsigned int>(m_height);
   result.stride = m_width * (rgb ? 3 : 4);
