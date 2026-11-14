@@ -39,6 +39,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <linux/dma-heap.h>
 #include <linux/videodev2.h>
 #include <poll.h>
 #include <sys/eventfd.h>
@@ -65,6 +66,8 @@ constexpr uint32_t PIX_FMT_YUV422_10P = v4l2_fourcc('A', 'Y', '2', 'P');
 // its payload in turn, one per frame, at its size
 constexpr uint32_t CID_CAPTURE_INPUT_SCHEDULE = V4L2_CID_USER_BASE + 0x2100 + 9;
 constexpr size_t SCHEDULE_ENTRIES = 7;
+// the codec memory pool, which vdin's own buffers come from
+constexpr const char* CAPTURE_HEAP = "/dev/dma_heap/heap-codecmm";
 // vdin raises this to the fewest it allows
 constexpr unsigned int SHOT_BUFFERS = 1;
 // V4L2_PIX_FMT_FLAG_AML_COSITED_CHROMA in the vendor tvin.h
@@ -117,6 +120,55 @@ struct CaptureSchedule
   uint32_t height{0};
   uint32_t inputs[SCHEDULE_ENTRIES]{};
 };
+
+struct CaptureBuffer
+{
+  //! a dmabuf, -1 for a buffer of the node's own
+  int fd{-1};
+  void* map{MAP_FAILED};
+  size_t length{0};
+};
+
+void Free(CaptureBuffer& buffer)
+{
+  if (buffer.map != MAP_FAILED)
+    munmap(buffer.map, buffer.length);
+  if (buffer.fd >= 0)
+    close(buffer.fd);
+  buffer = {};
+}
+
+// `count` dmabufs of `length` bytes, mapped for reading; none when one fails
+std::vector<CaptureBuffer> Allocate(size_t count, size_t length, int logLevel)
+{
+  std::vector<CaptureBuffer> buffers;
+  const int heap = open(CAPTURE_HEAP, O_RDWR | O_CLOEXEC);
+  while (heap >= 0 && buffers.size() < count)
+  {
+    dma_heap_allocation_data data{};
+    data.len = length;
+    data.fd_flags = O_RDWR | O_CLOEXEC;
+    if (ioctl(heap, DMA_HEAP_IOCTL_ALLOC, &data) < 0)
+      break;
+    CaptureBuffer& buffer = buffers.emplace_back();
+    buffer.fd = static_cast<int>(data.fd);
+    buffer.length = length;
+    buffer.map = mmap(nullptr, length, PROT_READ, MAP_SHARED, buffer.fd, 0);
+    if (buffer.map == MAP_FAILED)
+      break;
+  }
+  const int error = errno;
+  if (heap >= 0)
+    close(heap);
+  if (!buffers.empty() && buffers.size() == count && buffers.back().map != MAP_FAILED)
+    return buffers;
+
+  CLog::Log(logLevel, "CAMLCapture::{}: no {} buffers of {} bytes: {}", __FUNCTION__, count, length,
+            strerror(error));
+  for (CaptureBuffer& buffer : buffers)
+    Free(buffer);
+  return {};
+}
 
 struct AMLCaptureDevice
 {
@@ -745,6 +797,14 @@ public:
     LOST,
   };
 
+  enum class Growth
+  {
+    GROWN,
+    GROWING,
+    //! no larger buffers, a window of frame periods without one taken in, or the stream stopped
+    FAILED,
+  };
+
   enum class Refusal
   {
     NONE,
@@ -772,8 +832,6 @@ public:
   void Stop();
   uint32_t GetInputs() const { return m_inputs; }
   uint32_t GetPixelFormat() const { return m_pixelFormat; }
-  int GetWidth() const { return m_width; }
-  int GetHeight() const { return m_height; }
   float GetFramePeriodMs() const { return m_framePeriodMs; }
   bool IsScheduled() const { return m_scheduled; }
   //! under the session lock
@@ -783,33 +841,65 @@ public:
            height == m_readHeight;
   }
   //! under the session lock
+  bool Serves(AMLCaptureInput input, int width, int height) const
+  {
+    return (m_inputs & Bit(input)) && width <= m_readWidth && height <= m_readHeight;
+  }
+  //! under the session lock
   void SetReadSize(int width, int height)
   {
     m_readWidth = width;
     m_readHeight = height;
   }
+  bool Fits(int width, int height);
+  //! Without the engine's open lock: gives each buffer that does not fit width x height a larger
+  //! one when it next goes back to vdin; with `wait` waits until all of them did
+  Growth Grow(int width, int height, bool wait, int logLevel);
   //! Under the engine's open lock: vdin captures `inputs` in turn at width x height from its next
   //! round on, which the buffers must fit. False when the stream stopped or vdin kept the old
   //! turns; `refusal` tells why. `settled` runs once vdin dropped the inputs that left, or at once.
-  bool SetInputs(uint32_t inputs, int logLevel, std::function<void()> settled, Refusal& refusal);
+  bool SetInputs(uint32_t inputs,
+                 int width,
+                 int height,
+                 int logLevel,
+                 std::function<void()> settled,
+                 Refusal& refusal);
   //! the stream calls `closed` once it is gone, after its node is closed
   void SetClosed(std::function<void()> closed) { m_closed = std::move(closed); }
   //! Takes the newest frame of `input` that holds width x height, or the running size when smaller;
   //! false without one or when a newer one must have come. It stays the readers' until Return.
-  bool Take(AMLCaptureInput input, unsigned int& index);
+  bool Take(AMLCaptureInput input, int width, int height, unsigned int& index);
   //! Any thread: the last reader of a frame queues it again
   void Return(unsigned int index);
-  Wake Wait(AMLCaptureInput input, int timeoutMs, unsigned int& index);
+  Wake Wait(AMLCaptureInput input, int width, int height, int timeoutMs, unsigned int& index);
+  //! width x height as vdin bounds it, 0 x 0 for a size it refuses
+  void Bound(int& width, int& height);
   AMLCaptureImage Image(unsigned int index) const;
-  size_t GetLength(unsigned int index) const { return m_maps[index].second; }
+  size_t GetLength(unsigned int index) const { return m_buffers[index].length; }
   //! a read-only dmabuf of buffer `index`, which keeps the buffer after the stream closes; -1 on
   //! failure
   int Export(unsigned int index) const;
 
 private:
-  //! the turns of `inputs` to vdin; 0, else the errno
-  int Schedule(uint32_t inputs);
-  //! a failure loses a running stream
+  struct Layout
+  {
+    int width{0};
+    int height{0};
+    int stride{0};
+    //! the bytes a buffer needs, 0 for a size vdin refuses
+    size_t size{0};
+  };
+
+  struct Request
+  {
+    int width{0};
+    int height{0};
+    Layout layout;
+  };
+
+  //! the turns of `inputs` at width x height to vdin; 0, else the errno
+  int Schedule(uint32_t inputs, int width, int height);
+  //! under m_bufferLock once the stream runs; a failure loses a running stream
   bool Queue(unsigned int index);
   //! `input` is the AMLCaptureInput of the frame, -1 for one the stream lacks; `entries` and
   //! `generation` the length and the wrapping count of the turns vdin filled it under
@@ -817,8 +907,13 @@ private:
                int& input,
                int& entries,
                int& generation,
+               Layout& layout,
                std::chrono::steady_clock::time_point& stamp);
-  Wake Poll(AMLCaptureInput input, int timeoutMs) const;
+  //! under m_bufferLock: parks the frames vdin finished and queues the stale ones again
+  void Drain();
+  //! under m_bufferLock
+  Layout GetLayout(int width, int height);
+  Wake Poll(int leaveFd, int timeoutMs) const;
 
   int m_fd{-1};
   int m_eventFd{-1};
@@ -831,25 +926,30 @@ private:
   int m_entries{0};
   bool m_scheduled{false};
   uint32_t m_pixelFormat{V4L2_PIX_FMT_NV12};
-  int m_width{0};
-  int m_height{0};
-  //! guarded by the session lock: the size its readers read at, below the stream's once inputs
-  //! left the turns
+  //! guarded by the session lock: the size its readers asked for
   int m_readWidth{0};
   int m_readHeight{0};
-  int m_imageWidth{0};
-  int m_imageHeight{0};
-  int m_stride{0};
+  Request m_format;
   bool m_cositedChroma{false};
   float m_framePeriodMs{0.0f};
+  uint32_t m_memory{V4L2_MEMORY_MMAP};
   bool m_streaming{false};
   std::atomic<bool> m_stopped{false};
   std::atomic<bool> m_lost{false};
-  std::vector<std::pair<void*, size_t>> m_maps;
   std::function<void()> m_closed;
 
   //! guards the dequeued frames: readers dequeue and return them on their own threads
   std::mutex m_bufferLock;
+  //! a buffer's memory changes only while no reader holds it
+  std::vector<CaptureBuffer> m_buffers;
+  std::vector<CaptureBuffer> m_grown;
+  size_t m_grownLength{0};
+  //! per buffer, the dmabuf it replaced, which vdin may still write until the buffer's next frame
+  std::vector<int> m_replaced;
+  //! the size the stream runs at and the one before, so a frame of either finds its layout
+  std::array<Request, 2> m_schedules;
+  std::array<Request, 2> m_layouts;
+  std::vector<Layout> m_frameLayouts;
   std::vector<int> m_borrows;
   std::vector<std::chrono::steady_clock::time_point> m_stamps;
   std::vector<int> m_entryCounts;
@@ -889,8 +989,6 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(const AMLCaptur
     return {};
 
   stream->m_pixelFormat = pixelFormat;
-  stream->m_width = width;
-  stream->m_height = height;
   stream->m_fd = open(device.path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
   stream->m_eventFd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
   for (int& fd : stream->m_leaveFds)
@@ -922,16 +1020,20 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(const AMLCaptur
   format.fmt.pix_mp.num_planes = 1;
   const bool fullPack = pixelFormat == PIX_FMT_YUV422_10P;
   const int ioctlResult = ioctl(stream->m_fd, VIDIOC_S_FMT, &format);
-  stream->m_stride = static_cast<int>(format.fmt.pix_mp.plane_fmt[0].bytesperline);
-  stream->m_imageWidth = static_cast<int>(format.fmt.pix_mp.width);
-  stream->m_imageHeight = static_cast<int>(format.fmt.pix_mp.height);
+  stream->m_format.width = width;
+  stream->m_format.height = height;
+  Layout& layout = stream->m_format.layout;
+  layout.width = static_cast<int>(format.fmt.pix_mp.width);
+  layout.height = static_cast<int>(format.fmt.pix_mp.height);
+  layout.stride = static_cast<int>(format.fmt.pix_mp.plane_fmt[0].bytesperline);
+  layout.size = format.fmt.pix_mp.plane_fmt[0].sizeimage;
+  stream->m_schedules[0] = stream->m_format;
   stream->m_cositedChroma = format.fmt.pix_mp.flags & PIX_FMT_FLAG_COSITED_CHROMA;
-  const size_t lumaSize = static_cast<size_t>(stream->m_stride) * stream->m_imageHeight;
+  const size_t lumaSize = static_cast<size_t>(layout.stride) * layout.height;
   const size_t frameSize = fullPack ? lumaSize : lumaSize * 3 / 2;
   if (ioctlResult < 0 || format.fmt.pix_mp.pixelformat != pixelFormat ||
-      stream->m_stride <
-          (fullPack ? stream->m_imageWidth / 2 * AML_FULL_PACK_PAIR_BYTES : stream->m_imageWidth) ||
-      format.fmt.pix_mp.plane_fmt[0].sizeimage < frameSize)
+      layout.stride < (fullPack ? layout.width / 2 * AML_FULL_PACK_PAIR_BYTES : layout.width) ||
+      layout.size < frameSize)
   {
     if (ioctlResult < 0 && errno == EBUSY)
       refusal = Refusal::OWNED;
@@ -951,39 +1053,54 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(const AMLCaptur
   }
   stream->m_framePeriodMs = 1000.0f * period.numerator / period.denominator;
 
+  // a shot exports its buffer, which vb2 does only for its own; a continuous stream brings dmabufs,
+  // so it can give them a larger size while it runs
+  stream->m_memory = fullPack ? V4L2_MEMORY_MMAP : V4L2_MEMORY_DMABUF;
   v4l2_requestbuffers request{};
   request.count = buffers;
   request.type = BUFFER_TYPE;
-  request.memory = V4L2_MEMORY_MMAP;
+  request.memory = stream->m_memory;
   if (ioctl(stream->m_fd, VIDIOC_REQBUFS, &request) < 0 || request.count == 0)
   {
     CLog::Log(logLevel, "CAMLCapture::{}: no capture buffers: {}", __FUNCTION__, strerror(errno));
     return {};
   }
 
-  for (unsigned int i = 0; i < request.count; i++)
+  if (!fullPack)
+    stream->m_buffers = Allocate(request.count, layout.size, logLevel);
+  else
   {
-    v4l2_plane plane{};
-    v4l2_buffer buffer{};
-    buffer.index = i;
-    buffer.type = BUFFER_TYPE;
-    buffer.memory = V4L2_MEMORY_MMAP;
-    buffer.m.planes = &plane;
-    buffer.length = 1;
-    if (ioctl(stream->m_fd, VIDIOC_QUERYBUF, &buffer) < 0 || plane.length < frameSize)
-      return {};
+    for (unsigned int i = 0; i < request.count; i++)
+    {
+      v4l2_plane plane{};
+      v4l2_buffer buffer{};
+      buffer.index = i;
+      buffer.type = BUFFER_TYPE;
+      buffer.memory = V4L2_MEMORY_MMAP;
+      buffer.m.planes = &plane;
+      buffer.length = 1;
+      if (ioctl(stream->m_fd, VIDIOC_QUERYBUF, &buffer) < 0 || plane.length < frameSize)
+        return {};
 
-    void* map =
-        mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, stream->m_fd, plane.m.mem_offset);
-    if (map == MAP_FAILED)
-      return {};
-    stream->m_maps.emplace_back(map, plane.length);
+      CaptureBuffer& own = stream->m_buffers.emplace_back();
+      own.length = plane.length;
+      own.map =
+          mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, stream->m_fd, plane.m.mem_offset);
+      if (own.map == MAP_FAILED)
+        return {};
+    }
   }
-  stream->m_borrows.resize(stream->m_maps.size());
-  stream->m_stamps.resize(stream->m_maps.size());
-  stream->m_entryCounts.resize(stream->m_maps.size());
+  if (stream->m_buffers.empty())
+    return {};
+  const size_t count = stream->m_buffers.size();
+  stream->m_borrows.resize(count);
+  stream->m_stamps.resize(count);
+  stream->m_entryCounts.resize(count);
+  stream->m_grown.resize(count);
+  stream->m_replaced.resize(count, -1);
+  stream->m_frameLayouts.resize(count);
 
-  for (unsigned int i = 0; i < stream->m_maps.size(); i++)
+  for (unsigned int i = 0; i < count; i++)
   {
     if (!stream->Queue(i))
       return {};
@@ -993,7 +1110,7 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(const AMLCaptur
   // inputs join the running stream
   if (stream->m_entries > 1 || turns)
   {
-    const int error = stream->Schedule(inputs);
+    const int error = stream->Schedule(inputs, layout.width, layout.height);
     if (error != 0)
     {
       if (error == EBUSY)
@@ -1029,8 +1146,15 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(const AMLCaptur
 CAMLCapture::CStream::~CStream()
 {
   Stop();
-  for (const auto& [map, length] : m_maps)
-    munmap(map, length);
+  for (CaptureBuffer& buffer : m_buffers)
+    Free(buffer);
+  for (CaptureBuffer& buffer : m_grown)
+    Free(buffer);
+  for (int fd : m_replaced)
+  {
+    if (fd >= 0)
+      close(fd);
+  }
   if (m_fd >= 0)
     close(m_fd);
   if (m_eventFd >= 0)
@@ -1067,9 +1191,11 @@ void CAMLCapture::CStream::Stop()
   }
 }
 
-int CAMLCapture::CStream::Schedule(uint32_t inputs)
+int CAMLCapture::CStream::Schedule(uint32_t inputs, int width, int height)
 {
   CaptureSchedule schedule;
+  schedule.width = static_cast<uint32_t>(width);
+  schedule.height = static_cast<uint32_t>(height);
   for (AMLCaptureInput input : INPUTS)
   {
     if (inputs & Bit(input))
@@ -1087,7 +1213,102 @@ int CAMLCapture::CStream::Schedule(uint32_t inputs)
   return ioctl(m_fd, VIDIOC_S_EXT_CTRLS, &controls) == 0 ? 0 : errno;
 }
 
+bool CAMLCapture::CStream::Fits(int width, int height)
+{
+  std::lock_guard lock(m_bufferLock);
+
+  const size_t size = GetLayout(width, height).size;
+  return size > 0 && std::ranges::all_of(m_buffers, [size](const CaptureBuffer& buffer)
+                                         { return buffer.length >= size; });
+}
+
+CAMLCapture::CStream::Growth CAMLCapture::CStream::Grow(int width,
+                                                        int height,
+                                                        bool wait,
+                                                        int logLevel)
+{
+  size_t size = 0;
+  size_t missing = 0;
+  {
+    std::lock_guard lock(m_bufferLock);
+    size = GetLayout(width, height).size;
+    if (size > m_grownLength)
+      missing = std::ranges::count_if(m_buffers, [size](const CaptureBuffer& buffer)
+                                      { return buffer.length < size; });
+  }
+  if (size == 0)
+    return Growth::FAILED;
+
+  // the set is allocated outside every lock, and kept across reads until each buffer took its own
+  if (missing > 0)
+  {
+    std::vector<CaptureBuffer> buffers = Allocate(missing, size, logLevel);
+    if (buffers.empty())
+      return Growth::FAILED;
+    {
+      std::lock_guard lock(m_bufferLock);
+      if (size > m_grownLength)
+      {
+        for (size_t i = 0; i < m_buffers.size(); i++)
+        {
+          Free(m_grown[i]);
+          if (m_buffers[i].length < size && !buffers.empty())
+          {
+            m_grown[i] = buffers.back();
+            buffers.pop_back();
+          }
+        }
+        m_grownLength = size;
+      }
+    }
+    for (CaptureBuffer& buffer : buffers)
+      Free(buffer);
+    CLog::Log(LOGINFO, "CAMLCapture::{}: buffers grow to {} bytes for {}x{}", __FUNCTION__, size,
+              width, height);
+  }
+  if (!wait)
+    return Fits(width, height) ? Growth::GROWN : Growth::GROWING;
+
+  // the buffers come back as vdin finishes them, which another reader may not drive; each one
+  // taken in starts a new window, so only a stream that stopped cycling fails
+  const auto window =
+      std::chrono::milliseconds(static_cast<int>(std::ceil(FRAME_WAIT_PERIODS * m_framePeriodMs)));
+  auto end = std::chrono::steady_clock::now();
+  size_t pending = std::numeric_limits<size_t>::max();
+  for (;;)
+  {
+    size_t waiting = 0;
+    {
+      std::lock_guard lock(m_bufferLock);
+      Drain();
+      waiting = std::ranges::count_if(m_grown,
+                                      [](const CaptureBuffer& buffer) { return buffer.fd >= 0; });
+    }
+    if (Fits(width, height))
+      return Growth::GROWN;
+    if (waiting < pending)
+    {
+      pending = waiting;
+      end = std::chrono::steady_clock::now() + window;
+    }
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          end - std::chrono::steady_clock::now())
+                          .count();
+    if (left <= 0)
+    {
+      CLog::Log(logLevel, "CAMLCapture::{}: no buffer grew to {}x{} in {} ms", __FUNCTION__, width,
+                height, window.count());
+      return Growth::FAILED;
+    }
+    const Wake wake = Poll(-1, static_cast<int>(left));
+    if (wake == Wake::STOPPED || wake == Wake::LOST)
+      return Growth::FAILED;
+  }
+}
+
 bool CAMLCapture::CStream::SetInputs(uint32_t inputs,
+                                     int width,
+                                     int height,
                                      int logLevel,
                                      std::function<void()> settled,
                                      Refusal& refusal)
@@ -1108,11 +1329,18 @@ bool CAMLCapture::CStream::SetInputs(uint32_t inputs,
     parked = -1;
   }
 
-  const int error = m_stopped ? 0 : Schedule(inputs);
+  const Layout layout = GetLayout(width, height);
+  const int error = m_stopped ? 0 : Schedule(inputs, layout.width, layout.height);
   if (!m_stopped && error == 0)
   {
     m_inputs = inputs;
     m_entries = std::popcount(inputs);
+    if (layout.width != m_schedules[0].layout.width ||
+        layout.height != m_schedules[0].layout.height)
+    {
+      m_schedules[1] = m_schedules[0];
+      m_schedules[0] = {width, height, layout};
+    }
     for (AMLCaptureInput input : INPUTS)
     {
       const int fd = m_leaveFds[static_cast<size_t>(input)];
@@ -1133,7 +1361,8 @@ bool CAMLCapture::CStream::SetInputs(uint32_t inputs,
     }
     else if (settled)
       settled();
-    CLog::Log(LOGINFO, "CAMLCapture::{}: inputs {:#x} take turns", __FUNCTION__, inputs);
+    CLog::Log(LOGINFO, "CAMLCapture::{}: inputs {:#x} take turns {}x{}", __FUNCTION__, inputs,
+              layout.width, layout.height);
     return true;
   }
 
@@ -1145,20 +1374,33 @@ bool CAMLCapture::CStream::SetInputs(uint32_t inputs,
   else if (error == EOPNOTSUPP)
     refusal = Refusal::NO_TURNS;
   else if (error != 0)
-    CLog::Log(logLevel, "CAMLCapture::{}: turns of inputs {:#x} refused: {}", __FUNCTION__, inputs,
-              strerror(error));
+    CLog::Log(logLevel, "CAMLCapture::{}: turns of inputs {:#x} at {}x{} refused: {}", __FUNCTION__,
+              inputs, layout.width, layout.height, strerror(error));
   return false;
 }
 
 bool CAMLCapture::CStream::Queue(unsigned int index)
 {
+  CaptureBuffer& own = m_buffers[index];
+  if (m_grown[index].fd >= 0)
+  {
+    munmap(own.map, own.length);
+    m_replaced[index] = own.fd;
+    own = std::exchange(m_grown[index], {});
+  }
+
   v4l2_plane plane{};
   v4l2_buffer buffer{};
   buffer.index = index;
   buffer.type = BUFFER_TYPE;
-  buffer.memory = V4L2_MEMORY_MMAP;
+  buffer.memory = m_memory;
   buffer.m.planes = &plane;
   buffer.length = 1;
+  if (m_memory == V4L2_MEMORY_DMABUF)
+  {
+    plane.m.fd = own.fd;
+    plane.length = static_cast<uint32_t>(own.length);
+  }
   if (ioctl(m_fd, VIDIOC_QBUF, &buffer) == 0)
     return true;
 
@@ -1178,18 +1420,23 @@ bool CAMLCapture::CStream::Dequeue(unsigned int& index,
                                    int& input,
                                    int& entries,
                                    int& generation,
+                                   Layout& layout,
                                    std::chrono::steady_clock::time_point& stamp)
 {
   v4l2_plane plane{};
   v4l2_buffer buffer{};
   buffer.type = BUFFER_TYPE;
-  buffer.memory = V4L2_MEMORY_MMAP;
+  buffer.memory = m_memory;
   buffer.m.planes = &plane;
   buffer.length = 1;
   if (ioctl(m_fd, VIDIOC_DQBUF, &buffer) < 0)
     return false;
 
   index = buffer.index;
+  if (m_replaced[index] >= 0)
+    close(std::exchange(m_replaced[index], -1));
+  // an unstamped frame has the size of the open
+  layout = m_format.layout;
   stamp =
       std::chrono::steady_clock::time_point(std::chrono::seconds(buffer.timestamp.tv_sec) +
                                             std::chrono::microseconds(buffer.timestamp.tv_usec));
@@ -1206,15 +1453,19 @@ bool CAMLCapture::CStream::Dequeue(unsigned int& index,
           m_ports[static_cast<size_t>(tap)] == static_cast<int>(buffer.timecode.userbits[0]))
         input = static_cast<int>(tap);
     }
+    const int width = buffer.timecode.frames | buffer.timecode.seconds << 8;
+    const int height = buffer.timecode.minutes | buffer.timecode.hours << 8;
+    if (input >= 0 && width > 0 && height > 0)
+      layout = GetLayout(width, height);
   }
+  if (layout.size == 0)
+    input = -1;
   return true;
 }
 
-CAMLCapture::CStream::Wake CAMLCapture::CStream::Poll(AMLCaptureInput input, int timeoutMs) const
+CAMLCapture::CStream::Wake CAMLCapture::CStream::Poll(int leaveFd, int timeoutMs) const
 {
-  pollfd fds[] = {{m_fd, POLLIN, 0},
-                  {m_eventFd, POLLIN, 0},
-                  {m_leaveFds[static_cast<size_t>(input)], POLLIN, 0}};
+  pollfd fds[] = {{m_fd, POLLIN, 0}, {m_eventFd, POLLIN, 0}, {leaveFd, POLLIN, 0}};
   int ret = -1;
   do
     ret = poll(fds, 3, timeoutMs);
@@ -1229,17 +1480,16 @@ CAMLCapture::CStream::Wake CAMLCapture::CStream::Poll(AMLCaptureInput input, int
   return ret > 0 && (fds[0].revents & POLLIN) ? Wake::FRAME : Wake::TIMEOUT;
 }
 
-bool CAMLCapture::CStream::Take(AMLCaptureInput input, unsigned int& index)
+void CAMLCapture::CStream::Drain()
 {
-  std::lock_guard lock(m_bufferLock);
-
   unsigned int next = 0;
   int tag = -1;
   int entries = 0;
   int generation = 0;
+  Layout layout;
   std::chrono::steady_clock::time_point stamp;
   // a DQBUF on an empty queue logs in the driver, so every one waits for poll
-  while (Poll(input, 0) == Wake::FRAME && Dequeue(next, tag, entries, generation, stamp))
+  while (Poll(-1, 0) == Wake::FRAME && Dequeue(next, tag, entries, generation, layout, stamp))
   {
     m_generation = generation;
     if (tag < 0)
@@ -1253,6 +1503,7 @@ bool CAMLCapture::CStream::Take(AMLCaptureInput input, unsigned int& index)
     parked = static_cast<int>(next);
     m_stamps[next] = stamp;
     m_entryCounts[next] = entries;
+    m_frameLayouts[next] = layout;
     // frames of older turns of the same length may still be queued
     if (!m_settled.empty() && generation != m_settledGeneration && entries == m_entries)
     {
@@ -1260,22 +1511,83 @@ bool CAMLCapture::CStream::Take(AMLCaptureInput input, unsigned int& index)
         settled();
     }
   }
-  int& parked = m_parked[static_cast<size_t>(input)];
-  if (parked < 0)
-    return false;
 
   // vdin hands a frame over a vsync after it finishes it, and each input takes its turn once
   // per round of the schedule, the frame's or the current one, so a newer frame of the input is
   // done after the longer round
-  const int round = std::max(m_entryCounts[parked], m_entries);
-  const std::chrono::duration<float, std::milli> maxAge((round + 1) * m_framePeriodMs);
-  if (m_stopped || std::chrono::steady_clock::now() - m_stamps[parked] >= maxAge)
+  const auto now = std::chrono::steady_clock::now();
+  for (int& parked : m_parked)
   {
-    if (m_borrows[parked] == 0)
-      Queue(parked);
-    parked = -1;
-    return false;
+    if (parked < 0)
+      continue;
+    const int round = std::max(m_entryCounts[parked], m_entries);
+    const std::chrono::duration<float, std::milli> maxAge((round + 1) * m_framePeriodMs);
+    if (m_stopped || now - m_stamps[parked] >= maxAge)
+    {
+      if (m_borrows[parked] == 0)
+        Queue(parked);
+      parked = -1;
+    }
   }
+}
+
+CAMLCapture::CStream::Layout CAMLCapture::CStream::GetLayout(int width, int height)
+{
+  // a frame's size is one vdin bounded already, which it keeps
+  const auto known = [width, height](const Request& request)
+  {
+    return (width == request.width && height == request.height) ||
+           (width == request.layout.width && height == request.layout.height);
+  };
+  if (known(m_format))
+    return m_format.layout;
+  for (const Request& request : m_schedules)
+  {
+    if (known(request))
+      return request.layout;
+  }
+  for (const Request& request : m_layouts)
+  {
+    if (known(request))
+      return request.layout;
+  }
+
+  v4l2_format format{};
+  format.type = BUFFER_TYPE;
+  format.fmt.pix_mp.width = width;
+  format.fmt.pix_mp.height = height;
+  format.fmt.pix_mp.pixelformat = m_pixelFormat;
+  format.fmt.pix_mp.field = V4L2_FIELD_NONE;
+  format.fmt.pix_mp.num_planes = 1;
+  if (ioctl(m_fd, VIDIOC_TRY_FMT, &format) < 0)
+  {
+    CLog::Log(LOGWARNING, "CAMLCapture::{}: no layout for {}x{}: {}", __FUNCTION__, width, height,
+              strerror(errno));
+    return {};
+  }
+  m_layouts[1] = m_layouts[0];
+  m_layouts[0] = {width,
+                  height,
+                  {static_cast<int>(format.fmt.pix_mp.width),
+                   static_cast<int>(format.fmt.pix_mp.height),
+                   static_cast<int>(format.fmt.pix_mp.plane_fmt[0].bytesperline),
+                   format.fmt.pix_mp.plane_fmt[0].sizeimage}};
+  return m_layouts[0].layout;
+}
+
+bool CAMLCapture::CStream::Take(AMLCaptureInput input, int width, int height, unsigned int& index)
+{
+  std::lock_guard lock(m_bufferLock);
+
+  Drain();
+  const int parked = m_parked[static_cast<size_t>(input)];
+  if (parked < 0)
+    return false;
+  const Layout& frame = m_frameLayouts[parked];
+  const Layout& running = m_schedules[0].layout;
+  if (frame.width < std::min(width, running.width) ||
+      frame.height < std::min(height, running.height))
+    return false;
   index = static_cast<unsigned int>(parked);
   m_borrows[index]++;
   return true;
@@ -1295,9 +1607,8 @@ void CAMLCapture::CStream::Return(unsigned int index)
   Queue(index);
 }
 
-CAMLCapture::CStream::Wake CAMLCapture::CStream::Wait(AMLCaptureInput input,
-                                                      int timeoutMs,
-                                                      unsigned int& index)
+CAMLCapture::CStream::Wake CAMLCapture::CStream::Wait(
+    AMLCaptureInput input, int width, int height, int timeoutMs, unsigned int& index)
 {
   const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
   for (;;)
@@ -1305,16 +1616,26 @@ CAMLCapture::CStream::Wake CAMLCapture::CStream::Wait(AMLCaptureInput input,
     const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
                           end - std::chrono::steady_clock::now())
                           .count();
-    const Wake wake = Poll(input, static_cast<int>(std::max<int64_t>(left, 0)));
+    const Wake wake =
+        Poll(m_leaveFds[static_cast<size_t>(input)], static_cast<int>(std::max<int64_t>(left, 0)));
     if (wake != Wake::FRAME)
       return wake;
 
     // the frame may be another input's, or another reader may have dequeued and parked it
-    if (Take(input, index))
+    if (Take(input, width, height, index))
       return Wake::FRAME;
     if (left <= 0)
       return Wake::TIMEOUT;
   }
+}
+
+void CAMLCapture::CStream::Bound(int& width, int& height)
+{
+  std::lock_guard lock(m_bufferLock);
+
+  const Layout layout = GetLayout(width, height);
+  width = layout.width;
+  height = layout.height;
 }
 
 int CAMLCapture::CStream::Export(unsigned int index) const
@@ -1330,23 +1651,24 @@ int CAMLCapture::CStream::Export(unsigned int index) const
 
 AMLCaptureImage CAMLCapture::CStream::Image(unsigned int index) const
 {
+  const Layout& layout = m_frameLayouts[index];
   AMLCaptureImage image;
-  image.width = m_imageWidth;
-  image.height = m_imageHeight;
-  image.data[0] = static_cast<uint8_t*>(m_maps[index].first);
+  image.width = layout.width;
+  image.height = layout.height;
+  image.data[0] = static_cast<uint8_t*>(m_buffers[index].map);
   if (m_pixelFormat == PIX_FMT_YUV422_10P)
   {
     image.fullPack = true;
     image.cositedChroma = m_cositedChroma;
-    image.linesize[0] = m_stride;
+    image.linesize[0] = layout.stride;
     return image;
   }
 
   // single-plane NV12: the chroma plane follows the luma plane at the same stride
   image.format = AV_PIX_FMT_NV12;
-  image.data[1] = image.data[0] + static_cast<size_t>(m_stride) * m_imageHeight;
-  image.linesize[0] = m_stride;
-  image.linesize[1] = m_stride;
+  image.data[1] = image.data[0] + static_cast<size_t>(layout.stride) * layout.height;
+  image.linesize[0] = layout.stride;
+  image.linesize[1] = layout.stride;
   return image;
 }
 
@@ -1890,11 +2212,15 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
   Engine& node = m_engines[engine];
   const AMLCaptureDevice& device = FindDevices()[engine];
   const bool shot = pixelFormat == PIX_FMT_YUV422_10P;
+  // the reader's own size; the stream may run larger for other readers
+  int readWidth = width;
+  int readHeight = height;
   uint32_t inputs = Bit(input);
   uint32_t replaced = 0;
   bool update = false;
   bool leaving = false;
   bool turns = false;
+  bool served = false;
   std::shared_ptr<CStream> stream;
   std::vector<std::shared_ptr<CStream>> stale;
   AMLCaptureSource source;
@@ -1932,6 +2258,7 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
         refused = true;
         return false;
       }
+      served = node.stream && node.stream->Serves(input, width, height);
       const Plan plan = wanted(engine, input);
       inputs = plan.inputs;
       width = plan.width;
@@ -1958,12 +2285,8 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
     if (node.stream && !node.stream->Matches(inputs, pixelFormat, width, height))
     {
       replaced = node.stream->GetInputs();
-      const int streamWidth = node.stream->GetWidth();
-      const int streamHeight = node.stream->GetHeight();
       update = node.stream->IsScheduled() && turns && !(node.busy & plans[engine].inputs) &&
-               inputs != replaced && pixelFormat == node.stream->GetPixelFormat() &&
-               ((width == streamWidth && height == streamHeight) ||
-                (!(inputs & ~replaced) && width <= streamWidth && height <= streamHeight));
+               pixelFormat == node.stream->GetPixelFormat();
       leaving = update && (replaced & ~inputs);
       if (!update)
         stale.push_back(TakeStream(engine));
@@ -1993,6 +2316,31 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
   for (const auto& old : stale)
     Close(old);
   stale.clear();
+
+  // a larger size waits for buffers that hold it, without the open lock; a reader the stream
+  // already serves reads on meanwhile
+  if (update && !stream->Fits(width, height))
+  {
+    const int logLevel = node.openFailed ? LOGDEBUG : LOGWARNING;
+    open.unlock();
+    const CStream::Growth growth = stream->Grow(width, height, !served, logLevel);
+    {
+      std::lock_guard lock(m_lock);
+      if (leaving)
+        m_settling--;
+      if (growth == CStream::Growth::FAILED && node.stream == stream)
+        stale.push_back(TakeStream(engine));
+    }
+    for (const auto& old : stale)
+      Close(old);
+    stale.clear();
+    if (growth != CStream::Growth::GROWING)
+    {
+      refused = true;
+      return false;
+    }
+    update = false;
+  }
 
   if (!stream || update)
   {
@@ -2036,7 +2384,7 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
             session->m_settling--;
           }
         };
-      started = stream->SetInputs(inputs, logLevel, std::move(settled), refusal);
+      started = stream->SetInputs(inputs, width, height, logLevel, std::move(settled), refusal);
     }
     else
     {
@@ -2054,7 +2402,7 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
     }
     const bool busy = refusal == CStream::Refusal::OWNED || refusal == CStream::Refusal::NO_CHANNEL;
 
-    std::lock_guard lock(m_lock);
+    std::unique_lock lock(m_lock);
     if (shot)
       refused = !stream;
     else
@@ -2115,7 +2463,16 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
       stream->SetReadSize(width, height);
     if (!busy)
       node.openFailed = !started;
-    // vdin kept the old turns
+    // vdin kept the old turns; for no reason that moves a consumer, the stream restarts
+    if (update && !started && refusal == CStream::Refusal::NONE)
+    {
+      stale.push_back(TakeStream(engine));
+      lock.unlock();
+      for (const auto& old : stale)
+        Close(old);
+      refused = true;
+      return false;
+    }
     if (update && !started && (refused || !(stream->GetInputs() & Bit(input))))
       return false;
     if (!stream)
@@ -2132,13 +2489,40 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
     node.stream = stream;
     m_streamChanges++;
   }
-  if (!shot)
+  if (!shot && open.owns_lock())
     open.unlock();
 
   const int waitMs = static_cast<int>(std::ceil(FRAME_WAIT_PERIODS * stream->GetFramePeriodMs()));
   unsigned int index = 0;
-  const CStream::Wake wake =
-      stream->Take(input, index) ? CStream::Wake::FRAME : stream->Wait(input, waitMs, index);
+  bool bounded = false;
+  if (!shot)
+  {
+    std::lock_guard lock(m_lock);
+    const auto consumer = FindConsumer(input, readWidth, readHeight);
+    if (consumer->bounded.lock() == stream)
+    {
+      readWidth = consumer->boundWidth;
+      readHeight = consumer->boundHeight;
+      bounded = true;
+    }
+  }
+  if (!bounded)
+  {
+    const int askedWidth = readWidth;
+    const int askedHeight = readHeight;
+    stream->Bound(readWidth, readHeight);
+    if (!shot)
+    {
+      std::lock_guard lock(m_lock);
+      const auto consumer = FindConsumer(input, askedWidth, askedHeight);
+      consumer->bounded = stream;
+      consumer->boundWidth = readWidth;
+      consumer->boundHeight = readHeight;
+    }
+  }
+  const CStream::Wake wake = stream->Take(input, readWidth, readHeight, index)
+                                 ? CStream::Wake::FRAME
+                                 : stream->Wait(input, readWidth, readHeight, waitMs, index);
   if (wake == CStream::Wake::FRAME)
   {
     AMLCaptureFrame frame;
