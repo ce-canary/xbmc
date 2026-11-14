@@ -855,53 +855,52 @@ void ServiceCaptureTaps(CApplicationPlayer& player)
   if (!captureService)
     return;
 
-  const auto requests = captureService->TakeActive(CaptureContent::COMPOSITE);
-  if (requests.empty())
-    return;
-  const auto& request = requests.front(); // at most one consumer per frame
-
   auto* winSystem = CServiceBroker::GetWinSystem();
-  auto surface = CScreenShot::CreateSurface();
-  if (!winSystem || !surface)
+  // TakeBuffer moves the readback out, so each request reads its own surface
+  for (const auto& request : captureService->TakeActive(CaptureContent::COMPOSITE))
   {
-    captureService->Fail(request);
-    return;
-  }
-
-  if (CaptureResult result; surface->CaptureDirect(request->spec, result))
-  {
-    if (result.pixels)
-      captureService->Complete(request, std::move(result));
-    else
+    auto surface = CScreenShot::CreateSurface();
+    if (!winSystem || !surface)
+    {
       captureService->Fail(request);
-    return;
+      continue;
+    }
+
+    if (CaptureResult result; surface->CaptureDirect(request->spec, result))
+    {
+      if (result.pixels)
+        captureService->Complete(request, std::move(result));
+      else
+        captureService->Fail(request);
+      continue;
+    }
+
+    const ScreenshotContext ctx{*winSystem};
+    if (!surface->Read(ctx))
+    {
+      captureService->Fail(request);
+      continue;
+    }
+
+    CaptureResult result;
+    result.pixels =
+        std::make_shared<CHeapCapturePixels>(std::unique_ptr<uint8_t[]>(surface->TakeBuffer()));
+    result.width = static_cast<unsigned int>(surface->GetWidth());
+    result.height = static_cast<unsigned int>(surface->GetHeight());
+    result.stride = surface->GetStride();
+    result.format = surface->GetFormat();
+    result.color = GetOutputColorMetadata(*winSystem);
+    result.content = CaptureContent::COMPOSITE; // this tap is the composite half
+    result.screenshot = request->spec.screenshot;
+
+    if (!player.CompositeVideoCapture(result))
+    {
+      captureService->Fail(request);
+      continue;
+    }
+
+    captureService->Complete(request, result);
   }
-
-  const ScreenshotContext ctx{*winSystem};
-  if (!surface->Read(ctx))
-  {
-    captureService->Fail(request);
-    return;
-  }
-
-  CaptureResult result;
-  result.pixels =
-      std::make_shared<CHeapCapturePixels>(std::unique_ptr<uint8_t[]>(surface->TakeBuffer()));
-  result.width = static_cast<unsigned int>(surface->GetWidth());
-  result.height = static_cast<unsigned int>(surface->GetHeight());
-  result.stride = surface->GetStride();
-  result.format = surface->GetFormat();
-  result.color = GetOutputColorMetadata(*winSystem);
-  result.content = CaptureContent::COMPOSITE; // this tap is the composite half
-  result.screenshot = request->spec.screenshot;
-
-  if (!player.CompositeVideoCapture(result))
-  {
-    captureService->Fail(request);
-    return;
-  }
-
-  captureService->Complete(request, result);
 }
 
 } // namespace
