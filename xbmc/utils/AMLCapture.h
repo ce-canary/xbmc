@@ -257,6 +257,9 @@ private:
   std::vector<Engine> m_engines;
   //! taken streams not gone yet, which hold their node and write-back channels until then
   int m_closing{0};
+  //! streams whose inputs left the turns, which vdin holds the channels of until a frame of the
+  //! new turns
+  int m_settling{0};
   //! bumped when one of our streams is stored or taken; an open beside such a change may be
   //! refused for it
   uint32_t m_streamChanges{0};
