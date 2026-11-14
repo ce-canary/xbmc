@@ -191,6 +191,8 @@ namespace XBMCAddon
       /// @param composite           [opt] bool - True captures the screen as shown, GUI
       ///                            included; False (default) captures the video only
       ///
+      /// @note Every running capture receives each rendered frame, whoever else captures.
+      ///
       ///
       ///-----------------------------------------------------------------------
       /// @python_v17 Removed the option to pass **flags**

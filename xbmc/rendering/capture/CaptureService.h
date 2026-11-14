@@ -29,14 +29,11 @@ class CCaptureHandle;
 /*!
  \brief Registry of pixel-capture requests serviced by render-thread taps.
 
- Arbitration: registered requests form a stack (last submitted on top) and
- exactly ONE consumer is serviced per render loop, the most recent one (pure
- LIFO). A one-shot submitted just before a continuous can be buried under it
- and waits until the continuous is gone (a rare late/lost screenshot,
- accepted). FrameComplete() fails a one-shot left unserved, so an unservable
- one cannot force frames or hold the stack top forever; a continuous one
- stays until cancelled, served or not. Effectively one continuous capture at
- a time.
+ Arbitration: registered requests form a stack (last submitted on top).
+ Every render loop services every CONTINUOUS request and the newest ONESHOT;
+ older one-shots wait, newest first. FrameComplete() fails a one-shot left
+ unserved, so an unservable one cannot force frames or hold its turn forever;
+ a continuous one stays until cancelled, served or not.
 
  Threading contract:
  - Submit()/Cancel(): any thread; they never touch the graphics context.
@@ -60,16 +57,15 @@ public:
   std::unique_ptr<CCaptureHandle> Submit(const CaptureSpec& spec, CaptureCallback callback = {});
 
   //! Render thread, frame boundary: push newly submitted requests onto the
-  //! stack, prune cancelled ones, and latch the stack top as this frame's
-  //! serviced consumer.
+  //! stack, prune cancelled ones, and latch this frame's serviced consumers:
+  //! every CONTINUOUS request and the newest ONESHOT.
   //! \return true when a frame must be forced: once per arriving request, and
-  //! while the latched consumer is a ONESHOT (until it serves or FrameComplete
-  //! fails it); a lone CONTINUOUS request never forces one, so unchanged frames
-  //! are still skipped. The caller owns the dirty marking.
+  //! while a ONESHOT is latched (until it serves or FrameComplete fails it);
+  //! CONTINUOUS requests never force one, so unchanged frames are still
+  //! skipped. The caller owns the dirty marking.
   bool LatchFrame();
 
-  //! Render thread: the latched request this content's tap must service, if
-  //! any (at most one request is latched per frame).
+  //! Render thread: the latched requests this content's tap must service.
   std::vector<std::shared_ptr<CaptureRequest>> TakeActive(CaptureContent content);
 
   //! Render thread: deliver a serviced request. ONESHOT requests finish;

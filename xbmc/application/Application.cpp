@@ -855,47 +855,46 @@ void ServiceCaptureTaps(CApplicationPlayer& player)
   if (!captureService)
     return;
 
-  const auto requests = captureService->TakeActive(CaptureContent::COMPOSITE);
-  if (requests.empty())
-    return;
-  const auto& request = requests.front(); // at most one consumer per frame
-
   auto* winSystem = CServiceBroker::GetWinSystem();
-  auto surface = CScreenShot::CreateSurface();
-  if (!winSystem || !surface)
+  // TakePixels moves the readback out, so each request reads its own surface
+  for (const auto& request : captureService->TakeActive(CaptureContent::COMPOSITE))
   {
-    captureService->Fail(request);
-    return;
-  }
-
-  if (CaptureResult result; surface->CaptureDirect(request->spec, result))
-  {
-    if (result.pixels)
-      captureService->Complete(request, std::move(result));
-    else
+    auto surface = CScreenShot::CreateSurface();
+    if (!winSystem || !surface)
+    {
       captureService->Fail(request);
-    return;
+      continue;
+    }
+
+    if (CaptureResult result; surface->CaptureDirect(request->spec, result))
+    {
+      if (result.pixels)
+        captureService->Complete(request, std::move(result));
+      else
+        captureService->Fail(request);
+      continue;
+    }
+
+    const ScreenshotContext ctx{*winSystem};
+    if (!surface->Read(ctx))
+    {
+      captureService->Fail(request);
+      continue;
+    }
+
+    CaptureResult result;
+    result.color = GetOutputColorMetadata(*winSystem);
+    surface->TakePixels(request->spec, result);
+    result.content = CaptureContent::COMPOSITE; // this tap is the composite half
+
+    if (!player.CompositeVideoCapture(result))
+    {
+      captureService->Fail(request);
+      continue;
+    }
+
+    captureService->Complete(request, result);
   }
-
-  const ScreenshotContext ctx{*winSystem};
-  if (!surface->Read(ctx))
-  {
-    captureService->Fail(request);
-    return;
-  }
-
-  CaptureResult result;
-  result.color = GetOutputColorMetadata(*winSystem);
-  surface->TakePixels(request->spec, result);
-  result.content = CaptureContent::COMPOSITE; // this tap is the composite half
-
-  if (!player.CompositeVideoCapture(result))
-  {
-    captureService->Fail(request);
-    return;
-  }
-
-  captureService->Complete(request, result);
 }
 
 } // namespace
