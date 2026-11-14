@@ -78,13 +78,17 @@ struct AMLCaptureVideoSpec
       KODI::RENDERING::CAPTURE::CaptureScreenshot::NONE};
 };
 
-//! \brief The process-wide capture session on the vdin1 V4L2 node: video after the VPP and the
+//! \brief The process-wide capture session on the vdin V4L2 nodes: video after the VPP and the
 //! DV and HDR cores, without the GUI, or the post blend output, video and GUI as on screen.
 //!
-//! The renderer or a screen capture owns the session. The stream starts on the first read and
-//! stops when the last lease of its input ends, on OnLostDisplay, when vdin1 stops it and when
-//! the session is dropped. Only OnLostDisplay and the destructor make ioctls on the calling thread;
-//! everything else runs on the consumer thread.
+//! The renderer or a screen capture owns the session. A consumer that reads keeps the engine, a
+//! vdin node, it has. A new one joins a stream that carries its input at its size, else takes a
+//! free engine, else grows a stream that carries its input, else adds its input to the stream
+//! with the fewest, whose inputs then take turns, one frame each, or on a node without turns
+//! restart it for each reader.
+//! An engine's stream starts on the first read and stops when no consumer is placed on it,
+//! on OnLostDisplay, when vdin stops it and when the session is dropped. Only OnLostDisplay and
+//! the destructor make ioctls on the calling thread; everything else runs on the consumer thread.
 class CAMLCapture : public IDispResource, public std::enable_shared_from_this<CAMLCapture>
 {
 public:
@@ -107,7 +111,8 @@ public:
 
   void Configure(const AMLCaptureSource& source);
   void SetPresented();
-  //! the renderer releases the session: no video is presented and the source is gone
+  //! the renderer releases the session: no video is presented, the source is gone and the video
+  //! consumers lapse
   void ClearPresented();
   bool IsPresented() const;
   //! Render thread: the video destination in GUI coordinates
@@ -115,9 +120,10 @@ public:
   //! Render thread: the video destination on screen, normalized to the output
   CRect GetVisibleRect();
 
-  //! Consumer thread: take the newest frame of a stream of input at least width x height, or of
-  //! the input's continuous size when larger, else wait for the next one, and run `use` on it. An
-  //! input or size change restarts the stream. A wait ends after a bound of frame periods.
+  //! Consumer thread: take the newest frame of input from a stream at least width x height, or of
+  //! the size another reader of its engine reads at when larger, else wait for the next one, and
+  //! run `use` on it. A wait ends after a bound of frame periods, sooner when the input or the
+  //! output mode shows no picture.
   bool Read(AMLCaptureInput input, int width, int height, const ReadFunc& use);
   //! Consumer thread: copy out a frame of a one-shot 10-bit video stream of the size asked for;
   //! vdin1 settles what it delivers. The stream closes before this returns; a continuous reader
@@ -171,59 +177,96 @@ private:
     int leases{0};
     //! kept while the leases last, so a consumer converts beside the others
     std::shared_ptr<ConsumerConvert> convert;
+    bool read{false};
+    //! the engine placement gave it, -1 for none
+    int engine{-1};
+  };
+
+  //! what an engine's stream carries
+  struct Plan
+  {
+    uint32_t inputs{0};
+    int width{0};
+    int height{0};
+    int consumers{0};
+  };
+
+  //! a vdin node; the stream, busy, owned and unscheduled are guarded by m_lock
+  struct Engine
+  {
+    std::shared_ptr<CStream> stream;
+    //! serializes the opens and closes of its readers; a shot holds it across its stream, never
+    //! taken by Stop or by a frame's return
+    std::mutex open;
+    //! the inputs an open of the node was refused for: another user holds it, or no write-back
+    //! channel serves them
+    uint32_t busy{0};
+    //! busy holds both inputs because another user owned the node
+    bool owned{false};
+    //! the node refused turns, so placement adds an input to its stream only when no other engine
+    //! can carry it
+    bool unscheduled{false};
+    //! guarded by `open`: the last open failed on a node that was not busy, so open failures
+    //! log at debug until one succeeds
+    bool openFailed{false};
   };
 
   //! Keeps a stream of input at least width x height running until the last lease is released.
   //! A continuous consumer holds one from its tap on, every read for its own duration.
   std::shared_ptr<void> Lease(AMLCaptureInput input, int width, int height);
   void ReleaseLease(AMLCaptureInput input, int width, int height);
-  //! `open` holds m_readLock, which an NV12 read releases once its stream runs; `use` runs on
-  //! buffer `index`, which is returned after it. With `logCause`, it logs why it gets no frame
+  //! closes in a job the streams placement leaves without a consumer
+  void CloseIdle();
+  //! `open` holds the open lock of `engine`, which an NV12 read releases once its stream runs; `use`
+  //! runs on buffer `index`, which is returned after it. `refused` tells that a refused open
+  //! changed the placement, so the reader reads again. With `logCause`, it logs why it gets no
+  //! frame
   bool ReadStream(std::unique_lock<std::mutex>& open,
+                  size_t engine,
                   AMLCaptureInput input,
                   uint32_t pixelFormat,
-                  unsigned int buffers,
                   int width,
                   int height,
                   const StreamFunc& use,
+                  bool& refused,
                   bool logCause = false);
   //! m_lock must be held
   bool CanRead(AMLCaptureInput input) const;
   //! m_lock must be held; false, after logging why the video cannot be read when `log`
   bool Unreadable(bool log) const;
-  //! takes m_stream for Close; m_lock must be held, and the caller drops the stream after it
-  std::shared_ptr<CStream> TakeStream();
+  //! takes the stream of `engine` for Close; m_lock must be held, and the caller drops the stream
+  //! after it
+  std::shared_ptr<CStream> TakeStream(size_t engine);
   void Close(const std::shared_ptr<CStream>& stream);
   //! m_lock must be held
   std::vector<Consumer>::iterator FindConsumer(AMLCaptureInput input, int width, int height);
+  //! m_lock must be held: the engine runs a stream `plan` gives no consumer
+  bool IsIdle(const Engine& engine, const Plan& plan) const;
+  //! m_lock must be held: the inputs of the consumers that read
+  uint32_t GetReadInputs() const;
   //! m_lock must be held
-  bool HasLease(AMLCaptureInput input) const;
+  void ClearBusy();
+  //! m_lock must be held: places the consumers that read without an engine, in lease order, and
+  //! returns per engine what its stream carries
+  std::vector<Plan> Place();
   AMLCaptureColor GetSignal(const AMLCaptureSource& source) const;
   //! m_lock must be held
   void UpdateStatics(std::shared_ptr<const AMLFrameMetadata> meta);
 
   std::mutex m_lock;
-  std::shared_ptr<CStream> m_stream;
-  //! taken streams not gone yet; the node refuses a new input while one is open
+  std::vector<Engine> m_engines;
+  //! taken streams not gone yet, which hold their node and write-back channels until then
   int m_closing{0};
+  //! bumped when one of our streams is stored or taken; an open beside such a change may be
+  //! refused for it
+  uint32_t m_streamChanges{0};
   std::condition_variable m_closed;
   std::vector<Consumer> m_consumers;
   bool m_displayLost{false};
   uint32_t m_displayEpoch{0};
-  //! the last video open found the node busy; every video read retries it
-  bool m_busy{false};
-  //! the last screen open found the node busy; every screen read retries it
-  bool m_screenBusy{false};
   AMLCaptureSource m_source;
   //! the frame metadata the title peak in m_source was decoded from
   std::shared_ptr<const AMLFrameMetadata> m_staticsMeta;
   CRect m_videoRect;
   std::atomic<bool> m_presented{false};
-
-  //! serializes stream opens and closes by readers; a shot holds it across its stream, never
-  //! taken by Stop or by a frame's return
-  std::mutex m_readLock;
-  //! the last open failed on a node that was not busy: open failures log at debug until one
-  //! succeeds
-  bool m_openFailed{false};
 };
