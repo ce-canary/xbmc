@@ -23,8 +23,10 @@
 #include <atomic>
 #include <deque>
 #include <list>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <utility>
 
 #include "PlatformDefs.h"
 
@@ -202,8 +204,11 @@ protected:
   int GuiSource() const { return m_presenting ? m_guiPresentSource : m_presentsource; }
 
   CBaseRenderer *m_pRenderer = nullptr;
-  //! Owns the video tap's private FBO; render-thread only, reset in UnInit
-  std::unique_ptr<KODI::RENDERING::CAPTURE::CCaptureBlit> m_captureBlit;
+  //! Owns the video tap's private FBOs by size, those of the last served frame; render-thread
+  //! only, cleared in UnInit
+  std::map<std::pair<unsigned int, unsigned int>,
+           std::unique_ptr<KODI::RENDERING::CAPTURE::CCaptureBlit>>
+      m_captureBlits;
   OVERLAY::CRenderer m_overlays;
   CDebugRenderer m_debugRenderer;
   mutable CCriticalSection m_statelock;
