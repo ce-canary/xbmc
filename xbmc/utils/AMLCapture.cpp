@@ -25,6 +25,8 @@
 #include "platform/linux/SysfsPath.h"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -52,10 +54,16 @@ namespace
 constexpr int MAX_CAPTURE_WIDTH = 1920;
 // the first frame after STREAMON comes within this many frame periods
 constexpr int FRAME_WAIT_PERIODS = 10;
-// vdin1 writes one, holds the last, the reader holds one and one stays free
-constexpr unsigned int CAPTURE_BUFFERS = 4;
+// per input of a stream, the readers convert one and keep the newest; vdin writes one, holds the
+// last and one stays free
+constexpr unsigned int BUFFERS_PER_INPUT = 2;
+constexpr unsigned int STREAM_BUFFERS = 3;
 // V4L2_PIX_FMT_AML_YUV422_10P in the vendor tvin.h, which the sysroot does not ship
 constexpr uint32_t PIX_FMT_YUV422_10P = v4l2_fourcc('A', 'Y', '2', 'P');
+// V4L2_CID_EXT_CAPTURE_INPUT_SCHEDULE in v4l2-controls-ext.h: vdin captures the node inputs of
+// its payload in turn, one per frame, at its size
+constexpr uint32_t CID_CAPTURE_INPUT_SCHEDULE = V4L2_CID_USER_BASE + 0x2100 + 9;
+constexpr size_t SCHEDULE_ENTRIES = 7;
 // vdin1 raises this to the fewest it allows
 constexpr unsigned int SHOT_BUFFERS = 1;
 // V4L2_PIX_FMT_FLAG_AML_COSITED_CHROMA in the vendor tvin.h
@@ -93,13 +101,31 @@ enum class HdrOutput
   CUVA_HLG = 5,
 };
 
+constexpr std::array<AMLCaptureInput, 2> INPUTS = {AMLCaptureInput::SCREEN, AMLCaptureInput::VIDEO};
+
+uint32_t Bit(AMLCaptureInput input)
+{
+  return 1u << static_cast<int>(input);
+}
+
+// the payload of CID_CAPTURE_INPUT_SCHEDULE; 0 x 0 is the size of S_FMT
+struct CaptureSchedule
+{
+  uint32_t count{0};
+  uint32_t width{0};
+  uint32_t height{0};
+  uint32_t inputs[SCHEDULE_ENTRIES]{};
+};
+
 struct AMLCaptureDevice
 {
   std::string path;
-  int input{-1};
-  int screenInput{-1};
+  //! per AMLCaptureInput, the node input of its tap, -1 without one
+  std::array<int, 2> inputs{-1, -1};
   //! the widest scaled capture
   int maxWidth{0};
+
+  bool Offers(AMLCaptureInput input) const { return inputs[static_cast<size_t>(input)] >= 0; }
 };
 
 void FitOutput(int maxWidth, int& width, int& height)
@@ -112,7 +138,7 @@ void FitOutput(int maxWidth, int& width, int& height)
   height = static_cast<int>(screenHeight * scale) & ~1;
 }
 
-AMLCaptureDevice Discover()
+std::vector<AMLCaptureDevice> Discover()
 {
   AMLCaptureDevice device;
 
@@ -140,35 +166,40 @@ AMLCaptureDevice Discover()
         if (inputName == "VIU1_WB0_VD1")
         {
           device.path = path;
-          device.input = static_cast<int>(input.index);
+          device.inputs[static_cast<size_t>(AMLCaptureInput::VIDEO)] =
+              static_cast<int>(input.index);
         }
         else if (inputName == "VIU1_WB0_POST_BLEND")
-          device.screenInput = static_cast<int>(input.index);
+          device.inputs[static_cast<size_t>(AMLCaptureInput::SCREEN)] =
+              static_cast<int>(input.index);
       }
       v4l2_frmsizeenum size{};
       size.pixel_format = V4L2_PIX_FMT_NV12;
       if (ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &size) == 0)
         device.maxWidth = static_cast<int>(size.stepwise.max_width);
       else
-        device.input = -1;
+        device.inputs[static_cast<size_t>(AMLCaptureInput::VIDEO)] = -1;
     }
     close(fd);
-    if (device.input >= 0)
+    if (device.Offers(AMLCaptureInput::VIDEO))
       break;
   }
 
-  if (device.input >= 0)
-    CLog::Log(LOGINFO, "CAMLCapture::{}: video capture on {} input {}, screen input {}",
-              __FUNCTION__, device.path, device.input, device.screenInput);
-  else
+  if (!device.Offers(AMLCaptureInput::VIDEO))
+  {
     CLog::Log(LOGINFO, "CAMLCapture::{}: no vdin1 video capture node", __FUNCTION__);
-  return device;
+    return {};
+  }
+  CLog::Log(LOGINFO, "CAMLCapture::{}: video capture on {} input {}, screen input {}", __FUNCTION__,
+            device.path, device.inputs[static_cast<size_t>(AMLCaptureInput::VIDEO)],
+            device.inputs[static_cast<size_t>(AMLCaptureInput::SCREEN)]);
+  return {device};
 }
 
-const AMLCaptureDevice& FindDevice()
+const std::vector<AMLCaptureDevice>& FindDevices()
 {
-  static const AMLCaptureDevice device = Discover();
-  return device;
+  static const std::vector<AMLCaptureDevice> devices = Discover();
+  return devices;
 }
 
 // the title peak, else fallback
@@ -701,34 +732,46 @@ public:
     LOST,
   };
 
-  //! failures log at `logLevel`; `busy` tells whether another vdin1 user holds the node
-  static std::shared_ptr<CStream> Open(AMLCaptureInput input,
+  enum class Refusal
+  {
+    NONE,
+    //! another user owns the node's queue
+    OWNED,
+    //! no write-back channel for one of the inputs
+    NO_CHANNEL,
+    //! the node takes no turns
+    NO_TURNS,
+  };
+
+  //! A stream of the inputs of `device` in `inputs`, which vdin captures in turn, one per frame;
+  //! with `turns` it takes turns even for one input. `refusal` tells why vdin refused it.
+  static std::shared_ptr<CStream> Open(const AMLCaptureDevice& device,
+                                       uint32_t inputs,
                                        uint32_t pixelFormat,
                                        unsigned int buffers,
                                        int width,
                                        int height,
                                        int logLevel,
-                                       bool& busy);
+                                       Refusal& refusal);
   ~CStream();
 
   void Stop();
-  AMLCaptureInput GetInput() const { return m_input; }
+  uint32_t GetInputs() const { return m_inputs; }
   uint32_t GetPixelFormat() const { return m_pixelFormat; }
-  int GetBuffers() const { return static_cast<int>(m_maps.size()); }
   float GetFramePeriodMs() const { return m_framePeriodMs; }
-  bool Matches(AMLCaptureInput input, uint32_t pixelFormat, int width, int height) const
+  bool Matches(uint32_t inputs, uint32_t pixelFormat, int width, int height) const
   {
-    return input == m_input && pixelFormat == m_pixelFormat && width == m_width &&
+    return inputs == m_inputs && pixelFormat == m_pixelFormat && width == m_width &&
            height == m_height;
   }
   //! the stream calls `closed` once it is gone, after its node is closed
   void SetClosed(std::function<void()> closed) { m_closed = std::move(closed); }
-  //! Takes the newest frame vdin1 finished, false when there is none or when the dequeue before
-  //! it is older than `maxAge`. Readers share a frame; it stays theirs until Return.
-  bool Take(std::chrono::steady_clock::duration maxAge, unsigned int& index);
+  //! Takes the newest frame of `input` that holds width x height, or the running size when smaller;
+  //! false without one or when a newer one must have come. It stays the readers' until Return.
+  bool Take(AMLCaptureInput input, unsigned int& index);
   //! Any thread: the last reader of a frame queues it again
   void Return(unsigned int index);
-  Wake Wait(int timeoutMs, unsigned int& index);
+  Wake Wait(AMLCaptureInput input, int timeoutMs, unsigned int& index);
   AMLCaptureImage Image(unsigned int index) const;
   size_t GetLength(unsigned int index) const { return m_maps[index].second; }
   //! a read-only dmabuf of buffer `index`, which keeps the buffer after the stream closes; -1 on
@@ -737,12 +780,16 @@ public:
 
 private:
   bool Queue(unsigned int index);
-  bool Dequeue(unsigned int& index);
+  //! `input` is the AMLCaptureInput of the frame, -1 for one the stream lacks; `entries` and
+  //! `generation` the length and the wrapping count of the turns vdin filled it under
+  bool Dequeue(unsigned int& index, int& input, std::chrono::steady_clock::time_point& stamp);
   Wake Poll(int timeoutMs) const;
 
   int m_fd{-1};
   int m_eventFd{-1};
-  AMLCaptureInput m_input{AMLCaptureInput::VIDEO};
+  uint32_t m_inputs{0};
+  std::array<int, 2> m_ports{-1, -1};
+  int m_entries{0};
   uint32_t m_pixelFormat{V4L2_PIX_FMT_NV12};
   int m_width{0};
   int m_height{0};
@@ -759,27 +806,40 @@ private:
 
   //! guards the dequeued frames: readers dequeue and return them on their own threads
   std::mutex m_bufferLock;
-  std::chrono::steady_clock::time_point m_dequeued;
   std::vector<int> m_borrows;
   std::vector<std::chrono::steady_clock::time_point> m_stamps;
-  int m_parked{-1};
+  std::array<int, 2> m_parked{-1, -1};
 };
 
-std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(AMLCaptureInput input,
+std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(const AMLCaptureDevice& device,
+                                                                 uint32_t inputs,
                                                                  uint32_t pixelFormat,
                                                                  unsigned int buffers,
                                                                  int width,
                                                                  int height,
                                                                  int logLevel,
-                                                                 bool& busy)
+                                                                 Refusal& refusal)
 {
-  const AMLCaptureDevice& device = FindDevice();
-  int index = input == AMLCaptureInput::SCREEN ? device.screenInput : device.input;
-  if (device.input < 0 || index < 0)
+  auto stream = std::make_shared<CStream>();
+  stream->m_inputs = inputs;
+  stream->m_ports = device.inputs;
+  int index = -1;
+  CaptureSchedule schedule;
+  for (AMLCaptureInput input : INPUTS)
+  {
+    if (!(inputs & Bit(input)))
+      continue;
+    if (!device.Offers(input))
+      return {};
+    const int port = device.inputs[static_cast<size_t>(input)];
+    if (index < 0)
+      index = port;
+    stream->m_entries++;
+    schedule.inputs[schedule.count++] = static_cast<uint32_t>(port);
+  }
+  if (index < 0)
     return {};
 
-  auto stream = std::make_shared<CStream>();
-  stream->m_input = input;
   stream->m_pixelFormat = pixelFormat;
   stream->m_width = width;
   stream->m_height = height;
@@ -794,8 +854,9 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(AMLCaptureInput
 
   if (ioctl(stream->m_fd, VIDIOC_S_INPUT, &index) < 0)
   {
-    busy = errno == EBUSY;
-    if (!busy)
+    if (errno == EBUSY)
+      refusal = Refusal::OWNED;
+    else
       CLog::Log(logLevel, "CAMLCapture::{}: input {} unavailable: {}", __FUNCTION__, index,
                 strerror(errno));
     return {};
@@ -821,7 +882,8 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(AMLCaptureInput
           (fullPack ? stream->m_imageWidth / 2 * AML_FULL_PACK_PAIR_BYTES : stream->m_imageWidth) ||
       format.fmt.pix_mp.plane_fmt[0].sizeimage < frameSize)
   {
-    busy = ioctlResult < 0 && errno == EBUSY;
+    if (ioctlResult < 0 && errno == EBUSY)
+      refusal = Refusal::OWNED;
     CLog::Log(logLevel, "CAMLCapture::{}: {} {}x{} refused", __FUNCTION__,
               fullPack ? "10-bit" : "NV12", width, height);
     return {};
@@ -875,15 +937,46 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(AMLCaptureInput
       return {};
   }
 
+  // vdin takes turns only from the queue's owner before it streams; one input needs none
+  if (stream->m_entries > 1)
+  {
+    v4l2_ext_control control{};
+    control.id = CID_CAPTURE_INPUT_SCHEDULE;
+    control.size = sizeof(schedule);
+    control.ptr = &schedule;
+    v4l2_ext_controls controls{};
+    controls.which = V4L2_CTRL_WHICH_CUR_VAL;
+    controls.count = 1;
+    controls.controls = &control;
+    if (ioctl(stream->m_fd, VIDIOC_S_EXT_CTRLS, &controls) < 0)
+    {
+      const int error = errno;
+      if (error == EBUSY)
+        refusal = Refusal::OWNED;
+      else if (error == EOPNOTSUPP)
+        refusal = Refusal::NO_TURNS;
+      if (refusal != Refusal::OWNED)
+        CLog::Log(logLevel, "CAMLCapture::{}: turns of inputs {:#x} refused: {}", __FUNCTION__,
+                  inputs, strerror(error));
+      return {};
+    }
+  }
+
   uint32_t type = BUFFER_TYPE;
   if (ioctl(stream->m_fd, VIDIOC_STREAMON, &type) < 0)
   {
-    CLog::Log(logLevel, "CAMLCapture::{}: stream start failed: {}", __FUNCTION__, strerror(errno));
+    const int error = errno;
+    if (error == EBUSY)
+      refusal = Refusal::NO_CHANNEL;
+    else if (error == EOPNOTSUPP)
+      refusal = Refusal::NO_TURNS;
+    CLog::Log(logLevel, "CAMLCapture::{}: stream start failed: {}", __FUNCTION__, strerror(error));
     return {};
   }
   stream->m_streaming = true;
 
-  CLog::Log(LOGINFO, "CAMLCapture::{}: started input {} {}x{}", __FUNCTION__, index, width, height);
+  CLog::Log(LOGINFO, "CAMLCapture::{}: started {} input {} of {} in turn {}x{}", __FUNCTION__,
+            device.path, index, stream->m_entries, width, height);
   return stream;
 }
 
@@ -933,7 +1026,9 @@ bool CAMLCapture::CStream::Queue(unsigned int index)
   return ioctl(m_fd, VIDIOC_QBUF, &buffer) == 0;
 }
 
-bool CAMLCapture::CStream::Dequeue(unsigned int& index)
+bool CAMLCapture::CStream::Dequeue(unsigned int& index,
+                                   int& input,
+                                   std::chrono::steady_clock::time_point& stamp)
 {
   v4l2_plane plane{};
   v4l2_buffer buffer{};
@@ -944,8 +1039,20 @@ bool CAMLCapture::CStream::Dequeue(unsigned int& index)
   if (ioctl(m_fd, VIDIOC_DQBUF, &buffer) < 0)
     return false;
 
-  m_dequeued = std::chrono::steady_clock::now();
   index = buffer.index;
+  stamp =
+      std::chrono::steady_clock::time_point(std::chrono::seconds(buffer.timestamp.tv_sec) +
+                                            std::chrono::microseconds(buffer.timestamp.tv_usec));
+  input = -1;
+  if (buffer.flags & V4L2_BUF_FLAG_TIMECODE)
+  {
+    for (AMLCaptureInput tap : INPUTS)
+    {
+      if ((m_inputs & Bit(tap)) &&
+          m_ports[static_cast<size_t>(tap)] == static_cast<int>(buffer.timecode.userbits[0]))
+        input = static_cast<int>(tap);
+    }
+  }
   return true;
 }
 
@@ -964,33 +1071,42 @@ CAMLCapture::CStream::Wake CAMLCapture::CStream::Poll(int timeoutMs) const
   return ret > 0 && (fds[0].revents & POLLIN) ? Wake::FRAME : Wake::TIMEOUT;
 }
 
-bool CAMLCapture::CStream::Take(std::chrono::steady_clock::duration maxAge, unsigned int& index)
+bool CAMLCapture::CStream::Take(AMLCaptureInput input, unsigned int& index)
 {
   std::lock_guard lock(m_bufferLock);
 
-  const auto previous = m_dequeued;
   unsigned int next = 0;
+  int tag = -1;
+  std::chrono::steady_clock::time_point stamp;
   // a DQBUF on an empty queue logs in the driver, so every one waits for poll
-  while (Poll(0) == Wake::FRAME && Dequeue(next))
+  while (Poll(0) == Wake::FRAME && Dequeue(next, tag, stamp))
   {
-    if (m_parked >= 0 && m_borrows[m_parked] == 0)
-      Queue(m_parked);
-    m_parked = static_cast<int>(next);
-    m_stamps[next] = previous;
+    if (tag < 0)
+    {
+      Queue(next);
+      continue;
+    }
+    int& parked = m_parked[static_cast<size_t>(tag)];
+    if (parked >= 0 && m_borrows[parked] == 0)
+      Queue(parked);
+    parked = static_cast<int>(next);
+    m_stamps[next] = stamp;
   }
-  if (m_parked < 0)
+  int& parked = m_parked[static_cast<size_t>(input)];
+  if (parked < 0)
     return false;
 
-  // vdin1 hands each frame over a vsync late and drops frames once the buffers no reader holds
-  // are done, so after that many periods since the dequeue before it the newest may be old
-  if (m_stopped || std::chrono::steady_clock::now() - m_stamps[m_parked] >= maxAge)
+  // vdin hands a frame over a vsync after it finishes it, and each input takes its turn once
+  // per round of the schedule, so a newer frame of the input is done after that
+  const std::chrono::duration<float, std::milli> maxAge((m_entries + 1) * m_framePeriodMs);
+  if (m_stopped || std::chrono::steady_clock::now() - m_stamps[parked] >= maxAge)
   {
-    if (m_borrows[m_parked] == 0)
-      Queue(m_parked);
-    m_parked = -1;
+    if (m_borrows[parked] == 0)
+      Queue(parked);
+    parked = -1;
     return false;
   }
-  index = static_cast<unsigned int>(m_parked);
+  index = static_cast<unsigned int>(parked);
   m_borrows[index]++;
   return true;
 }
@@ -1001,12 +1117,17 @@ void CAMLCapture::CStream::Return(unsigned int index)
 
   if (--m_borrows[index] > 0)
     return;
-  if (m_parked == static_cast<int>(index))
-    m_parked = -1;
+  for (int& parked : m_parked)
+  {
+    if (parked == static_cast<int>(index))
+      parked = -1;
+  }
   Queue(index);
 }
 
-CAMLCapture::CStream::Wake CAMLCapture::CStream::Wait(int timeoutMs, unsigned int& index)
+CAMLCapture::CStream::Wake CAMLCapture::CStream::Wait(AMLCaptureInput input,
+                                                      int timeoutMs,
+                                                      unsigned int& index)
 {
   const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
   for (;;)
@@ -1018,8 +1139,8 @@ CAMLCapture::CStream::Wake CAMLCapture::CStream::Wait(int timeoutMs, unsigned in
     if (wake != Wake::FRAME)
       return wake;
 
-    // another reader may have dequeued the frame and parked it
-    if (Take(std::chrono::steady_clock::duration::max(), index))
+    // the frame may be another input's, or another reader may have dequeued and parked it
+    if (Take(input, index))
       return Wake::FRAME;
     if (left <= 0)
       return Wake::TIMEOUT;
@@ -1074,7 +1195,12 @@ std::shared_ptr<CAMLCapture> CAMLCapture::Get()
 
 void CAMLCapture::GetCaptureSize(int& width, int& height)
 {
-  FitOutput(std::min(FindDevice().maxWidth, MAX_CAPTURE_WIDTH), width, height);
+  // every engine an input may move to delivers the size
+  const std::vector<AMLCaptureDevice>& devices = FindDevices();
+  int maxWidth = devices.empty() ? 0 : MAX_CAPTURE_WIDTH;
+  for (const AMLCaptureDevice& device : devices)
+    maxWidth = std::min(maxWidth, device.maxWidth);
+  FitOutput(maxWidth, width, height);
 }
 
 void CAMLCapture::GetShotSize(CaptureScreenshot shot, int& width, int& height)
@@ -1099,7 +1225,7 @@ bool AMLCaptureNative::Describe(CaptureResult& result) const
   return true;
 }
 
-CAMLCapture::CAMLCapture()
+CAMLCapture::CAMLCapture() : m_engines(FindDevices().size())
 {
   if (auto* winSystem = dynamic_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem()))
     winSystem->Register(this);
@@ -1116,15 +1242,23 @@ void CAMLCapture::OnLostDisplay()
   // a stream's close callback may drop the last session ref, and the session must not unregister
   // inside the display's resource loop, so a job drops this one
   auto session = weak_from_this().lock();
-  std::shared_ptr<CStream> stream;
+  std::vector<std::shared_ptr<CStream>> streams;
   {
     std::lock_guard lock(m_lock);
     m_displayLost = true;
     m_displayEpoch++;
-    stream = TakeStream();
+    // what a node refused may depend on the output mode
+    for (size_t engine = 0; engine < m_engines.size(); engine++)
+    {
+      m_engines[engine].busy = 0;
+      m_engines[engine].owned = false;
+      m_engines[engine].unscheduled = false;
+      streams.push_back(TakeStream(engine));
+    }
   }
-  Close(stream);
-  stream.reset();
+  for (const auto& stream : streams)
+    Close(stream);
+  streams.clear();
   if (session)
     CServiceBroker::GetJobManager()->Submit([session = std::move(session)] {});
 }
@@ -1143,7 +1277,9 @@ void CAMLCapture::Configure(const AMLCaptureSource& source)
   m_source = source;
   m_staticsMeta.reset();
   m_presented = false;
-  m_busy = false;
+  ClearBusy();
+  for (Engine& engine : m_engines)
+    engine.unscheduled = false;
 }
 
 void CAMLCapture::SetPresented()
@@ -1159,11 +1295,26 @@ bool CAMLCapture::IsPresented() const
 
 void CAMLCapture::ClearPresented()
 {
-  std::lock_guard lock(m_lock);
+  {
+    std::lock_guard lock(m_lock);
 
-  m_presented = false;
-  m_source = {};
-  m_staticsMeta.reset();
+    m_presented = false;
+    m_source = {};
+    m_staticsMeta.reset();
+    // a video consumer lapses with the video, so its engine stops until the next video is read
+    const uint32_t read = GetReadInputs();
+    for (Consumer& consumer : m_consumers)
+    {
+      if (consumer.input == AMLCaptureInput::VIDEO)
+      {
+        consumer.read = false;
+        consumer.engine = -1;
+      }
+    }
+    if (GetReadInputs() != read)
+      ClearBusy();
+  }
+  CloseIdle();
 }
 
 void CAMLCapture::SetVideoRect(const CRect& rect)
@@ -1188,13 +1339,15 @@ CRect CAMLCapture::GetVisibleRect()
   return rect.Intersect(CRect(0.0f, 0.0f, 1.0f, 1.0f));
 }
 
-std::shared_ptr<CAMLCapture::CStream> CAMLCapture::TakeStream()
+std::shared_ptr<CAMLCapture::CStream> CAMLCapture::TakeStream(size_t engine)
 {
-  if (m_stream)
+  std::shared_ptr<CStream>& stream = m_engines[engine].stream;
+  if (stream)
   {
     m_closing++;
+    m_streamChanges++;
     // a reader may still convert from it, so the node closes with its last holder
-    m_stream->SetClosed(
+    stream->SetClosed(
         [weak = weak_from_this()]
         {
           if (const auto session = weak.lock())
@@ -1205,7 +1358,7 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::TakeStream()
           }
         });
   }
-  return std::move(m_stream);
+  return std::move(stream);
 }
 
 void CAMLCapture::Close(const std::shared_ptr<CStream>& stream)
@@ -1237,27 +1390,45 @@ void CAMLCapture::ReleaseLease(AMLCaptureInput input, int width, int height)
     std::lock_guard lock(m_lock);
     const auto it = FindConsumer(input, width, height);
     if (--it->leases == 0)
+    {
+      const uint32_t read = GetReadInputs();
       m_consumers.erase(it);
-    // a shot closes its own stream
-    if (!m_stream || m_stream->GetPixelFormat() == PIX_FMT_YUV422_10P ||
-        HasLease(m_stream->GetInput()))
+      if (GetReadInputs() != read)
+        ClearBusy();
+    }
+  }
+  CloseIdle();
+}
+
+void CAMLCapture::CloseIdle()
+{
+  {
+    std::lock_guard lock(m_lock);
+    const std::vector<Plan> plans = Place();
+    bool idle = false;
+    for (size_t engine = 0; engine < m_engines.size(); engine++)
+      idle = idle || IsIdle(m_engines[engine], plans[engine]);
+    if (!idle)
       return;
   }
 
-  // a lease can end on the render thread, which makes no stream ioctls; the job holds the
-  // session, so its destructor does not stop the stream there either
+  // a lease or the video can end on the render thread, which makes no stream ioctls; the job
+  // holds the session, so its destructor does not stop the stream there either
   CServiceBroker::GetJobManager()->Submit(
       [session = shared_from_this()]
       {
-        std::shared_ptr<CStream> stream;
+        std::vector<std::shared_ptr<CStream>> streams;
         {
           std::lock_guard lock(session->m_lock);
-          if (!session->m_stream || session->m_stream->GetPixelFormat() == PIX_FMT_YUV422_10P ||
-              session->HasLease(session->m_stream->GetInput()))
-            return;
-          stream = session->TakeStream();
+          const std::vector<Plan> plans = session->Place();
+          for (size_t engine = 0; engine < session->m_engines.size(); engine++)
+          {
+            if (session->IsIdle(session->m_engines[engine], plans[engine]))
+              streams.push_back(session->TakeStream(engine));
+          }
         }
-        session->Close(stream);
+        for (const auto& stream : streams)
+          session->Close(stream);
       });
 }
 
@@ -1270,10 +1441,97 @@ std::vector<CAMLCapture::Consumer>::iterator CAMLCapture::FindConsumer(AMLCaptur
       { return consumer.input == input && consumer.width == width && consumer.height == height; });
 }
 
-bool CAMLCapture::HasLease(AMLCaptureInput input) const
+bool CAMLCapture::IsIdle(const Engine& engine, const Plan& plan) const
 {
-  return std::any_of(m_consumers.begin(), m_consumers.end(),
-                     [input](const Consumer& consumer) { return consumer.input == input; });
+  // a shot closes its own stream
+  return engine.stream && engine.stream->GetPixelFormat() != PIX_FMT_YUV422_10P && plan.inputs == 0;
+}
+
+uint32_t CAMLCapture::GetReadInputs() const
+{
+  uint32_t inputs = 0;
+  for (const Consumer& consumer : m_consumers)
+  {
+    if (consumer.read)
+      inputs |= Bit(consumer.input);
+  }
+  return inputs;
+}
+
+void CAMLCapture::ClearBusy()
+{
+  for (Engine& engine : m_engines)
+  {
+    engine.busy = 0;
+    engine.owned = false;
+  }
+}
+
+std::vector<CAMLCapture::Plan> CAMLCapture::Place()
+{
+  const std::vector<AMLCaptureDevice>& devices = FindDevices();
+  std::vector<Plan> plans(devices.size());
+  const auto add = [&plans](Consumer& consumer, size_t engine)
+  {
+    Plan& plan = plans[engine];
+    plan.inputs |= Bit(consumer.input);
+    plan.width = std::max(plan.width, consumer.width);
+    plan.height = std::max(plan.height, consumer.height);
+    plan.consumers++;
+    consumer.engine = static_cast<int>(engine);
+  };
+  for (Consumer& consumer : m_consumers)
+  {
+    if (consumer.read && consumer.engine >= 0)
+      add(consumer, static_cast<size_t>(consumer.engine));
+  }
+
+  for (Consumer& consumer : m_consumers)
+  {
+    if (!consumer.read || consumer.engine >= 0)
+      continue;
+
+    const uint32_t input = Bit(consumer.input);
+    const auto carries = [&](size_t engine) { return (plans[engine].inputs & input) != 0; };
+    const auto fits = [&](size_t engine)
+    { return plans[engine].width >= consumer.width && plans[engine].height >= consumer.height; };
+    const auto ready = [&](size_t engine)
+    { return devices[engine].Offers(consumer.input) && !(m_engines[engine].busy & input); };
+    const auto first = [&](const auto& rule)
+    {
+      for (size_t engine = 0; engine < plans.size(); engine++)
+      {
+        if (rule(engine))
+          return engine;
+      }
+      return plans.size();
+    };
+    // a busy engine is retried on each read once no other engine is free for the input
+    const bool anyReady = first(ready) < plans.size();
+    const auto usable = [&](size_t engine)
+    { return anyReady ? ready(engine) : devices[engine].Offers(consumer.input); };
+
+    size_t engine = first([&](size_t e) { return carries(e) && fits(e); });
+    if (engine == plans.size())
+      engine = first([&](size_t e) { return plans[e].inputs == 0 && usable(e); });
+    if (engine == plans.size())
+      engine = first(carries);
+    if (engine == plans.size())
+    {
+      // turns on the stream with the fewest inputs; a node without turns only when no other can
+      // carry the input, and its readers then restart it with their own
+      const auto rank = [&](size_t e)
+      { return std::make_pair(m_engines[e].unscheduled, std::popcount(plans[e].inputs)); };
+      for (size_t e = 0; e < plans.size(); e++)
+      {
+        if (usable(e) && plans[e].inputs != 0 && (engine == plans.size() || rank(e) < rank(engine)))
+          engine = e;
+      }
+    }
+    if (engine < plans.size())
+      add(consumer, engine);
+  }
+  return plans;
 }
 
 bool CAMLCapture::CanRead(AMLCaptureInput input) const
@@ -1297,16 +1555,40 @@ bool CAMLCapture::Read(AMLCaptureInput input, int width, int height, const ReadF
   std::shared_ptr<ConsumerConvert> convert;
   {
     std::lock_guard lock(m_lock);
-    convert = FindConsumer(input, width, height)->convert;
+    if (!CanRead(input))
+      return false;
+    const auto consumer = FindConsumer(input, width, height);
+    const uint32_t read = GetReadInputs();
+    consumer->read = true;
+    if (GetReadInputs() != read)
+      ClearBusy();
+    convert = consumer->convert;
   }
-  std::unique_lock open(m_readLock);
+  const StreamFunc read = [&convert, &use](CStream&, unsigned int, const AMLCaptureFrame& frame)
+  {
+    std::lock_guard lock(convert->lock);
+    return use(frame, convert->convert);
+  };
 
-  return ReadStream(open, input, V4L2_PIX_FMT_NV12, CAPTURE_BUFFERS, width, height,
-                    [&convert, &use](CStream&, unsigned int, const AMLCaptureFrame& frame)
-                    {
-                      std::lock_guard lock(convert->lock);
-                      return use(frame, convert->convert);
-                    });
+  // a refused open moves the consumer to the next engine placement gives it, until none is left
+  for (;;)
+  {
+    int engine = -1;
+    {
+      std::lock_guard lock(m_lock);
+      Place();
+      engine = FindConsumer(input, width, height)->engine;
+    }
+    if (engine < 0)
+      return false;
+
+    std::unique_lock open(m_engines[engine].open);
+    bool refused = false;
+    const bool ok = ReadStream(open, static_cast<size_t>(engine), input, V4L2_PIX_FMT_NV12, width,
+                               height, read, refused);
+    if (!refused)
+      return ok;
+  }
 }
 
 bool CAMLCapture::ReadVideo(CaptureScreenshot shot, int width, int height, const ReadFunc& use)
@@ -1326,7 +1608,27 @@ bool CAMLCapture::ReadShot(CaptureScreenshot shot,
                            int height,
                            AMLCaptureShotFrame& frame)
 {
-  std::unique_lock read(m_readLock);
+  const std::vector<AMLCaptureDevice>& devices = FindDevices();
+  size_t engine = devices.size();
+  {
+    std::lock_guard lock(m_lock);
+    // the engine whose stream carries the video, else the one with the fewest consumers
+    const std::vector<Plan> plans = Place();
+    const auto rank = [&plans](size_t e)
+    {
+      return std::make_pair((plans[e].inputs & Bit(AMLCaptureInput::VIDEO)) == 0,
+                            plans[e].consumers);
+    };
+    for (size_t e = 0; e < devices.size(); e++)
+    {
+      if (devices[e].Offers(AMLCaptureInput::VIDEO) &&
+          (engine == devices.size() || rank(e) < rank(engine)))
+        engine = e;
+    }
+  }
+  if (engine == devices.size())
+    return false;
+  std::unique_lock open(m_engines[engine].open);
 
   // a full frame copy takes longer than a continuous reader can wait, so it runs from a dmabuf of
   // the frame after the stream closes
@@ -1358,19 +1660,21 @@ bool CAMLCapture::ReadShot(CaptureScreenshot shot,
     return true;
   };
 
-  const bool ok = ReadStream(read, AMLCaptureInput::VIDEO, PIX_FMT_YUV422_10P, SHOT_BUFFERS, width,
-                             height, copy, shot == CaptureScreenshot::NATIVE);
+  bool refused = false;
+  const bool ok = ReadStream(open, engine, AMLCaptureInput::VIDEO, PIX_FMT_YUV422_10P, width,
+                             height, copy, refused, shot == CaptureScreenshot::NATIVE);
 
   // close the shot stream whatever leases remain
   std::shared_ptr<CStream> stream;
   {
     std::lock_guard lock(m_lock);
-    if (m_stream && m_stream->GetPixelFormat() == PIX_FMT_YUV422_10P)
-      stream = TakeStream();
+    const std::shared_ptr<CStream>& current = m_engines[engine].stream;
+    if (current && current->GetPixelFormat() == PIX_FMT_YUV422_10P)
+      stream = TakeStream(engine);
   }
   Close(stream);
   stream.reset();
-  read.unlock();
+  open.unlock();
 
   if (map != MAP_FAILED)
   {
@@ -1391,16 +1695,22 @@ bool CAMLCapture::ReadShot(CaptureScreenshot shot,
 }
 
 bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
+                             size_t engine,
                              AMLCaptureInput input,
                              uint32_t pixelFormat,
-                             unsigned int buffers,
                              int width,
                              int height,
                              const StreamFunc& use,
+                             bool& refused,
                              bool logCause)
 {
+  Engine& node = m_engines[engine];
+  const AMLCaptureDevice& device = FindDevices()[engine];
+  const bool shot = pixelFormat == PIX_FMT_YUV422_10P;
+  uint32_t inputs = Bit(input);
+  uint32_t replaced = 0;
   std::shared_ptr<CStream> stream;
-  std::shared_ptr<CStream> stale;
+  std::vector<std::shared_ptr<CStream>> stale;
   AMLCaptureSource source;
   // the store lock is never taken under m_lock
   AMLFrameMetadataPtr meta = CAMLFrameMetadataStore::GetInstance().Get();
@@ -1408,44 +1718,152 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
     std::lock_guard lock(m_lock);
     if (!CanRead(input))
       return Unreadable(logCause);
-    for (const Consumer& consumer : m_consumers)
+    const std::vector<Plan> plans = Place();
+    // on a node without turns, or with an input it refused, each reader runs its own input, at
+    // the size its consumers read
+    const auto wanted = [&](size_t e, AMLCaptureInput tap)
     {
-      if (consumer.input != input || pixelFormat != V4L2_PIX_FMT_NV12)
-        continue;
-      width = std::max(width, consumer.width);
-      height = std::max(height, consumer.height);
+      const Engine& node = m_engines[e];
+      if (!(node.unscheduled || (node.busy & plans[e].inputs)) ||
+          std::popcount(plans[e].inputs) < 2)
+        return plans[e];
+      Plan plan{Bit(tap)};
+      for (const Consumer& consumer : m_consumers)
+      {
+        if (consumer.engine == static_cast<int>(e) && consumer.input == tap)
+        {
+          plan.width = std::max(plan.width, consumer.width);
+          plan.height = std::max(plan.height, consumer.height);
+        }
+      }
+      return plan;
+    };
+    if (!shot)
+    {
+      // a consumer came or went since the reader chose the engine
+      if (FindConsumer(input, width, height)->engine != static_cast<int>(engine))
+      {
+        refused = true;
+        return false;
+      }
+      const Plan plan = wanted(engine, input);
+      inputs = plan.inputs;
+      width = plan.width;
+      height = plan.height;
+      // an input the node refused moves to another engine rather than closing another stream
+      const std::vector<AMLCaptureDevice>& devices = FindDevices();
+      bool elsewhere = false;
+      for (size_t e = 0; e < devices.size(); e++)
+        elsewhere = elsewhere ||
+                    (e != engine && devices[e].Offers(input) && !(m_engines[e].busy & Bit(input)));
+      if (elsewhere && (node.busy & inputs) && node.stream &&
+          (node.stream->GetInputs() & plans[engine].inputs & ~inputs))
+      {
+        for (Consumer& consumer : m_consumers)
+        {
+          if (consumer.engine == static_cast<int>(engine) && consumer.input == input)
+            consumer.engine = -1;
+        }
+        refused = true;
+        return false;
+      }
     }
-    if (m_stream && !m_stream->Matches(input, pixelFormat, width, height))
-      stale = TakeStream();
-    stream = m_stream;
+    if (node.stream && !node.stream->Matches(inputs, pixelFormat, width, height))
+    {
+      replaced = node.stream->GetInputs();
+      stale.push_back(TakeStream(engine));
+    }
+    stream = node.stream;
+    // our streams that no longer match still hold write-back channels the open may need
+    for (size_t other = 0; !stream && other < m_engines.size(); other++)
+    {
+      const std::shared_ptr<CStream>& otherStream = m_engines[other].stream;
+      if (!otherStream || otherStream->GetPixelFormat() != V4L2_PIX_FMT_NV12)
+        continue;
+      const Plan plan = wanted(other, otherStream->GetInputs() & Bit(AMLCaptureInput::SCREEN)
+                                          ? AMLCaptureInput::SCREEN
+                                          : AMLCaptureInput::VIDEO);
+      if (!otherStream->Matches(plan.inputs, V4L2_PIX_FMT_NV12, plan.width, plan.height))
+        stale.push_back(TakeStream(other));
+    }
     UpdateStatics(std::move(meta));
     source = m_source;
   }
-  Close(stale);
-  stale.reset();
+  for (const auto& old : stale)
+    Close(old);
+  stale.clear();
 
   if (!stream)
   {
     uint32_t epoch = 0;
+    uint32_t changes = 0;
     {
       std::unique_lock lock(m_lock);
       m_closed.wait(lock, [this] { return m_closing == 0; });
       if (!CanRead(input))
         return Unreadable(logCause);
       epoch = m_displayEpoch;
+      changes = m_streamChanges;
     }
 
-    bool busy = false;
-    const int logLevel = m_openFailed ? LOGDEBUG : LOGWARNING;
-    stream = CStream::Open(input, pixelFormat, buffers, width, height, logLevel, busy);
+    CStream::Refusal refusal = CStream::Refusal::NONE;
+    const int logLevel = node.openFailed ? LOGDEBUG : LOGWARNING;
+    const unsigned int buffers =
+        shot
+            ? SHOT_BUFFERS
+            : BUFFERS_PER_INPUT * static_cast<unsigned int>(std::popcount(inputs)) + STREAM_BUFFERS;
+    stream = CStream::Open(device, inputs, pixelFormat, buffers, width, height, logLevel, refusal);
+    const bool busy = refusal == CStream::Refusal::OWNED || refusal == CStream::Refusal::NO_CHANNEL;
     if (!busy)
-      m_openFailed = !stream;
+      node.openFailed = !stream;
 
     std::lock_guard lock(m_lock);
-    bool& wasBusy = input == AMLCaptureInput::SCREEN ? m_screenBusy : m_busy;
-    if (busy && !wasBusy)
-      CLog::Log(LOGWARNING, "CAMLCapture::{}: another vdin1 user holds the node", __FUNCTION__);
-    wasBusy = busy;
+    if (!shot)
+    {
+      // a mode set, a change of our own streams and a shot meanwhile refuse an open too
+      const bool ours =
+          epoch != m_displayEpoch || changes != m_streamChanges ||
+          std::any_of(m_engines.begin(), m_engines.end(),
+                      [](const Engine& other) {
+                        return other.stream && other.stream->GetPixelFormat() == PIX_FMT_YUV422_10P;
+                      });
+      // an open ends the refusals of its inputs, and of all inputs when another user owned the node
+      if (stream)
+      {
+        node.busy = node.owned ? 0 : node.busy & ~inputs;
+        node.owned = false;
+      }
+      const uint32_t wasBusy = node.busy;
+      const bool wasScheduled = !node.unscheduled;
+      // vdin names no input it lacks a channel for, so of several the open added the reader's
+      // is kept and retried alone
+      uint32_t added = inputs & ~replaced;
+      if (added == 0)
+        added = inputs;
+      if (!ours && refusal == CStream::Refusal::OWNED)
+      {
+        node.busy = Bit(AMLCaptureInput::SCREEN) | Bit(AMLCaptureInput::VIDEO);
+        node.owned = true;
+      }
+      else if (!ours && refusal == CStream::Refusal::NO_CHANNEL)
+        node.busy |= std::popcount(added) == 1 ? added : added & ~Bit(input);
+      node.unscheduled =
+          node.unscheduled || (epoch == m_displayEpoch && refusal == CStream::Refusal::NO_TURNS);
+      refused = node.busy != wasBusy || (wasScheduled && node.unscheduled);
+    }
+    if (refused)
+    {
+      const bool unscheduled = refusal == CStream::Refusal::NO_TURNS;
+      CLog::Log(LOGWARNING, "CAMLCapture::{}: {} refused inputs {:#x}: {}", __FUNCTION__,
+                device.path, inputs, unscheduled ? "no turns" : "no room");
+      // the consumers it was refused for are placed again; without turns the reader's stays
+      const uint32_t moved = unscheduled ? ~Bit(input) : node.busy;
+      for (Consumer& consumer : m_consumers)
+      {
+        if (consumer.engine == static_cast<int>(engine) && (moved & Bit(consumer.input)))
+          consumer.engine = -1;
+      }
+    }
     if (!stream)
       return false;
     // a stream opened across a mode set still holds the old mode
@@ -1457,18 +1875,16 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
     }
     if (!CanRead(input))
       return Unreadable(logCause);
-    m_stream = stream;
+    node.stream = stream;
+    m_streamChanges++;
   }
-  // a shot keeps the node until its stream closes
-  if (pixelFormat == V4L2_PIX_FMT_NV12)
+  if (!shot)
     open.unlock();
 
-  const float periodMs = stream->GetFramePeriodMs();
-  const int waitMs = static_cast<int>(std::ceil(FRAME_WAIT_PERIODS * periodMs));
-  const std::chrono::milliseconds maxAge(static_cast<int>((stream->GetBuffers() - 2) * periodMs));
+  const int waitMs = static_cast<int>(std::ceil(FRAME_WAIT_PERIODS * stream->GetFramePeriodMs()));
   unsigned int index = 0;
   const CStream::Wake wake =
-      stream->Take(maxAge, index) ? CStream::Wake::FRAME : stream->Wait(waitMs, index);
+      stream->Take(input, index) ? CStream::Wake::FRAME : stream->Wait(input, waitMs, index);
   if (wake == CStream::Wake::FRAME)
   {
     AMLCaptureFrame frame;
@@ -1483,10 +1899,11 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
   {
     {
       std::lock_guard lock(m_lock);
-      if (m_stream == stream)
-        stale = TakeStream();
+      if (node.stream == stream)
+        stale.push_back(TakeStream(engine));
     }
-    Close(stale);
+    for (const auto& old : stale)
+      Close(old);
     CLog::Log(LOGWARNING, "CAMLCapture::{}: vdin1 stopped the stream", __FUNCTION__);
     return false;
   }
@@ -1494,7 +1911,7 @@ bool CAMLCapture::ReadStream(std::unique_lock<std::mutex>& open,
   if (wake == CStream::Wake::TIMEOUT)
   {
     std::lock_guard lock(m_lock);
-    if (m_stream == stream)
+    if (node.stream == stream)
     {
       if (logCause)
         CLog::Log(LOGWARNING, "CAMLCapture::{}: no frame in {} ms, stream kept open", __FUNCTION__,
@@ -1697,8 +2114,9 @@ void CAMLCapture::CreateCompositePixels(CaptureResult& result)
 
 void CAMLCapture::CreateLivePixels(int width, int height, CaptureResult& result)
 {
-  const AMLCaptureDevice& device = FindDevice();
-  if (device.input < 0 || device.screenInput < 0)
+  const std::vector<AMLCaptureDevice>& devices = FindDevices();
+  if (std::none_of(devices.begin(), devices.end(), [](const AMLCaptureDevice& device)
+                   { return device.Offers(AMLCaptureInput::SCREEN); }))
     return;
 
   const auto session = Get();
