@@ -264,7 +264,6 @@ public:
     if (m_spec.shot == CaptureScreenshot::NATIVE)
     {
       m_buffer = ReadNative(*session);
-      m_lease.reset();
       return m_buffer.get();
     }
 
@@ -283,9 +282,6 @@ public:
                              return convert.Convert(CAMLCapture::Crop(frame.image, m_spec.rect),
                                                     frame.color, AMLCaptureCoding(), dst);
                            });
-    // a screenshot holds no stream while it is encoded
-    if (m_spec.shot != CaptureScreenshot::NONE)
-      m_lease.reset();
 
     if (ok)
       m_buffer = std::move(buffer);
@@ -374,12 +370,10 @@ class CAMLCompositePixels : public ICapturePixels
 {
 public:
   CAMLCompositePixels(std::weak_ptr<CAMLCapture> session,
-                      std::shared_ptr<void> lease,
                       CaptureResult gui,
                       const AMLCaptureCoding& coding,
                       const CRect& video)
     : m_session(std::move(session)),
-      m_lease(std::move(lease)),
       m_gui(std::move(gui)),
       m_coding(coding),
       m_video(video)
@@ -613,8 +607,6 @@ public:
     }
     else if (session)
       ok = session->ReadVideo(m_gui.screenshot, m_streamWidth, m_streamHeight, blend);
-    if (m_gui.screenshot != CaptureScreenshot::NONE)
-      m_lease.reset();
     // the GUI alone is clear where the video shows, and in an HDR coding would pass for SDR
     if (!ok)
     {
@@ -630,7 +622,6 @@ public:
 
 private:
   std::weak_ptr<CAMLCapture> m_session;
-  std::shared_ptr<void> m_lease;
   CaptureResult m_gui;
   AMLCaptureCoding m_coding;
   //! the visible video, normalized to the output
@@ -1208,7 +1199,9 @@ void CAMLCapture::ReleaseLease(AMLCaptureInput input, int width, int height)
     if (it != m_continuousSizes.end())
       m_continuousSizes.erase(it);
     m_leases[static_cast<size_t>(input)]--;
-    if (!m_stream || m_leases[static_cast<size_t>(m_stream->GetInput())] > 0)
+    // a shot closes its own stream
+    if (!m_stream || m_stream->GetPixelFormat() == PIX_FMT_YUV422_10P ||
+        m_leases[static_cast<size_t>(m_stream->GetInput())] > 0)
       return;
   }
 
@@ -1220,7 +1213,7 @@ void CAMLCapture::ReleaseLease(AMLCaptureInput input, int width, int height)
         std::shared_ptr<CStream> stream;
         {
           std::lock_guard lock(session->m_lock);
-          if (!session->m_stream ||
+          if (!session->m_stream || session->m_stream->GetPixelFormat() == PIX_FMT_YUV422_10P ||
               session->m_leases[static_cast<size_t>(session->m_stream->GetInput())] > 0)
             return;
           stream = session->TakeStream();
@@ -1246,6 +1239,7 @@ bool CAMLCapture::Unreadable(bool log) const
 
 bool CAMLCapture::Read(AMLCaptureInput input, int width, int height, const ReadFunc& use)
 {
+  const auto lease = Lease(input, width, height);
   std::lock_guard read(m_readLock);
 
   return ReadStream(input, V4L2_PIX_FMT_NV12, CAPTURE_BUFFERS, width, height,
@@ -1596,7 +1590,7 @@ void CAMLCapture::CreateVideoPixels(const AMLCaptureVideoSpec& spec, CaptureResu
   int width = 0;
   int height = 0;
   GetStreamSize(spec.rect, spec.width, spec.height, width, height);
-  auto lease = spec.continuous ? Lease(AMLCaptureInput::VIDEO, width, height) : Lease();
+  auto lease = spec.continuous ? Lease(AMLCaptureInput::VIDEO, width, height) : nullptr;
   result.pixels =
       std::make_shared<CAMLVideoPixels>(weak_from_this(), std::move(lease), spec, width, height);
   DescribeSdr(spec.width, spec.height, spec.shot == CaptureScreenshot::STANDARD, result);
@@ -1625,8 +1619,8 @@ void CAMLCapture::CreateCompositePixels(CaptureResult& result)
   coding.whiteNits = white * PQ_PEAK_NITS;
 
   const bool rgb = result.screenshot == CaptureScreenshot::STANDARD;
-  result.pixels = std::make_shared<CAMLCompositePixels>(weak_from_this(), Lease(), result, coding,
-                                                        GetVisibleRect());
+  result.pixels =
+      std::make_shared<CAMLCompositePixels>(weak_from_this(), result, coding, GetVisibleRect());
   result.stride = static_cast<int>(result.width) * (rgb ? 3 : 4);
   result.format = rgb ? AV_PIX_FMT_RGB24 : AV_PIX_FMT_RGBA;
   result.color.primaries = AVCOL_PRI_BT709;
