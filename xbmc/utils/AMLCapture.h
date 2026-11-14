@@ -117,12 +117,6 @@ public:
   //! Render thread: the video destination on screen, normalized to the output
   CRect GetVisibleRect();
 
-  //! Keeps the stream running until the last lease is released. A continuous consumer passes
-  //! the stream size it reads at, which the stream keeps while the lease lasts.
-  std::shared_ptr<void> Lease(AMLCaptureInput input = AMLCaptureInput::VIDEO,
-                              int width = 0,
-                              int height = 0);
-
   //! Consumer thread: take the newest frame of a stream of input at least width x height, or of
   //! the input's continuous size when larger, else wait for the next one, and run `use` on it. An
   //! input or size change restarts the stream. A wait ends after a bound of frame periods.
@@ -164,6 +158,9 @@ private:
   using StreamFunc =
       std::function<bool(CStream& stream, unsigned int index, const AMLCaptureFrame& frame)>;
 
+  //! Keeps a stream of input at least width x height running until the last lease is released.
+  //! A continuous consumer holds one from its tap on, every read for its own duration.
+  std::shared_ptr<void> Lease(AMLCaptureInput input, int width, int height);
   void ReleaseLease(AMLCaptureInput input, int width, int height);
   //! m_readLock must be held; `use` runs on buffer `index`, which is queued again after it.
   //! With `logCause`, it logs why it gets no frame
