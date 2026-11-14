@@ -80,29 +80,31 @@ bool CCaptureService::LatchFrame()
     }
     m_pending.clear();
 
-    // one consumer per render loop: the most recent request wins whatever its
-    // cadence, so a one-shot submitted just before a continuous is buried
-    // until the continuous is gone (a rare late or lost screenshot, accepted)
+    // every continuous request is served each frame, and the newest one-shot;
+    // older one-shots wait their turn, newest first
+    std::shared_ptr<CaptureRequest> oneShot;
     for (auto& request : m_stack)
     {
       if (request->state == CaptureState::LATCHED)
         request->state = CaptureState::PENDING;
-    }
-    std::shared_ptr<CaptureRequest> latchedRequest;
-    if (!m_stack.empty())
-      latchedRequest = m_stack.back();
-
-    if (latchedRequest)
-    {
-      latchedRequest->served = false; // FrameComplete judges this at the end of the frame
-      latchedRequest->state = CaptureState::LATCHED;
+      if (request->spec.cadence == CaptureCadence::ONESHOT)
+      {
+        oneShot = request;
+        continue;
+      }
+      request->served = false;
+      request->state = CaptureState::LATCHED;
     }
 
     // the latched one-shot forces frames until it serves or FrameComplete fails
-    // it; a buried one-shot waits quietly and a lone CONTINUOUS never forces,
-    // so unchanged frames are still skipped during a steady continuous capture
-    if (latchedRequest && latchedRequest->spec.cadence == CaptureCadence::ONESHOT)
+    // it; continuous requests never force, so unchanged frames are still
+    // skipped during a steady continuous capture
+    if (oneShot)
+    {
+      oneShot->served = false; // FrameComplete judges this at the end of the frame
+      oneShot->state = CaptureState::LATCHED;
       needsFrame = true;
+    }
   }
 
   return needsFrame;
@@ -112,15 +114,13 @@ std::vector<std::shared_ptr<CaptureRequest>> CCaptureService::TakeActive(Capture
 {
   std::vector<std::shared_ptr<CaptureRequest>> matches;
   std::unique_lock lock(m_lock);
-  // exactly one request is LATCHED per frame; return it wherever it sits. A
-  // BOTH request is served by the video tap and the composite tap alike.
+  // a BOTH request is served by the video tap and the composite tap alike
   for (const auto& request : m_stack)
   {
     if (request->state != CaptureState::LATCHED)
       continue;
     if (request->spec.content == content || request->spec.content == CaptureContent::BOTH)
       matches.push_back(request);
-    break;
   }
   return matches;
 }
@@ -207,7 +207,6 @@ void CCaptureService::FrameComplete()
         continue;
       if (!request->served && request->spec.cadence == CaptureCadence::ONESHOT)
         unserved = request;
-      break; // at most one request is latched per frame
     }
   }
 

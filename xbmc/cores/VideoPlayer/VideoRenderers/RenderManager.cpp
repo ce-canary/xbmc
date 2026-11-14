@@ -634,7 +634,7 @@ void CRenderManager::UnInit()
   m_overlays.UnInit();
   m_debugRenderer.Dispose();
 
-  m_captureBlit.reset();
+  m_captureBlits.clear();
   DeleteRenderer();
 
   m_renderState = STATE_UNCONFIGURED;
@@ -790,19 +790,21 @@ void CRenderManager::ServiceVideoCaptures()
   visible.Intersect(
       CRect(0.0f, 0.0f, static_cast<float>(gfx.GetWidth()), static_cast<float>(gfx.GetHeight())));
 
-  if (!m_captureBlit)
-    m_captureBlit = std::make_unique<CCaptureBlit>();
-
+  const auto size = [&visible](const CaptureSpec& spec)
+  {
+    return std::pair{spec.width ? spec.width : static_cast<unsigned int>(visible.Width()),
+                     spec.height ? spec.height : static_cast<unsigned int>(visible.Height())};
+  };
+  // one blit per size, so a one-shot beside a continuous request leaves its framebuffer alone
   for (const auto& request : requests)
   {
-    const unsigned int width =
-        request->spec.width ? request->spec.width : static_cast<unsigned int>(visible.Width());
-    const unsigned int height =
-        request->spec.height ? request->spec.height : static_cast<unsigned int>(visible.Height());
+    const auto [width, height] = size(request->spec);
+    std::unique_ptr<CCaptureBlit>& blit = m_captureBlits[{width, height}];
+    if (!blit)
+      blit = std::make_unique<CCaptureBlit>();
 
     CaptureResult result;
-    if (m_captureBlit->Blit(visible, width, height, request->spec.format) &&
-        m_captureBlit->Read(result))
+    if (blit->Blit(visible, width, height, request->spec.format) && blit->Read(result))
     {
       result.color = GetOutputColorMetadata(*CServiceBroker::GetWinSystem());
       // the presented PQ is the content's during passthrough, so carry its
@@ -819,6 +821,12 @@ void CRenderManager::ServiceVideoCaptures()
     else
       captureService->Fail(request);
   }
+  std::erase_if(m_captureBlits,
+                [&](const auto& blit)
+                {
+                  return std::none_of(requests.begin(), requests.end(), [&](const auto& request)
+                                      { return size(request->spec) == blit.first; });
+                });
 }
 
 void CRenderManager::SetViewMode(int iViewMode)

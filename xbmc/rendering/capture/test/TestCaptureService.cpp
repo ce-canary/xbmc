@@ -276,19 +276,39 @@ TEST_F(TestCaptureService, BothWithoutCallbackRefused)
   EXPECT_TRUE(m_service.TakeActive(CaptureContent::VIDEO).empty());
 }
 
-TEST_F(TestCaptureService, MostRecentRequestWins)
+TEST_F(TestCaptureService, EveryContinuousServed)
 {
-  // pure LIFO: the newest request is the serviced consumer whatever its
-  // cadence, so a continuous submitted after a one-shot buries it (accepted).
-  auto oneshot = m_service.Submit({});
-  CaptureSpec cont;
-  cont.cadence = CaptureCadence::CONTINUOUS;
-  auto continuous = m_service.Submit(cont); // most recent, sits on top
+  CaptureSpec spec;
+  spec.cadence = CaptureCadence::CONTINUOUS;
+  auto lower = m_service.Submit(spec);
+  auto upper = m_service.Submit(spec);
 
   m_service.LatchFrame();
   auto active = m_service.TakeActive(CaptureContent::COMPOSITE);
-  ASSERT_EQ(active.size(), 1u);
-  EXPECT_EQ(active[0]->spec.cadence, CaptureCadence::CONTINUOUS);
+  ASSERT_EQ(active.size(), 2u);
+  m_service.Complete(active[0], MakeResult());
+  m_service.Complete(active[1], MakeResult());
+  EXPECT_TRUE(lower->WaitNext(1000ms));
+  EXPECT_TRUE(upper->WaitNext(1000ms));
+
+  // both stay served on the next loop
+  m_service.LatchFrame();
+  EXPECT_EQ(m_service.TakeActive(CaptureContent::COMPOSITE).size(), 2u);
+}
+
+TEST_F(TestCaptureService, OneShotUnderContinuousServed)
+{
+  auto oneshot = m_service.Submit({});
+  CaptureSpec cont;
+  cont.cadence = CaptureCadence::CONTINUOUS;
+  auto continuous = m_service.Submit(cont);
+
+  // a continuous submitted after a one-shot no longer buries it
+  EXPECT_TRUE(m_service.LatchFrame());
+  auto active = m_service.TakeActive(CaptureContent::COMPOSITE);
+  ASSERT_EQ(active.size(), 2u);
+  EXPECT_EQ(active[0]->spec.cadence, CaptureCadence::ONESHOT);
+  EXPECT_EQ(active[1]->spec.cadence, CaptureCadence::CONTINUOUS);
 }
 
 TEST_F(TestCaptureService, WaitNextFalseOnCancel)
@@ -344,7 +364,7 @@ TEST_F(TestCaptureService, OneShotWaitNextSeesDelivery)
   EXPECT_EQ(handle->GetState(), CaptureState::DONE);
 }
 
-TEST_F(TestCaptureService, OneShotPreemptsContinuous)
+TEST_F(TestCaptureService, OneShotServedBesideContinuous)
 {
   CaptureSpec spec;
   spec.cadence = CaptureCadence::CONTINUOUS;
@@ -356,20 +376,21 @@ TEST_F(TestCaptureService, OneShotPreemptsContinuous)
   auto oneshot = m_service.Submit({});
   m_service.LatchFrame();
 
-  // the one-shot pushed onto the stack top; only it is serviced this loop
+  // the continuous request keeps its delivery in the one-shot's frame
   auto active = m_service.TakeActive(CaptureContent::COMPOSITE);
-  ASSERT_EQ(active.size(), 1u);
-  EXPECT_EQ(active[0]->spec.cadence, CaptureCadence::ONESHOT);
+  ASSERT_EQ(active.size(), 2u);
+  EXPECT_EQ(active[0]->spec.cadence, CaptureCadence::CONTINUOUS);
+  EXPECT_EQ(active[1]->spec.cadence, CaptureCadence::ONESHOT);
   m_service.Complete(active[0], MakeResult());
+  m_service.Complete(active[1], MakeResult());
+  EXPECT_TRUE(continuous->WaitNext(1000ms));
   EXPECT_TRUE(oneshot->Wait(1000ms));
 
-  // the continuous request resumes as stack top on the next loop
+  // only the continuous request remains
   m_service.LatchFrame();
   active = m_service.TakeActive(CaptureContent::COMPOSITE);
   ASSERT_EQ(active.size(), 1u);
   EXPECT_EQ(active[0]->spec.cadence, CaptureCadence::CONTINUOUS);
-  m_service.Complete(active[0], MakeResult());
-  EXPECT_TRUE(continuous->WaitNext(1000ms));
 }
 
 TEST_F(TestCaptureService, StackedOneShotsServeNewestFirst)

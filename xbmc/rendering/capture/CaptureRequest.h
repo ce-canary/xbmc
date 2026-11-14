@@ -23,8 +23,8 @@ namespace CAPTURE
 
 enum class CaptureState
 {
-  PENDING, //!< submitted and not yet latched, or standing by below the stack top
-  LATCHED, //!< the stack top, serviced by this frame's taps
+  PENDING, //!< submitted and not yet latched, or a one-shot waiting behind a newer one
+  LATCHED, //!< serviced by this frame's taps
   DONE,
   FAILED,
   CANCELLED,
