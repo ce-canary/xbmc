@@ -200,6 +200,7 @@ public:
   bool TakeSyncPaused(CActiveAEStream* stream);
   void GetDelay(AEDelayStatus& status, CActiveAEStream *stream);
   void GetSyncInfo(CAESyncInfo& info, CActiveAEStream *stream);
+  bool IsSyncErrorTaken(CActiveAEStream* stream);
   float GetCacheTime(CActiveAEStream *stream);
   float GetCacheTotal();
   float GetMaxDelay() const;
@@ -231,6 +232,8 @@ protected:
     double m_resampleRatio;
     double m_syncError;
     unsigned int m_errorTime;
+    // the error time the player last read
+    unsigned int m_errorTimeTaken{0};
     CAESyncInfo::AESyncState m_syncState;
     bool m_lateStartHandedOver{false};
     bool m_exactStart;
