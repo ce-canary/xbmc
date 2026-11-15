@@ -866,7 +866,8 @@ void ServiceCaptureTaps(CApplicationPlayer& player)
       continue;
     }
 
-    if (CaptureResult result; surface->CaptureDirect(request->spec, result))
+    if (CaptureResult result = captureService->CopyResult(*request);
+        surface->CaptureDirect(request->spec, result))
     {
       if (result.pixels)
         captureService->Complete(request, std::move(result));

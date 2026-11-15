@@ -35,7 +35,8 @@ public:
   virtual bool Read(const ScreenshotContext& ctx) { return false; }
 
   //! \brief Render thread: serve a capture without the framebuffer readback, e.g. from a
-  //! display writeback. False leaves it to Read; true with no pixels fails the request.
+  //! display writeback. False leaves it to Read; true with no pixels fails the request. result
+  //! holds the request's last delivery, which a live capture keeps.
   virtual bool CaptureDirect(const KODI::RENDERING::CAPTURE::CaptureSpec& spec,
                              KODI::RENDERING::CAPTURE::CaptureResult& result)
   {
