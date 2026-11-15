@@ -38,6 +38,14 @@ enum class AMLCaptureInput
   SCREEN,
 };
 
+enum class AMLCaptureRead
+{
+  FRAME,
+  //! the output shows no picture for now: its mode changes, or the input is blank
+  NO_PICTURE,
+  ENDED,
+};
+
 //! A vdin frame, valid only inside CAMLCapture::Read
 struct AMLCaptureFrame
 {
@@ -124,7 +132,7 @@ public:
   //! the size another reader of its engine reads at when larger, else wait for the next one, and
   //! run `use` on it. A wait ends after a bound of frame periods, sooner when the input or the
   //! output mode shows no picture.
-  bool Read(AMLCaptureInput input, int width, int height, const ReadFunc& use);
+  AMLCaptureRead Read(AMLCaptureInput input, int width, int height, const ReadFunc& use);
   //! Consumer thread: copy out a frame of a one-shot 10-bit video stream of the size asked for;
   //! vdin settles what it delivers. The stream closes before this returns; a continuous reader
   //! reopens its own.
@@ -226,19 +234,20 @@ private:
   //! while its buffers grow; `use` runs on buffer `index`, which is returned after it. `refused`
   //! tells that a refused open changed the placement, so the reader reads again. With `logCause`,
   //! it logs why it gets no frame
-  bool ReadStream(std::unique_lock<std::mutex>& open,
-                  size_t engine,
-                  AMLCaptureInput input,
-                  uint32_t pixelFormat,
-                  int width,
-                  int height,
-                  const StreamFunc& use,
-                  bool& refused,
-                  bool logCause = false);
+  AMLCaptureRead ReadStream(std::unique_lock<std::mutex>& open,
+                            size_t engine,
+                            AMLCaptureInput input,
+                            uint32_t pixelFormat,
+                            int width,
+                            int height,
+                            const StreamFunc& use,
+                            bool& refused,
+                            bool logCause = false);
   //! m_lock must be held
   bool CanRead(AMLCaptureInput input) const;
-  //! m_lock must be held; false, after logging why the video cannot be read when `log`
-  bool Unreadable(bool log) const;
+  //! m_lock must be held; no picture while the display is lost, else ended, after logging why the
+  //! video cannot be read when `log`
+  AMLCaptureRead Unreadable(bool log) const;
   //! takes the stream of `engine` for Close; m_lock must be held, and the caller drops the stream
   //! after it
   std::shared_ptr<CStream> TakeStream(size_t engine);
@@ -271,7 +280,9 @@ private:
   std::condition_variable m_closed;
   std::vector<Consumer> m_consumers;
   bool m_displayLost{false};
+  std::condition_variable m_displayReset;
   uint32_t m_displayEpoch{0};
+  float m_framePeriodMs{0.0f};
   AMLCaptureSource m_source;
   //! the frame metadata the title peak in m_source was decoded from
   std::shared_ptr<const AMLFrameMetadata> m_staticsMeta;
