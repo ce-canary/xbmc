@@ -759,9 +759,16 @@ public:
       m_buffer = std::make_unique<uint8_t[]>(static_cast<size_t>(m_width) * m_height * 4);
     const AMLCaptureImage dst =
         AMLCaptureImage::Packed(AV_PIX_FMT_BGRA, m_width, m_height, m_buffer.get(), m_width * 4);
+    int streamWidth = 0;
+    int streamHeight = 0;
+    {
+      std::lock_guard lock(m_streamLock);
+      streamWidth = m_streamWidth;
+      streamHeight = m_streamHeight;
+    }
 
     const bool ok =
-        m_session->Read(AMLCaptureInput::SCREEN, m_streamWidth, m_streamHeight,
+        m_session->Read(AMLCaptureInput::SCREEN, streamWidth, streamHeight,
                         [&dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert) {
                           return convert.Convert(frame.image, frame.color, AMLCaptureCoding(), dst);
                         });
@@ -769,6 +776,23 @@ public:
   }
 
   void Unlock() override { m_lock.unlock(); }
+
+  //! Render thread: a new output mode may change the stream size, which takes a lease of its own;
+  //! the image stays
+  bool HasStreamSize(int streamWidth, int streamHeight)
+  {
+    std::lock_guard lock(m_streamLock);
+
+    return streamWidth == m_streamWidth && streamHeight == m_streamHeight;
+  }
+  void SetStreamSize(std::shared_ptr<void> lease, int streamWidth, int streamHeight)
+  {
+    std::lock_guard lock(m_streamLock);
+
+    m_lease = std::move(lease);
+    m_streamWidth = streamWidth;
+    m_streamHeight = streamHeight;
+  }
 
 private:
   // the lease ends first, so the stream closes before the session can go
@@ -778,6 +802,8 @@ private:
   int m_height{0};
   int m_streamWidth{0};
   int m_streamHeight{0};
+  //! guards the lease and the stream size; a Lock never holds it while it reads
+  std::mutex m_streamLock;
   std::mutex m_lock;
   std::unique_ptr<uint8_t[]> m_buffer;
 };
@@ -2762,6 +2788,17 @@ void CAMLCapture::CreateLivePixels(int width, int height, CaptureResult& result)
   int streamWidth = 0;
   int streamHeight = 0;
   GetStreamSize(CRect(0.0f, 0.0f, 1.0f, 1.0f), width, height, streamWidth, streamHeight);
+  // a request keeps its pixels, and with them its image, from delivery to delivery
+  if (result.live)
+  {
+    auto& pixels = static_cast<CAMLLivePixels&>(*result.pixels);
+    // the new lease comes first, so the stream is never left without one
+    if (!pixels.HasStreamSize(streamWidth, streamHeight))
+      pixels.SetStreamSize(session->Lease(AMLCaptureInput::SCREEN, streamWidth, streamHeight),
+                           streamWidth, streamHeight);
+    return;
+  }
+
   auto lease = session->Lease(AMLCaptureInput::SCREEN, streamWidth, streamHeight);
   result.pixels = std::make_shared<CAMLLivePixels>(session, std::move(lease), width, height,
                                                    streamWidth, streamHeight);
