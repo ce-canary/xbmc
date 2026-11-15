@@ -286,9 +286,21 @@ void CEngineStats::GetSyncInfo(CAESyncInfo& info, CActiveAEStream *stream)
       info.state = str.m_syncState;
       info.exactStart = str.m_exactStart;
       info.rr = str.m_resampleRatio;
+      str.m_errorTimeTaken = str.m_errorTime;
       return;
     }
   }
+}
+
+bool CEngineStats::IsSyncErrorTaken(CActiveAEStream* stream)
+{
+  std::unique_lock lock(m_lock);
+  for (const auto& str : m_streamStats)
+  {
+    if (str.m_streamId == stream->m_id)
+      return str.m_errorTimeTaken == str.m_errorTime;
+  }
+  return true;
 }
 
 float CEngineStats::GetCacheTime(CActiveAEStream *stream)
@@ -2845,7 +2857,8 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
     {
       stream->m_startPad += stream->m_syncShift - shift;
       stream->m_syncShift = shift;
-      stream->m_syncError.SetErrorInterval(stream->GetErrorInterval());
+      if (!stream->m_lateStartHandedOver)
+        stream->m_syncError.SetErrorInterval(stream->GetErrorInterval());
     }
   }
   else if (stream->m_syncState == CAESyncInfo::AESyncState::SYNC_ADJUST &&
@@ -2878,7 +2891,9 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
   std::chrono::milliseconds timeout = (stream->m_syncState != CAESyncInfo::AESyncState::SYNC_INSYNC)
                                           ? 100ms
                                           : stream->GetErrorInterval();
-  bool newerror = stream->m_syncError.Get(error, timeout);
+  // a start error handed to the player stays reported until the player read it
+  bool newerror = (!stream->m_lateStartHandedOver || m_stats.IsSyncErrorTaken(stream)) &&
+                  stream->m_syncError.Get(error, timeout);
 
   if (newerror && stream->m_lateStartHandedOver)
   {
