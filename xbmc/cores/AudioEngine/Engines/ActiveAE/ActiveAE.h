@@ -196,6 +196,8 @@ public:
   void AddStream(unsigned int streamid);
   void RemoveStream(unsigned int streamid);
   void UpdateStream(CActiveAEStream *stream);
+  void PauseStream(CActiveAEStream* stream);
+  bool TakeSyncPaused(CActiveAEStream* stream);
   void GetDelay(AEDelayStatus& status, CActiveAEStream *stream);
   void GetSyncInfo(CAESyncInfo& info, CActiveAEStream *stream);
   float GetCacheTime(CActiveAEStream *stream);
@@ -231,6 +233,8 @@ protected:
     unsigned int m_errorTime;
     CAESyncInfo::AESyncState m_syncState;
     bool m_exactStart;
+    // paused by the player since the engine last restarted the stream's sync
+    bool m_syncPaused{false};
   };
   std::vector<StreamStats> m_streamStats;
 };
