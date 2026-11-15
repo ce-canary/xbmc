@@ -149,7 +149,8 @@ public:
                          KODI::RENDERING::CAPTURE::CaptureResult& result);
 
   //! Render thread: continuous sRGB BGRA pixels of the screen in result, read at each Lock, so they
-  //! outlast a stretch with no drawn frame. No pixels without a vdin screen input.
+  //! outlast a stretch with no drawn frame; live pixels in result stay, at the stream size of the
+  //! output mode. No pixels without a vdin screen input.
   static void CreateLivePixels(int width,
                                int height,
                                KODI::RENDERING::CAPTURE::CaptureResult& result);
