@@ -915,16 +915,14 @@ bool CAMLCapture::CanRead(AMLCaptureInput input) const
 {
   if (m_displayLost)
     return false;
-  return input == AMLCaptureInput::SCREEN || (m_presented && !m_busy);
+  return input == AMLCaptureInput::SCREEN || m_presented;
 }
 
 bool CAMLCapture::Unreadable(bool log) const
 {
   if (log)
     CLog::Log(LOGWARNING, "CAMLCapture::{}: no video frame: {}", __FUNCTION__,
-              m_displayLost  ? "display lost"
-              : !m_presented ? "no video presented"
-                             : "another vdin1 user holds the node");
+              m_displayLost ? "display lost" : "no video presented");
   return false;
 }
 
