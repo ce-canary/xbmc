@@ -193,7 +193,7 @@ private:
   std::vector<std::tuple<AMLCaptureInput, int, int>> m_continuousSizes;
   bool m_displayLost{false};
   uint32_t m_displayEpoch{0};
-  //! another vdin1 user holds the node: no reopen before the next Configure
+  //! the last video open found the node busy; every video read retries it
   bool m_busy{false};
   //! the last screen open found the node busy; every screen read retries it
   bool m_screenBusy{false};
