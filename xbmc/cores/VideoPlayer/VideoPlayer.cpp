@@ -3211,7 +3211,7 @@ void CVideoPlayer::ReportBlurayPresented()
 
   const auto itemEnd = GetBlurayItemEnd();
   double time = m_clock.GetClock();
-  double speed = m_clock.IsPaused() ? 0.0 : m_clock.GetClockSpeed();
+  double speed = m_clock.IsPaused() || m_clock.IsAtStartTarget() ? 0.0 : m_clock.GetClockSpeed();
   if (m_CurrentVideo.id >= 0)
   {
     const auto onScreen = m_renderManager.GetOnScreenClock();
