@@ -35,6 +35,7 @@
 #include "windowing/WinSystem.h"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <mutex>
 
@@ -516,6 +517,7 @@ void CRenderManager::StopPresentThread()
 
 void CRenderManager::PresentFromVsync()
 {
+  const auto woke = std::chrono::steady_clock::now();
   std::unique_lock lock(m_statelock);
   // no frame goes out on the old mode while the render loop switches it
   if (m_renderState != STATE_CONFIGURED || m_switching)
@@ -572,13 +574,13 @@ void CRenderManager::PresentFromVsync()
       ++it;
   }
 
-  ReadVsyncPhase(released);
+  ReadVsyncPhase(released, woke);
 
   m_playerPort->UpdateRenderBuffers(m_queued.size(), m_discard.size(), m_free.size());
   m_presentevent.notifyAll();
 }
 
-void CRenderManager::ReadVsyncPhase(bool released)
+void CRenderManager::ReadVsyncPhase(bool released, std::chrono::steady_clock::time_point woke)
 {
   // a step is followed by a vsync or a timeout within the liveness bound
   const CBaseRenderer::VsyncPresentWake wake = m_pRenderer->GetVsyncPresentWake();
@@ -594,10 +596,12 @@ void CRenderManager::ReadVsyncPhase(bool released)
 
   int epoch = m_releaseClockEpoch;
   double clock = m_releaseClock;
+  auto clockTime = m_releaseClockTime;
   double latency = m_displayLatency;
   if (!m_releaseClockTaken)
   {
     clock = m_dvdClock.GetClock(epoch);
+    clockTime = std::chrono::steady_clock::now();
     latency = DVD_MSEC_TO_TIME(CalcReleaseLead() - m_appliedVideoDelay);
   }
 
@@ -611,6 +615,18 @@ void CRenderManager::ReadVsyncPhase(bool released)
       pts = m_Queue[m_queued.front()].pts;
     else if (m_planeSource >= 0 && m_planeSource != m_offTimelineSource)
       pts = m_Queue[m_planeSource].pts;
+  }
+
+  // the reading is taken at the edge of the vsync this step woke for, projected from the last
+  // vblank the display published, which can be the one before; one later than the wake or two
+  // periods before it is not on this lattice
+  std::chrono::steady_clock::time_point vblank;
+  if (pts != DVD_NOPTS_VALUE && aml_display_last_vblank(vblank))
+  {
+    const double late = std::chrono::duration<double>(woke - vblank).count() * DVD_TIME_BASE;
+    if (late >= 0 && late < 2 * m_vsyncPeriod)
+      clock -= std::chrono::duration<double>(clockTime - woke).count() * DVD_TIME_BASE + late -
+               m_vsyncPeriod * std::floor(late / m_vsyncPeriod);
   }
 
   m_clockSync.m_syncOffset = m_dvdClock.GetVsyncPhase().ApplyVsyncPhaseReading(
@@ -1438,6 +1454,7 @@ void CRenderManager::PrepareNextRender()
     m_dvdClock.GetVsyncPhase().CommitVsyncShift();
 
   const double frameOnScreen = m_dvdClock.GetClock(m_releaseClockEpoch);
+  m_releaseClockTime = std::chrono::steady_clock::now();
   m_releaseClock = frameOnScreen;
   m_releaseClockTaken = true;
   const double frametime =
@@ -1694,9 +1711,9 @@ void CRenderManager::CheckEnableClockSync()
 
   if (diff < 0.0005)
   {
-    double phasePeriod =
-        DVD_TIME_BASE /
-        static_cast<double>(CServiceBroker::GetWinSystem()->GetGfxContext().GetFPS());
+    m_vsyncPeriod = DVD_TIME_BASE /
+                    static_cast<double>(CServiceBroker::GetWinSystem()->GetGfxContext().GetFPS());
+    double phasePeriod = m_vsyncPeriod;
     if (m_presenting)
       phasePeriod = std::min(phasePeriod, framePeriod);
     // a phase read on another grid or before clock sync was on does not hold
