@@ -223,6 +223,9 @@ protected:
   void StartPresentThread();
   void StopPresentThread();
   void PresentFromVsync();
+  //! Under m_presentlock: tells the clock when the queued pictures are due, as their release
+  //! test takes them, for a clock start target
+  void PublishQueued();
   //! Vsync thread: reads the clock sync phase once the vsync step decided its release, with
   //! `woke` the time the step's wake returned
   void ReadVsyncPhase(bool released, std::chrono::steady_clock::time_point woke);
