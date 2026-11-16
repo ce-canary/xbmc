@@ -2154,6 +2154,17 @@ bool RunsDolbyVision(const CDVDStreamInfo& hints, const AMLVideoOutput& output)
            (output.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && dv2hdr)));
 }
 
+// whether a decoder for `hints` put out as `output` sends HDR10 through the HDR module; forced PQ
+// caps the sink at HDR10, so an HDR10+ stream qualifies only where the sink drops its dynamic
+// metadata anyway
+bool PlaysHdr10Output(const CDVDStreamInfo& hints, const AMLVideoOutput& output, bool hdr10Plus)
+{
+  const auto hdrCap = CServiceBroker::GetWinSystem()->GetDisplayHDRCapabilities();
+  return !RunsDolbyVision(hints, output) && output.hdrType == StreamHdrType::HDR_TYPE_HDR10 &&
+         output.colorTransfer == AVCOL_TRC_SMPTE2084 && hdrCap.SupportsHDR10() &&
+         (!hdr10Plus || !hdrCap.SupportsHDR10Plus());
+}
+
 } // namespace
 
 /*************************************************************************/
@@ -2456,6 +2467,7 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL, const AMLVide
       AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FOLLOW_SINK);
       AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, AMDV_FOLLOW_SINK);
       AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, forceOutput);
+      m_outputModule = OutputModule::NONE;
     }
   }
 
@@ -2774,6 +2786,11 @@ void CAMLCodec::CloseDecoder()
       AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FOLLOW_SOURCE);
       dolby_vision_policy = AMDV_FOLLOW_SOURCE;
     }
+    else if (m_outputModule == OutputModule::HDR)
+    {
+      AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, HDR_FOLLOW_SOURCE);
+      AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, FORCE_OUTPUT_DISABLED);
+    }
     CloseOutput(dv_enabled, dolby_vision_policy, m_decoder_timeout);
 
     ShowMainVideo(false);
@@ -2911,14 +2928,35 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int dvPolicy)
     }
   }
 
+  // forced PQ keeps HDR10 on the wire over the gap without video, where the HDR module sends
+  // SDR otherwise; a user mapping keeps its own close
+  if (!dvEnabled && PlaysHdr10Output(m_hints, m_output, m_processInfo.GetIsHdr10Plus()) &&
+      (m_outputModule == OutputModule::HDR ||
+       (AmlDisplay->aml_get_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC) == HDR_FOLLOW_SOURCE &&
+        dvPolicy != AMDV_FORCE_OUTPUT_MODE)))
+  {
+    // follow sink without the forced output sees a sink without HDR, so the forced output goes
+    // first
+    if (m_outputModule != OutputModule::HDR)
+    {
+      AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, FORCE_OUTPUT_BT2020_PQ);
+      AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, HDR_FOLLOW_SINK);
+    }
+    heldModule = OutputModule::HDR;
+    hold = Hold::OUTPUT_HDR;
+  }
+
   if (hold != Hold::NONE)
   {
     holdDecoderTimeout = m_decoder_timeout;
     holdKept = true;
   }
   CLog::Log(LOGDEBUG, "CAMLCodec::{}: armed close keeps {}, dv core {}, dv policy {}",
-            __FUNCTION__, hold == Hold::OUTPUT_DV ? "the dv output" : "nothing", dvEnabled,
-            dvPolicy);
+            __FUNCTION__,
+            hold == Hold::OUTPUT_DV    ? "the dv output"
+            : hold == Hold::OUTPUT_HDR ? "the hdr output"
+                                       : "nothing",
+            dvEnabled, dvPolicy);
   return hold;
 }
 
@@ -2933,7 +2971,9 @@ void CAMLCodec::TakeHold(const CDVDStreamInfo& hints, const AMLVideoOutput& outp
   if (!holdKept || holdOwner != m_holdGen)
     return;
 
-  const bool take = heldModule == OutputModule::DV && RunsDolbyVision(hints, output);
+  const bool take = (heldModule == OutputModule::DV && RunsDolbyVision(hints, output)) ||
+                    (heldModule == OutputModule::HDR &&
+                     PlaysHdr10Output(hints, output, m_processInfo.GetIsHdr10Plus()));
   CLog::Log(LOGDEBUG, "CAMLCodec::{}: {} the held output", __FUNCTION__,
             take ? "takes" : "releases");
   if (take)
@@ -2951,7 +2991,7 @@ void CAMLCodec::EndHold(bool failed)
   std::lock_guard<std::mutex> lock(holdMutex);
   if (failed && m_outputModule != OutputModule::NONE)
   {
-    RestoreOutput(m_decoder_timeout);
+    RestoreOutput(m_outputModule, m_decoder_timeout);
     m_outputModule = OutputModule::NONE;
   }
 }
@@ -2959,13 +2999,13 @@ void CAMLCodec::EndHold(bool failed)
 // under holdMutex
 void CAMLCodec::ReleaseKept()
 {
-  RestoreOutput(holdDecoderTimeout);
+  RestoreOutput(heldModule, holdDecoderTimeout);
   holdKept = false;
   holdOwner = 0;
 }
 
 // the output teardown of a decoder close, where the hold of the output ends
-void CAMLCodec::RestoreOutput(int decoderTimeout)
+void CAMLCodec::RestoreOutput(OutputModule module, int decoderTimeout)
 {
   auto* AmlDisplay =
       static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
@@ -2973,6 +3013,12 @@ void CAMLCodec::RestoreOutput(int decoderTimeout)
   const bool dvEnabled = AmlDisplay->aml_get_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC);
 
   ShowMainVideo(false);
+
+  if (module == OutputModule::HDR)
+  {
+    AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, HDR_FOLLOW_SOURCE);
+    AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC, FORCE_OUTPUT_DISABLED);
+  }
 
   if (dvEnabled && dvPolicy == AMDV_FORCE_OUTPUT_MODE)
     AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC, AMDV_OUTPUT_MODE_BYPASS);
