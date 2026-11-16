@@ -142,6 +142,7 @@ public:
   {
     NONE,
     DV,
+    HDR,
   };
 
 private:
@@ -149,6 +150,7 @@ private:
   {
     NONE,
     OUTPUT_DV,
+    OUTPUT_HDR,
   };
 
   static void   ShowMainVideo(const bool show);
@@ -163,7 +165,7 @@ private:
   Hold          HoldOnClose(bool dvEnabled, int dvPolicy);
   void          EndHold(bool failed);
   static void   ReleaseKept();
-  static void   RestoreOutput(int decoderTimeout);
+  static void   RestoreOutput(OutputModule module, int decoderTimeout);
   std::string   GetVfmMap(const std::string &name);
   void          SetVfmMap(const std::string &name, const std::string &map);
   int           DequeueBuffer();
@@ -175,6 +177,7 @@ private:
   bool             m_drain = false;
   bool             m_setUp{false};
   uint64_t         m_holdGen{0};
+  bool             m_ownOutput{false};
   OutputModule     m_outputModule{OutputModule::NONE};
   am_private_t    *am_private;
   CDVDStreamInfo   m_hints;
