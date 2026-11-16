@@ -17,6 +17,7 @@
 #include "utils/log.h"
 #include "utils/StringUtils.h"
 #include "ServiceBroker.h"
+#include "cores/VideoPlayer/DVDCodecs/Video/AMLCodec.h"
 #include "utils/RegExp.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
@@ -436,6 +437,16 @@ bool aml_display_last_vblank(std::chrono::steady_clock::time_point& time)
   time = std::chrono::steady_clock::time_point{std::chrono::seconds{vbl.reply.tval_sec} +
                                                std::chrono::microseconds{vbl.reply.tval_usec}};
   return true;
+}
+
+void aml_continue_presentation()
+{
+  CAMLCodec::ContinuePresentation();
+}
+
+void aml_end_presentation(bool stop)
+{
+  CAMLCodec::EndPresentation(stop);
 }
 
 int aml_amdv_wait(StreamHdrType hdrType)
