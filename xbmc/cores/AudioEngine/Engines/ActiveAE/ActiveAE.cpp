@@ -2208,7 +2208,8 @@ bool CActiveAE::RunStages()
       if ((*it)->m_paused && (*it)->m_started && m_settings.lowLatencyMode)
         m_targetBufferLevel = m_initialTargetBufferLevel;
 
-      if ((*it)->m_paused || !(*it)->m_started || !(*it)->m_processingBuffers || !(*it)->m_pClock)
+      if ((*it)->m_paused || !(*it)->m_started || !(*it)->m_processingBuffers ||
+          !(*it)->m_pClock || (*it)->m_freed)
         continue;
 
       if ((*it)->m_processingBuffers->m_outputSamples.empty())
@@ -2692,7 +2693,7 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
 {
   CSampleBuffer *ret = NULL;
 
-  if (!stream->m_pClock)
+  if (!stream->m_pClock || stream->m_freed)
     return ret;
 
   if (stream->m_syncState == CAESyncInfo::AESyncState::SYNC_START)
@@ -3843,6 +3844,7 @@ bool CActiveAE::FreeStream(IAEStream *stream, bool finish)
   MsgStreamFree msg;
   msg.stream = static_cast<CActiveAEStream*>(stream);
   msg.finish = finish;
+  msg.stream->m_freed = true;
 
   Message *reply;
   if (m_dataPort.SendOutMessageSync(CActiveAEDataProtocol::FREESTREAM, &reply, 1s, &msg,
