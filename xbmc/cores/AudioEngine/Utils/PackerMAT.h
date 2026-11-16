@@ -14,7 +14,6 @@
 #pragma once
 
 #include <deque>
-#include <optional>
 #include <stdint.h>
 #include <vector>
 
@@ -27,18 +26,24 @@ enum class Type
 class CPackerMAT
 {
 public:
-  struct OutputFrame
-  {
-    std::vector<uint8_t> data;
-    std::optional<double> pts; // seconds, content time of the first byte
-  };
+  static constexpr uint32_t FORMAT_MAJOR_SYNC = 0xf8726fba;
 
   CPackerMAT();
   ~CPackerMAT() = default;
 
-  bool PackTrueHD(const uint8_t* data, int size, std::optional<double> pts);
-  OutputFrame GetOutputFrame();
+  //! Packs a buffer of whole TrueHD units, booked as one MAT frame time from its first unit
+  void PackUnits(const uint8_t* data, int size);
+  //! A gap of `frames` MAT frame times the engine booked
+  void PackGap(double frames);
+  //! One padding-only frame the engine did not book, unless a frame waits for output
+  void PackFiller();
+  //! Starts a gap: the frame in progress is completed with padding, true when there was one;
+  //! with `discard` it keeps only a unit that straddles into it from the last frame output
+  bool Close(bool discard);
+  std::vector<uint8_t> GetOutputFrame();
   void Reset();
+  //! Booked time not output yet in MAT frame times, below zero while padding runs ahead of it
+  double GetPending() const;
 
 private:
   struct MATState
@@ -72,14 +77,11 @@ private:
     // frame-time to output-time offset, used to size the padding carry-forward
     // on the next branch point.
     int32_t nOutputTimeOffset;
-
-    // content time of the current buffer's first byte, from the first audio
-    // unit with a pts that starts in it, else carried from the previous buffer
-    std::optional<double> bufferPts;
-    std::optional<double> straddlePts;
-    std::optional<double> lastUnitPts;
   };
 
+  void PackTrueHD(const uint8_t* data, int size);
+  void Restart();
+  void FillGap(double end);
   void WriteHeader();
   void WritePadding();
   void AppendData(const uint8_t* data, int size, Type type);
@@ -91,5 +93,17 @@ private:
 
   uint32_t m_bufferCount{0};
   std::vector<uint8_t> m_buffer;
-  std::deque<OutputFrame> m_outputQueue;
+  std::deque<std::vector<uint8_t>> m_outputQueue;
+
+  // in bytes since the reset: the frames output, the end of the booked time, and in a gap where
+  // the next unit plays
+  double m_outputBytes{0.0};
+  double m_bookedEnd{0.0};
+  double m_gapEnd{0.0};
+  // where the last unit plays, and whether the last unit was refused in a gap
+  double m_unitPos{0.0};
+  bool m_refused{false};
+  // the end in the frame in progress of a unit that straddles into it, and where that unit plays
+  uint32_t m_straddleEnd{0};
+  double m_straddlePos{0.0};
 };

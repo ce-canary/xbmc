@@ -14,6 +14,7 @@
 #include "cores/AudioEngine/Utils/AEBitstreamPacker.h"
 #include "cores/AudioEngine/Utils/AEStreamInfo.h"
 #include "cores/AudioEngine/Utils/AEUtil.h"
+#include "cores/AudioEngine/Utils/PackerMAT.h"
 #include "utils/EndianSwap.h"
 #include "utils/MemUtils.h"
 #include "utils/log.h"
@@ -31,7 +32,8 @@ CActiveAESink::CActiveAESink(CEvent* inMsgEvent)
     m_controlPort("SinkControlPort", inMsgEvent, &m_outMsgEvent),
     m_dataPort("SinkDataPort", inMsgEvent, &m_outMsgEvent),
     m_sink(nullptr),
-    m_packer(nullptr)
+    m_packer(nullptr),
+    m_packerMAT(std::make_unique<CPackerMAT>())
 {
   m_inMsgEvent = inMsgEvent;
   m_stats = nullptr;
@@ -304,15 +306,20 @@ void CActiveAESink::StateMachine(int signal, Protocol *port, Message *msg)
         case CSinkControlProtocol::FLUSH:
         {
           ReturnBuffers();
+          const bool discard = *reinterpret_cast<const bool*>(msg->data);
           // Only discards device audio when asked to, as on a stream flush or pause.
-          if (m_sink && *reinterpret_cast<const bool*>(msg->data))
+          if (m_sink && discard)
             m_sink->Flush();
+          EndMATFrame(discard);
           // the engine keeps counting what the device still plays
           if (m_stats)
           {
             AEDelayStatus status;
             if (m_sink)
               m_sink->GetDelay(status);
+            if (m_requestedFormat.m_dataFormat == AE_FMT_RAW)
+              status.delay +=
+                  m_packerMAT->GetPending() * m_sinkFormat.m_streamInfo.GetDuration() / 1000;
             m_stats->UpdateSinkDelay(status, 0);
           }
           msg->Reply(CSinkControlProtocol::ACC);
@@ -450,6 +457,7 @@ void CActiveAESink::StateMachine(int signal, Protocol *port, Message *msg)
         switch (signal)
         {
         case CSinkDataProtocol::DRAIN:
+          EndMATFrame(false);
           m_sink->Drain();
           msg->Reply(CSinkDataProtocol::ACC);
           m_state = S_TOP_CONFIGURED_IDLE;
@@ -465,6 +473,7 @@ void CActiveAESink::StateMachine(int signal, Protocol *port, Message *msg)
           {
             m_sink->Deinitialize();
             m_sink.reset();
+            m_packerMAT->Reset();
             m_stats->SetOutputStamped(false);
             m_state = S_TOP_CONFIGURED_SUSPEND;
             m_extTimeout = 0ms;
@@ -560,6 +569,7 @@ void CActiveAESink::StateMachine(int signal, Protocol *port, Message *msg)
         case CSinkControlProtocol::TIMEOUT:
           m_sink->Deinitialize();
           m_sink.reset();
+          m_packerMAT->Reset();
           m_state = S_TOP_CONFIGURED_SUSPEND;
           m_extTimeout = 10s;
           return;
@@ -584,6 +594,7 @@ void CActiveAESink::StateMachine(int signal, Protocol *port, Message *msg)
           {
             // the wire stops, so a start after it has no rhythm to keep
             m_stats->SetOutputStamped(false);
+            EndMATFrame(false);
             m_sink->Drain();
             m_state = S_TOP_CONFIGURED_IDLE;
             if (m_extAppFocused)
@@ -609,6 +620,7 @@ void CActiveAESink::StateMachine(int signal, Protocol *port, Message *msg)
           {
             m_sink->Deinitialize();
             m_sink.reset();
+            m_packerMAT->Reset();
             m_stats->SetOutputStamped(false);
             m_state = S_TOP_CONFIGURED_SUSPEND;
           }
@@ -1081,6 +1093,7 @@ void CActiveAESink::OpenSink(bool drain)
 
 void CActiveAESink::CloseSink(const bool drain)
 {
+  m_packerMAT->Reset();
   if (!m_sink)
     return;
 
@@ -1132,7 +1145,30 @@ unsigned int CActiveAESink::OutputSamples(CSampleBuffer* samples)
     bool skipSwap = false;
     if (m_needIecPack)
     {
-      if (frames > 0)
+      // a TrueHD gap keeps the MAT stream on the wire with padding-only frames
+      const bool mat = m_sinkFormat.m_streamInfo.m_type == CAEStreamInfo::STREAM_TYPE_TRUEHD;
+      if (mat)
+      {
+        if (frames > 0)
+          m_packerMAT->PackUnits(buffer[0], frames);
+        else if (!samples->pool)
+          m_packerMAT->PackFiller();
+        else if (samples->pkt->pause_burst_ms > 0)
+          m_packerMAT->PackGap(samples->pkt->pause_burst_ms /
+                               m_sinkFormat.m_streamInfo.GetDuration());
+        else
+          m_packerMAT->Close(false);
+
+        m_matPacked.clear();
+        for (std::vector<uint8_t> frame = m_packerMAT->GetOutputFrame(); !frame.empty();
+             frame = m_packerMAT->GetOutputFrame())
+        {
+          m_packer->Pack(m_sinkFormat.m_streamInfo, frame.data(), frame.size());
+          m_matPacked.insert(m_matPacked.end(), m_packer->GetBuffer(),
+                             m_packer->GetBuffer() + m_packer->GetSize());
+        }
+      }
+      else if (frames > 0)
       {
         m_packer->Reset();
         m_packer->Pack(m_sinkFormat.m_streamInfo, buffer[0], frames);
@@ -1148,8 +1184,8 @@ unsigned int CActiveAESink::OutputSamples(CSampleBuffer* samples)
       else
         m_packer->Reset();
 
-      unsigned int size = m_packer->GetSize();
-      packBuffer = m_packer->GetBuffer();
+      unsigned int size = mat ? m_matPacked.size() : m_packer->GetSize();
+      packBuffer = mat ? m_matPacked.data() : m_packer->GetBuffer();
       buffer = &packBuffer;
       totalFrames = size / m_sinkFormat.m_frameSize;
       frames = totalFrames;
@@ -1230,9 +1266,20 @@ unsigned int CActiveAESink::OutputSamples(CSampleBuffer* samples)
     m_sink->GetDelay(status);
 
   if (m_requestedFormat.m_dataFormat == AE_FMT_RAW)
-    m_stats->UpdateSinkDelay(status, rawPackets, rawPauseMs);
+  {
+    // the time the MAT packer holds plays after the device's, the sink waits on the device only
+    AEDelayStatus reported{status};
+    reported.delay += m_packerMAT->GetPending() * m_sinkFormat.m_streamInfo.GetDuration() / 1000;
+    m_stats->UpdateSinkDelay(reported, rawPackets, rawPauseMs);
+  }
 
   return status.delay * 1000;
+}
+
+void CActiveAESink::EndMATFrame(bool discard)
+{
+  if (m_sink && m_packerMAT->Close(discard))
+    OutputSamples(&m_sampleOfSilence);
 }
 
 void CActiveAESink::SwapInit(CSampleBuffer* samples)
