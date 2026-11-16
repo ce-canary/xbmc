@@ -113,6 +113,9 @@ void CVsyncPhase::SetVsyncPhase(double vsyncPhase)
   {
     const double wrap = vsyncPhase > 0 ? m_phasePeriod : -m_phasePeriod;
     m_clock.m_iDisc -= wrap;
+    // a start target keeps its lead
+    if (m_clock.m_startTarget != DVD_NOPTS_VALUE)
+      m_clock.m_startTarget -= wrap;
     vsyncPhase -= wrap;
     CLog::Log(LOGDEBUG, "CVsyncPhase::SetVsyncPhase - phase wrap, clock:{:.3f} wrap:{:.3f}",
               m_clock.GetClock() / DVD_TIME_BASE, wrap / DVD_TIME_BASE);
