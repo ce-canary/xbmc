@@ -2202,7 +2202,9 @@ void CVideoPlayer::Process()
     if (pStream->type == StreamType::VIDEO)
       m_videoInputEndSent = false;
 
-    if (STREAM_SOURCE_MASK(pStream->source) != STREAM_SOURCE_DEMUX_SUB)
+    // packets the demuxer replays after a subtitle stream change are no new input
+    if (STREAM_SOURCE_MASK(pStream->source) != STREAM_SOURCE_DEMUX_SUB &&
+        !m_CurrentAudio.replaying && !m_CurrentVideo.replaying)
     {
       m_syncWait.reset();
       m_navTail = false;
