@@ -17,11 +17,11 @@
 #include <deque>
 #include <list>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
 class CProcessInfo;
-class CPackerMAT;
 
 class CDVDAudioCodecPassthrough : public CDVDAudioCodec
 {
@@ -56,10 +56,14 @@ private:
   std::string m_codecName;
 
   // TrueHD specifics
-  std::unique_ptr<CPackerMAT> m_packerMAT;
   std::deque<std::pair<uint64_t, double>> m_packetPts; // stream offset of a packet, its pts
   uint64_t m_streamBytes{0};
   uint64_t m_parsedBytes{0};
+  // IEC: the rate bits once a major sync was seen, and of the buffer being grouped its first
+  // unit's pts and whether a packet gave it
+  std::optional<int> m_trueHDRatebits;
+  double m_trueHDPts{DVD_NOPTS_VALUE};
+  bool m_trueHDPtsFromPacket{false};
   double m_matPts{DVD_NOPTS_VALUE};
   std::vector<uint8_t> m_trueHDBuffer;
   unsigned int m_trueHDoffset = 0;

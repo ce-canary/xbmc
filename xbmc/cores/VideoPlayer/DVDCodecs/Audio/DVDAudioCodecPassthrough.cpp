@@ -18,6 +18,7 @@
 extern "C"
 {
 #include <libavcodec/avcodec.h>
+#include <libavutil/intreadwrite.h>
 }
 
 namespace
@@ -32,12 +33,7 @@ CDVDAudioCodecPassthrough::CDVDAudioCodecPassthrough(CProcessInfo &processInfo, 
   m_deviceIsRAW = processInfo.WantsRawPassthrough();
 
   if (m_format.m_streamInfo.m_type == CAEStreamInfo::STREAM_TYPE_TRUEHD)
-  {
     m_trueHDBuffer.resize(TRUEHD_BUF_SIZE);
-
-    if (!m_deviceIsRAW)
-      m_packerMAT = std::make_unique<CPackerMAT>();
-  }
 }
 
 CDVDAudioCodecPassthrough::~CDVDAudioCodecPassthrough(void)
@@ -144,7 +140,8 @@ bool CDVDAudioCodecPassthrough::AddData(const DemuxPacket &packet)
 
   if (pData && iSize > 0)
   {
-    if (m_packerMAT && packet.pts != DVD_NOPTS_VALUE)
+    if (m_format.m_streamInfo.m_type == CAEStreamInfo::STREAM_TYPE_TRUEHD && !m_deviceIsRAW &&
+        packet.pts != DVD_NOPTS_VALUE)
       m_packetPts.emplace_back(m_streamBytes, packet.pts);
     m_streamBytes += iSize;
   }
@@ -198,12 +195,7 @@ bool CDVDAudioCodecPassthrough::AddData(const DemuxPacket &packet)
   if (m_format.m_streamInfo.m_type == CAEStreamInfo::STREAM_TYPE_TRUEHD)
   {
     if (m_trueHDBuffer.empty())
-    {
       m_trueHDBuffer.resize(TRUEHD_BUF_SIZE);
-
-      if (!m_deviceIsRAW && !m_packerMAT)
-        m_packerMAT = std::make_unique<CPackerMAT>();
-    }
 
     if (m_deviceIsRAW) // RAW
     {
@@ -216,19 +208,38 @@ bool CDVDAudioCodecPassthrough::AddData(const DemuxPacket &packet)
       std::optional<double> pts;
       while (!m_packetPts.empty() && m_packetPts.front().first <= unitStart)
       {
-        pts = m_packetPts.front().second / DVD_TIME_BASE;
+        pts = m_packetPts.front().second;
         m_packetPts.pop_front();
       }
 
-      if (m_packerMAT->PackTrueHD(m_buffer, m_dataSize, pts))
+      // the sink packs MAT frames from a major sync on, 24 units to a buffer of one frame time
+      if (m_dataSize >= 10 && AV_RB32(m_buffer + 4) == CPackerMAT::FORMAT_MAJOR_SYNC)
+        m_trueHDRatebits = m_buffer[8] >> 4;
+      if (!m_trueHDRatebits)
       {
-        CPackerMAT::OutputFrame frame = m_packerMAT->GetOutputFrame();
-        m_trueHDBuffer = std::move(frame.data);
-        m_matPts = frame.pts ? *frame.pts * DVD_TIME_BASE : DVD_NOPTS_VALUE;
-        m_dataSize = TRUEHD_BUF_SIZE;
-      }
-      else
         m_dataSize = 0;
+        return true;
+      }
+
+      const double unitTime = static_cast<double>(40 << (*m_trueHDRatebits & 7)) * DVD_TIME_BASE /
+                              m_format.m_sampleRate;
+
+      // the buffer's pts is its first unit's pts, extrapolated by whole units from the packet pts
+      if (m_trueHDoffset == 0)
+        m_trueHDPtsFromPacket = false;
+      if (pts && !m_trueHDPtsFromPacket)
+      {
+        m_trueHDPts = *pts - (m_trueHDoffset == 0 ? 0 : m_trueHDframes) * unitTime;
+        m_trueHDPtsFromPacket = true;
+      }
+
+      m_dataSize = PackTrueHD();
+      if (m_dataSize)
+      {
+        m_matPts = m_trueHDPts;
+        if (m_trueHDPts != DVD_NOPTS_VALUE)
+          m_trueHDPts += 24 * unitTime;
+      }
     }
   }
 
@@ -271,7 +282,7 @@ void CDVDAudioCodecPassthrough::GetData(DVDAudioFrame &frame)
   frame.planes = 1;
   frame.bits_per_sample = m_hints.bitspersample;
   frame.duration = DVD_MSEC_TO_TIME(frame.format.m_streamInfo.GetDuration());
-  if (m_packerMAT && m_format.m_streamInfo.m_type == CAEStreamInfo::STREAM_TYPE_TRUEHD)
+  if (!m_deviceIsRAW && m_format.m_streamInfo.m_type == CAEStreamInfo::STREAM_TYPE_TRUEHD)
     frame.pts = m_matPts;
   else
     frame.pts = m_currentPts;
@@ -305,8 +316,8 @@ void CDVDAudioCodecPassthrough::Reset()
   m_packetPts.clear();
   m_streamBytes = 0;
   m_parsedBytes = 0;
-  if (m_packerMAT)
-    m_packerMAT->Reset();
+  m_trueHDRatebits.reset();
+  m_trueHDPts = DVD_NOPTS_VALUE;
 }
 
 int CDVDAudioCodecPassthrough::GetBufferSize()
