@@ -411,6 +411,13 @@ bool CDVDClock::CanRelease(int epoch, bool target) const
   return !m_startPending && epoch >= m_startArmEpoch && (epoch == m_clockEpoch || !target);
 }
 
+bool CDVDClock::IsAtStartTarget()
+{
+  std::unique_lock lock(m_critSection);
+
+  return GetStartTargetLead(m_videoRefClock->GetTime()) > 0 || m_startPending;
+}
+
 bool CDVDClock::ArmStartTarget()
 {
   std::unique_lock lock(m_critSection);

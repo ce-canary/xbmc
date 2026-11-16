@@ -77,6 +77,8 @@ public:
   //! Whether a picture release read at `epoch` may go out: none while a start target is pending,
   //! and a read from before a start target was armed or moved the clock is stale
   bool CanRelease(int epoch, bool target) const;
+  //! Whether the clock readers stand at a start target
+  bool IsAtStartTarget();
   //! Arms a start target at the readers' value on a running clock at normal speed unless one is
   //! pending; whether one is pending
   bool ArmStartTarget();
