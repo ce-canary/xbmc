@@ -21,8 +21,10 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 class CAEBitstreamPacker;
+class CPackerMAT;
 
 namespace ActiveAE
 {
@@ -125,6 +127,8 @@ protected:
   void ReturnBuffers();
   void SetSilenceTimer();
   bool NeedIECPacking();
+  // writes the MAT frame in progress completed with padding, see CPackerMAT::Close
+  void EndMATFrame(bool discard);
 
   unsigned int OutputSamples(CSampleBuffer* samples);
   void SwapInit(CSampleBuffer* samples);
@@ -165,6 +169,9 @@ protected:
   int m_sinkLatency;
   std::unique_ptr<CAEBitstreamPacker> m_packer;
   bool m_needIecPack{false};
+  // packs TrueHD on an IEC sink, and the packed frames of one write
+  std::unique_ptr<CPackerMAT> m_packerMAT;
+  std::vector<uint8_t> m_matPacked;
   // the silent frame of the last buffer from the engine, which the keep-alive repeats
   const AEPassthroughSilentFrame* m_silentFrame{nullptr};
   bool m_streamNoise;
