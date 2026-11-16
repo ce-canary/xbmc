@@ -13,6 +13,7 @@
 #include "cores/IPlayer.h"
 #include "windowing/Resolution.h"
 #include "rendering/RenderSystem.h"
+#include "utils/AMLUtils.h"
 #include "utils/BitstreamConverter.h"
 #include "utils/Geometry.h"
 
@@ -66,7 +67,7 @@ public:
   CAMLCodec(CProcessInfo &processInfo);
   virtual ~CAMLCodec();
 
-  bool          OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL, StreamHdrType outputHdrType);
+  bool          OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL, const AMLVideoOutput& output);
   bool          Enable_vadj1();
   void          CloseDecoder();
   void          Reset();
@@ -127,13 +128,15 @@ public:
   static bool   WaitPresentStep(uint64_t& seen, int fenceFd);
 
 private:
-  void          ShowMainVideo(const bool show);
+  static void   ShowMainVideo(const bool show);
   void          SetVideoZoom(const float zoom);
   void          SetVideoContrast(const int contrast);
   void          SetVideoBrightness(const int brightness);
   void          SetVideoSaturation(const int saturation);
   bool          OpenAmlVideo(const CDVDStreamInfo &hints);
   void          CloseAmlVideo();
+  static void   CloseOutput(bool dvEnabled, int dvPolicy, int decoderTimeout);
+  static void   CloseLayers();
   std::string   GetVfmMap(const std::string &name);
   void          SetVfmMap(const std::string &name, const std::string &map);
   int           DequeueBuffer();
@@ -146,6 +149,7 @@ private:
   bool             m_setUp{false};
   am_private_t    *am_private;
   CDVDStreamInfo   m_hints;
+  AMLVideoOutput   m_output;
   int              m_speed;
   uint64_t         m_cur_pts;
   uint64_t         m_last_pts;
