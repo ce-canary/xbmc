@@ -2683,6 +2683,7 @@ void CVideoPlayer::Process()
       }
     }
 
+    double menuCorrection = 0.0;
     if (IsInMenuInternal())
     {
       if (std::shared_ptr<CDVDInputStream::IMenus> menu = std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream))
@@ -2691,12 +2692,15 @@ void CVideoPlayer::Process()
         if (pPacket->dts != DVD_NOPTS_VALUE && pPacket->dts > correction)
           pPacket->dts -= correction;
         if (pPacket->pts != DVD_NOPTS_VALUE && pPacket->pts > correction)
+        {
           pPacket->pts -= correction;
+          menuCorrection = correction;
+        }
       }
     }
 
     // process the packet
-    ProcessPacket(pStream, pPacket);
+    ProcessPacket(pStream, pPacket, menuCorrection);
   }
 }
 
@@ -2737,15 +2741,15 @@ bool CVideoPlayer::IsReplayedPacket(CDemuxStream* stream, DemuxPacket* packet)
   return false;
 }
 
-void CVideoPlayer::ProcessPacket(CDemuxStream* pStream, DemuxPacket* pPacket)
+void CVideoPlayer::ProcessPacket(CDemuxStream* pStream, DemuxPacket* pPacket, double menuCorrection)
 {
   // process packet if it belongs to selected stream.
   // for dvd's don't allow automatic opening of streams*/
 
   if (CheckIsCurrent(m_CurrentAudio, pStream, pPacket))
-    ProcessAudioData(pStream, pPacket);
+    ProcessAudioData(pStream, pPacket, menuCorrection);
   else if (CheckIsCurrent(m_CurrentVideo, pStream, pPacket))
-    ProcessVideoData(pStream, pPacket);
+    ProcessVideoData(pStream, pPacket, menuCorrection);
   else if (CheckIsCurrent(m_CurrentSubtitle, pStream, pPacket))
     ProcessSubData(pStream, pPacket);
   else if (CheckIsCurrent(m_CurrentTeletext, pStream, pPacket))
@@ -2785,7 +2789,9 @@ void CVideoPlayer::CheckStreamChanges(CCurrentStream& current, CDemuxStream* str
   }
 }
 
-void CVideoPlayer::ProcessAudioData(CDemuxStream* pStream, DemuxPacket* pPacket)
+void CVideoPlayer::ProcessAudioData(CDemuxStream* pStream,
+                                    DemuxPacket* pPacket,
+                                    double menuCorrection)
 {
   CheckStreamChanges(m_CurrentAudio, pStream);
 
@@ -2815,6 +2821,7 @@ void CVideoPlayer::ProcessAudioData(CDemuxStream* pStream, DemuxPacket* pPacket)
   CLog::Log(LOGDEBUG, LOGAUDIO, "CVideoPlayer::ProcessAudioData size:{:d} dts:{:.3f} pts:{:.3f} dur:{:.3f}ms, clock:{:.3f} drop:{:d} level:{:d}",
     pPacket->iSize, pPacket->dts/DVD_TIME_BASE, pPacket->pts/DVD_TIME_BASE, pPacket->duration/1000.0, m_clock.GetClock() / DVD_TIME_BASE, drop, m_VideoPlayerAudio->GetLevel());
 
+  SetNavPacketOffset(pPacket, menuCorrection);
   m_VideoPlayerAudio->SendMessage(std::make_shared<CDVDMsgDemuxerPacket>(pPacket, drop));
   m_playersFlushed = false;
 
@@ -2822,7 +2829,9 @@ void CVideoPlayer::ProcessAudioData(CDemuxStream* pStream, DemuxPacket* pPacket)
     m_CurrentAudio.packets++;
 }
 
-void CVideoPlayer::ProcessVideoData(CDemuxStream* pStream, DemuxPacket* pPacket)
+void CVideoPlayer::ProcessVideoData(CDemuxStream* pStream,
+                                    DemuxPacket* pPacket,
+                                    double menuCorrection)
 {
   CheckStreamChanges(m_CurrentVideo, pStream);
   bool checkcont = false;
@@ -2845,6 +2854,7 @@ void CVideoPlayer::ProcessVideoData(CDemuxStream* pStream, DemuxPacket* pPacket)
   CLog::Log(LOGDEBUG, LOGVIDEO, "CVideoPlayer::ProcessVideoData size:{:d} dts:{:.3f} pts:{:.3f} dur:{:.3f}ms, clock:{:.3f} level:{:d}",
     pPacket->iSize, pPacket->dts/1000000, pPacket->pts/1000000, pPacket->duration/1000.0,
     m_clock.GetClock()/1000000.0,m_processInfo->GetLevelVQ());
+  SetNavPacketOffset(pPacket, menuCorrection);
   m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsgDemuxerPacket>(pPacket, drop));
   // the still state can leave and return while packets flow, only new input needs a new end
   m_videoInputEndSent = false;
@@ -2858,6 +2868,16 @@ void CVideoPlayer::ProcessVideoData(CDemuxStream* pStream, DemuxPacket* pPacket)
       (m_lastVideoTitleTime == DVD_NOPTS_VALUE ||
        pPacket->pts + m_offset_pts > m_lastVideoTitleTime))
     m_lastVideoTitleTime = pPacket->pts + m_offset_pts;
+}
+
+// a DVD VOBU is played with the offset of the first audio or video packet after its NAV packet,
+// once the continuity check of that packet has set it
+void CVideoPlayer::SetNavPacketOffset(const DemuxPacket* pPacket, double menuCorrection)
+{
+  if (pPacket->pts != DVD_NOPTS_VALUE && m_pInputStream &&
+      m_pInputStream->IsStreamType(DVDSTREAM_TYPE_DVD))
+    std::static_pointer_cast<CDVDInputStreamNavigator>(m_pInputStream)
+        ->SetNavPacketOffset(m_offset_pts + menuCorrection);
 }
 
 void CVideoPlayer::ProcessSubData(CDemuxStream* pStream, DemuxPacket* pPacket)
@@ -3162,20 +3182,28 @@ double CVideoPlayer::GetPictureClock()
   return m_CurrentVideo.id >= 0 ? m_renderManager.GetOnScreenClock().clock : m_clock.GetClock();
 }
 
-double CVideoPlayer::GetBlurayPresentedTime()
+// the pts of the picture on screen, the clock while no picture is presented; none until the
+// clock is known
+double CVideoPlayer::GetPresentedPts()
 {
-  const bool known = IsDiscClockKnown();
-  // the frame on the plane holds its title time before the streams are in sync, and the
-  // renderer releases frames a display latency ahead of the clock
+  if (!IsDiscClockKnown())
+    return DVD_NOPTS_VALUE;
+
   double presented = DVD_NOPTS_VALUE;
   if (m_CurrentVideo.id >= 0)
-    presented = known ? m_renderManager.GetPresentedPts() : m_renderManager.GetDisplayedPts();
+    presented = m_renderManager.GetPresentedPts();
+  return presented != DVD_NOPTS_VALUE ? presented : m_clock.GetClock();
+}
+
+double CVideoPlayer::GetBlurayPresentedTime()
+{
+  // the frame on the plane holds its title time before the streams are in sync, and the
+  // renderer releases frames a display latency ahead of the clock
+  double presented = GetPresentedPts();
+  if (presented == DVD_NOPTS_VALUE && m_CurrentVideo.id >= 0)
+    presented = m_renderManager.GetDisplayedPts();
   if (presented == DVD_NOPTS_VALUE)
-  {
-    if (!known)
-      return DVD_NOPTS_VALUE;
-    presented = m_clock.GetClock();
-  }
+    return DVD_NOPTS_VALUE;
   // the last picture of a held play item is shown at the clock until the item ends, one title
   // tick before the next item starts
   if (const auto itemEnd = GetBlurayItemEnd())
@@ -7540,6 +7568,12 @@ void CVideoPlayer::UpdatePlayState(double timeout)
       }
       return DVD_TIME_TO_MSEC(presented);
     };
+
+    // a DVD VOBU stops being the position once the picture on screen has passed it, which only
+    // the clock of the new pictures tells
+    if (m_pInputStream->IsStreamType(DVDSTREAM_TYPE_DVD))
+      std::static_pointer_cast<CDVDInputStreamNavigator>(m_pInputStream)
+          ->ReleaseNavPackets(GetPresentedPts());
 
     // Raw (pre-EDL) upper bound of the stream, needed below to tell whether the last
     // chapter is fully contained within a trailing EDL cut.

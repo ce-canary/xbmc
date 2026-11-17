@@ -453,6 +453,7 @@ protected:
   bool IsDiscClockKnown() const;
   bool IsBlurayLastPictureHeld() const;
   double GetPictureClock();
+  double GetPresentedPts();
   double GetBlurayPresentedTime();
   void ReportBlurayPresented();
   void ReportBlurayReadPresented();
@@ -479,9 +480,10 @@ protected:
 
   bool CheckIsCurrent(const CCurrentStream& current, CDemuxStream* stream, DemuxPacket* pkg);
   bool IsReplayedPacket(CDemuxStream* stream, DemuxPacket* packet);
-  void ProcessPacket(CDemuxStream* pStream, DemuxPacket* pPacket);
-  void ProcessAudioData(CDemuxStream* pStream, DemuxPacket* pPacket);
-  void ProcessVideoData(CDemuxStream* pStream, DemuxPacket* pPacket);
+  void ProcessPacket(CDemuxStream* pStream, DemuxPacket* pPacket, double menuCorrection = 0.0);
+  void ProcessAudioData(CDemuxStream* pStream, DemuxPacket* pPacket, double menuCorrection);
+  void ProcessVideoData(CDemuxStream* pStream, DemuxPacket* pPacket, double menuCorrection);
+  void SetNavPacketOffset(const DemuxPacket* pPacket, double menuCorrection);
   void ProcessSubData(CDemuxStream* pStream, DemuxPacket* pPacket);
   void ProcessTeletextData(CDemuxStream* pStream, DemuxPacket* pPacket);
   void ProcessRadioRDSData(CDemuxStream* pStream, DemuxPacket* pPacket);
