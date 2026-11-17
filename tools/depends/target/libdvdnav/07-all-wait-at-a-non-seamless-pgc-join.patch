@@ -1,0 +1,87 @@
+Subject: [PATCH] dvdnav: wait at non-seamless PGC joins, not title highlights
+
+A player with fifos reads ahead of what it shows. At the end of a PGC
+the next cell step ran its post commands and went on to the next PGC
+while the fifos still held the end of the old one. Seeks, chapter skips
+and menu calls then acted on the next PGC before the player showed it,
+with registers its post commands had already changed. Only the cell and
+PGC commands tell where a step goes.
+
+A disc sets the seamless flag on a cell that joins the cell before it
+in PGC order without a break. On the first cell of a PGC, or an angle
+cell of a block there, it describes the join from the PGC played
+before. A step that enters a PGC at a later cell, through a link in its
+pre commands, a part that starts past its first cell or a random program
+order, makes a join the flag does not describe. A player plays on only
+at a seamless join the flag describes and holds the picture at any
+other. A join into other VOBs always breaks: the reader closes its file
+and clears its cache there.
+
+The wait at a cell with highlights is there so a menu is not shown too
+shortly. It also came at every title cell with highlights, and where the
+next cell of the PGC follows as a plain step: no cell command, outside
+an angle block. A player that empties its fifos at a wait paused the
+movie at such a title cell and left a gap at a seamless join inside a
+PGC.
+---
+ src/dvdnav.c | 47 ++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 44 insertions(+), 3 deletions(-)
+
+diff --git a/src/dvdnav.c b/src/dvdnav.c
+index 92857bb988..812b980af5 100644
+--- a/src/dvdnav.c
++++ b/src/dvdnav.c
+@@ -867,9 +867,50 @@ dvdnav_status_t dvdnav_get_next_cache_block(dvdnav_t *this, uint8_t **buf,
+ 
+       /* we are about to leave a cell, so a lot of state changes could occur;
+        * under certain conditions, the application should get in sync with us before this,
+-       * otherwise it might show stills or menus too shortly */
+-      if ((this->position_current.still || this->pci.hli.hl_gi.hli_ss) && !this->sync_wait_skip)
+-        this->sync_wait = 1;
++       * otherwise it might show stills or menus too shortly, or run the post commands of
++       * a PGC it still shows */
++      if (!this->sync_wait_skip) {
++        if (this->position_current.still) {
++          this->sync_wait = 1;
++        } else {
++          const cell_playback_t *cell =
++            &this->vm->state.pgc->cell_playback[this->vm->state.cellN - 1];
++
++          /* a step to a later cell of the PGC without cell commands, outside an angle
++           * block, plays on */
++          if (cell->cell_cmd_nr != 0 || cell->block_type == BLOCK_TYPE_ANGLE_BLOCK ||
++              this->vm->state.cellN >= this->vm->state.pgc->nr_of_cells) {
++            if (this->pci.hli.hl_gi.hli_ss && this->vm->state.domain != DVD_DOMAIN_VTSTitle) {
++              this->sync_wait = 1;
++            } else {
++              /* the commands decide whether the step leaves the PGC, so run them on a copy;
++               * without one, it may. A PGC in the same VOBs plays on where the step enters
++               * it at its first cell, or an angle of a block there, and that cell is seamless */
++              vm_t *try_vm = vm_new_copy(this->vm);
++
++              if (!try_vm) {
++                this->sync_wait = 1;
++              } else {
++                vm_get_next_cell(try_vm);
++                if (!try_vm->stopped) {
++                  const cell_playback_t *cells = try_vm->state.pgc->cell_playback;
++                  int firstN = try_vm->state.cellN;
++
++                  while (firstN > 1 && cells[firstN - 1].block_type == BLOCK_TYPE_ANGLE_BLOCK &&
++                         cells[firstN - 1].block_mode != BLOCK_MODE_FIRST_CELL)
++                    firstN--;
++                  if (try_vm->state.domain != this->vm->state.domain ||
++                      try_vm->state.vtsN != this->vm->state.vtsN ||
++                      (try_vm->state.pgcN != this->vm->state.pgcN &&
++                       (firstN != 1 || !cells[try_vm->state.cellN - 1].seamless_play)))
++                    this->sync_wait = 1;
++                }
++                vm_free_copy(try_vm);
++              }
++            }
++          }
++        }
++      }
+ 
+       if (!this->sync_wait && (!this->position_current.still || this->skip_still)) {
+         /* no active cell still -> get us to the next cell */
