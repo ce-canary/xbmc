@@ -2693,11 +2693,6 @@ void CVideoPlayer::Process()
         if (pPacket->pts != DVD_NOPTS_VALUE && pPacket->pts > correction)
           pPacket->pts -= correction;
       }
-      if (m_dvd.syncClock)
-      {
-        m_clock.Discontinuity(pPacket->dts);
-        m_dvd.syncClock = false;
-      }
     }
 
     // process the packet
@@ -6791,9 +6786,7 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
           m_dvd.state = DVDSTATE_NORMAL;
         else
         {
-          bool sync = !IsInMenuInternal();
-          FlushBuffers(DVD_NOPTS_VALUE, false, sync);
-          m_dvd.syncClock = true;
+          FlushBuffers(DVD_NOPTS_VALUE, false, true);
           m_dvd.state = DVDSTATE_NORMAL;
           if (m_pDemuxer)
             m_pDemuxer->Flush();
