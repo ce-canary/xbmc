@@ -459,14 +459,9 @@ int CDVDInputStreamNavigator::ProcessBlock(uint8_t* dest_buffer, int* read)
         // ahead in the stream compared to what the application sees.
         // Such applications should wait until their fifos are empty
         // when they receive this type of event.
-        if(m_holdmode == HOLDMODE_NONE)
-        {
-          CLog::Log(LOGDEBUG, " - DVDNAV_WAIT (HOLDING)");
-          m_holdmode = HOLDMODE_HELD;
-          iNavresult = NAVRESULT_HOLD;
-        }
-        else
-          iNavresult = m_pVideoPlayer->OnDiscNavResult(buf, DVDNAV_WAIT);
+        // libdvdnav hands out highlights and hops ahead of the wait, so it is asked every read
+        m_holdmode = HOLDMODE_NONE;
+        iNavresult = m_pVideoPlayer->OnDiscNavResult(buf, DVDNAV_WAIT);
 
         /* if user didn't care for action, just skip it */
         if(iNavresult == NAVRESULT_NOP)
