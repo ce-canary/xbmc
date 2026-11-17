@@ -7565,9 +7565,10 @@ void CVideoPlayer::UpdatePlayState(double timeout)
 
     // a DVD VOBU stops being the position once the picture on screen has passed it, which only
     // the clock of the new pictures tells
+    const CDVDInputStreamNavigator::NavPacket* nav = nullptr;
+    double presented = DVD_NOPTS_VALUE;
     if (m_pInputStream->IsStreamType(DVDSTREAM_TYPE_DVD))
     {
-      double presented = DVD_NOPTS_VALUE;
       if (IsBlurayClockKnown())
       {
         if (m_CurrentVideo.id >= 0)
@@ -7575,8 +7576,8 @@ void CVideoPlayer::UpdatePlayState(double timeout)
         if (presented == DVD_NOPTS_VALUE)
           presented = m_clock.GetClock();
       }
-      std::static_pointer_cast<CDVDInputStreamNavigator>(m_pInputStream)
-          ->ReleaseNavPackets(presented);
+      nav = std::static_pointer_cast<CDVDInputStreamNavigator>(m_pInputStream)
+                ->ReleaseNavPackets(presented);
     }
 
     // Raw (pre-EDL) upper bound of the stream, needed below to tell whether the last
@@ -7632,6 +7633,18 @@ void CVideoPlayer::UpdatePlayState(double timeout)
       state.time_offset = m_offset_pts;
       state.time = blurayTime();
       state.timeMax = pDisplayTime->GetTotalTime();
+    }
+    else if (nav && nav->totalTime > 0)
+    {
+      // until the clock runs on the new pictures the time holds at the start of the VOBU
+      state.time = nav->time;
+      if (nav->pts != DVD_NOPTS_VALUE)
+      {
+        state.time_offset = DVD_MSEC_TO_TIME(nav->time) - nav->pts;
+        if (presented != DVD_NOPTS_VALUE)
+          state.time = DVD_TIME_TO_MSEC(presented + state.time_offset);
+      }
+      state.timeMax = nav->totalTime;
     }
     else if (pDisplayTime && pDisplayTime->GetTotalTime() > 0)
     {
