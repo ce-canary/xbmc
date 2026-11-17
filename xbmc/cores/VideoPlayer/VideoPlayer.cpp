@@ -2518,12 +2518,22 @@ void CVideoPlayer::Process()
         const bool held = PollBlurayEvents();
         if (m_navTail || held)
           CThread::Sleep(10ms);
+        else if (m_dvd.wait)
+          m_messenger.WaitForMessage(100ms);
         continue;
       }
 
       // a read without a packet at a still is the end of the input until the disc moves on
       if (m_dvd.state == DVDSTATE_STILL)
         SendVideoInputEnd();
+
+      // a read held at a disc wait is the end of the input, as a held Blu-ray read is
+      if (m_dvd.wait)
+      {
+        if (!m_inputEnded)
+          SendVideoDrain();
+        m_inputEnded = true;
+      }
 
       // check for a still frame state
       if (std::shared_ptr<CDVDInputStream::IMenus> pStream = std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream))
@@ -2657,6 +2667,18 @@ void CVideoPlayer::Process()
     {
       CDVDDemuxUtils::FreeDemuxPacket(pPacket);
       continue;
+    }
+
+    // a decoder that was given the end of its input at a disc wait starts again on its first
+    // picture, the clock with it
+    if (m_dvd.wait && STREAM_SOURCE_MASK(pStream->source) != STREAM_SOURCE_DEMUX_SUB)
+    {
+      m_dvd.wait = false;
+      if (m_videoInputEndSent)
+      {
+        FlushBuffers(DVD_NOPTS_VALUE, false, true);
+        m_videoInputEndSent = false;
+      }
     }
 
     // the still state can leave and return while packets flow, only new input needs a new end
@@ -3046,6 +3068,11 @@ bool CVideoPlayer::ShouldDeferSync(bool ready, std::chrono::steady_clock::time_p
   return true;
 }
 
+namespace
+{
+constexpr auto NAV_SYNC_WAIT_MAX = 2000ms;
+} // namespace
+
 bool CVideoPlayer::ShouldWaitForSync(std::chrono::steady_clock::time_point now)
 {
   // a resync that HandlePlaySpeed deferred ends within its own bound
@@ -3065,7 +3092,6 @@ bool CVideoPlayer::ShouldWaitForSync(std::chrono::steady_clock::time_point now)
 
   // an audio sink reopen at the item start takes up to half a second; a player that does not
   // sync within the bound gets the drop at the close
-  constexpr auto NAV_SYNC_WAIT_MAX = 2000ms;
   if (!busy || (m_syncWait && now - *m_syncWait >= NAV_SYNC_WAIT_MAX))
   {
     m_syncWait.reset();
@@ -6642,6 +6668,45 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
         return NAVRESULT_HOLD;
       }
       break;
+    case DVDNAV_WAIT:
+      {
+        m_dvd.wait = true;
+
+        const auto now = std::chrono::steady_clock::now();
+        const auto syncing = [](const CCurrentStream& current)
+        {
+          return current.id >= 0 && current.packets > 0 &&
+                 current.syncState != IDVDStreamPlayer::SYNC_INSYNC;
+        };
+        // the input ends where the demuxer comes back empty, after the parser's last packet; a
+        // player that has not started yet holds the read within the sync wait bound
+        bool hold = m_playSpeed <= 0 || !m_inputEnded;
+        if (!hold && (syncing(m_CurrentAudio) || syncing(m_CurrentVideo)))
+        {
+          if (!m_syncWait)
+            m_syncWait = now;
+          hold = now - *m_syncWait < NAV_SYNC_WAIT_MAX;
+        }
+        const bool audio = m_CurrentAudio.id >= 0 &&
+                           m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_INSYNC &&
+                           m_VideoPlayerAudio->HasData() &&
+                           !CServiceBroker::GetActiveAE()->IsSuspended();
+        // the next input restarts the players, so the clock plays out the last VOBU read first
+        double end = pStream->GetVobUnitEnd() - m_offset_pts;
+        if (IsInMenuInternal())
+          end -= pStream->GetTimeStampCorrection();
+        const bool video = m_CurrentVideo.id >= 0 &&
+                           m_CurrentVideo.syncState == IDVDStreamPlayer::SYNC_INSYNC &&
+                           (m_VideoPlayerVideo->HasData() || !m_VideoPlayerVideo->IsEOS() ||
+                            m_clock.GetClock() < end);
+        if (hold || ShouldWaitForSync(now) || audio || video)
+        {
+          SetCaching(CACHESTATE_DONE);
+          return NAVRESULT_HOLD;
+        }
+        CLog::Log(LOGDEBUG, "DVDNAV_WAIT - players played out");
+      }
+      break;
     case DVDNAV_SPU_CLUT_CHANGE:
       {
         m_VideoPlayerSubtitle->SendMessage(
@@ -6688,6 +6753,10 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
 
         //Make sure we clear all the old overlays here, or else old forced items are left.
         m_overlayContainer.Clear();
+
+        // the new title set opens fresh players, there is nothing to restart after the wait
+        m_dvd.wait = false;
+        m_videoInputEndSent = false;
 
         //Force an aspect ratio that is set in the dvdheaders if available
         m_CurrentVideo.hint.aspect = static_cast<double>(pStream->GetVideoAspectRatio());
@@ -6740,6 +6809,8 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
           if (m_pDemuxer)
             m_pDemuxer->Flush();
         }
+        m_dvd.wait = false;
+        m_videoInputEndSent = false;
 
         return NAVRESULT_ERROR;
       }

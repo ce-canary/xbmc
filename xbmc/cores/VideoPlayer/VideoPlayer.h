@@ -708,10 +708,12 @@ protected:
       iDVDStillTime = std::chrono::milliseconds::zero();
       iDVDStillStartTime = {};
       syncClock = false;
+      wait = false;
     }
 
     int state;                // current dvdstate
     bool syncClock;
+    bool wait; // a libdvdnav wait came since the last disc input
     std::chrono::milliseconds
         iDVDStillTime; // total time in ticks we should display the still before continuing
     std::chrono::time_point<std::chrono::steady_clock>
