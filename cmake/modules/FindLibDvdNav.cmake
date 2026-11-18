@@ -22,7 +22,8 @@ if(NOT TARGET LIBRARY::${CMAKE_FIND_PACKAGE_NAME})
                 "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/04-all-vm-keep-the-random-state-in-the-vm.patch"
                 "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/05-all-forget-a-skipped-wait-when-the-vm-hops.patch"
                 "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/06-all-run-the-cell-step-after-a-sync-wait.patch"
-                "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/07-all-wait-at-a-non-seamless-pgc-join.patch")
+                "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/07-all-wait-at-a-non-seamless-pgc-join.patch"
+                "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/08-all-select-the-forced-button-when-its-highlight-starts.patch")
 
     if(WIN32 OR WINDOWS_STORE)
       set(${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_libType shared)
