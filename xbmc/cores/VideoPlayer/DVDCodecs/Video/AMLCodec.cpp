@@ -2499,8 +2499,11 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL, StreamHdrType
       }
       break;
     case VFORMAT_VC1:
-      // vc1 in an avi file
-      if (m_hints.ptsinvalid)
+      // vc1 without pts carries decode times; flag them only where pictures can reorder, as in
+      // ffmpeg (advanced profile, or wmv3 MAXBFRAMES > 0)
+      if (m_hints.ptsinvalid &&
+          (am_private->video_codec_type == VIDEO_DEC_FORMAT_WVC1 ||
+           (am_private->extradata.GetSize() >= 4 && (am_private->extradata.GetData()[3] >> 4) & 7)))
         am_private->gcodec.param = (void*)KEYFRAME_PTS_ONLY;
       am_private->gcodec.dec_mode = STREAM_TYPE_SINGLE;
       break;
@@ -2958,7 +2961,8 @@ bool CAMLCodec::AddData(uint8_t *pData, size_t iSize, double dts, double pts)
     am_private->am_pkt.avdts = PtsToDecoder(dts);
 
     // For VC1 AML decoder uses PTS only on I-Frames
-    if (am_private->am_pkt.avpts == UINT64_0 && (((size_t)am_private->gcodec.param) & KEYFRAME_PTS_ONLY))
+    if (am_private->am_pkt.avpts == UINT64_0 && m_hints.ptsinvalid &&
+        (am_private->video_format == VFORMAT_VC1 || am_private->video_format == VFORMAT_MPEG4))
       am_private->am_pkt.avpts = am_private->am_pkt.avdts;
   }
 
