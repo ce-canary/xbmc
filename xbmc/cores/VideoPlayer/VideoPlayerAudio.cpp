@@ -341,6 +341,7 @@ void CVideoPlayerAudio::Process()
       if (pts > m_audioClock - delay + 0.5 * DVD_TIME_BASE)
       {
         m_audioSink.Flush();
+        audioframe.nb_frames = 0;
       }
       else if (resync.seekStart)
         startCut = std::max(0.0, pts - (m_audioClock - delay));
