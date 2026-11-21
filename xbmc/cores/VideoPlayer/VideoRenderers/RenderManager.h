@@ -196,8 +196,9 @@ protected:
   void StartPresentThread();
   void StopPresentThread();
   void PresentFromVsync();
-  //! Vsync thread: reads the clock sync phase once the vsync step decided its release
-  void ReadVsyncPhase(bool released);
+  //! Vsync thread: reads the clock sync phase once the vsync step decided its release, with
+  //! `woke` the time the step's wake returned
+  void ReadVsyncPhase(bool released, std::chrono::steady_clock::time_point woke);
   int GuiSource() const { return m_presenting ? m_guiPresentSource : m_presentsource; }
 
   CBaseRenderer *m_pRenderer = nullptr;
@@ -316,9 +317,13 @@ protected:
   //! Vsync thread, under m_presentlock: the pts of m_planeSource once it is a new frame
   double m_displayedPts{DVD_NOPTS_VALUE};
   int m_offTimelineSource{-1};
-  //! Under m_presentlock: the clock and its epoch of the last release decision, and whether
-  //! the current vsync step made one
+  //! Under m_presentlock: the clock, when it was read and its epoch of the last release
+  //! decision, and whether the current vsync step made one
   double m_releaseClock{0.0};
+  std::chrono::steady_clock::time_point m_releaseClockTime{};
   int m_releaseClockEpoch{0};
   bool m_releaseClockTaken{false};
+  //! Presenter thread, or the render thread when not presenting: the display vsync period while
+  //! the clock sync is on
+  double m_vsyncPeriod{0.0};
 };
