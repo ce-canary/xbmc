@@ -236,3 +236,29 @@ double CDVDDemuxUtils::FrameRateFromStatistics(const std::string& frames,
   const double totalSeconds = hours * 3600.0 + minutes * 60.0 + seconds;
   return totalSeconds > 0.0 ? frameCount / totalSeconds : 0.0;
 }
+
+const AVRational CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE = {1, 90000};
+
+double CDVDDemuxUtils::BlurayTitleTime(
+    int64_t ts, const AVStream* stream, uint64_t inTime, uint64_t startTime, bool clampPreroll)
+{
+  if (ts == AV_NOPTS_VALUE)
+    return DVD_NOPTS_VALUE;
+
+  const int64_t in =
+      av_rescale_q(static_cast<int64_t>(inTime), BLURAY_CLIP_TIME_BASE, stream->time_base);
+  const int64_t start =
+      av_rescale_q(static_cast<int64_t>(startTime), BLURAY_CLIP_TIME_BASE, stream->time_base);
+  const int64_t wrap = INT64_C(1) << stream->pts_wrap_bits;
+
+  int64_t clipTime = (ts - in) & (wrap - 1);
+  if (clipTime >= wrap / 2)
+    clipTime -= wrap;
+
+  double timestamp =
+      static_cast<double>(clipTime + start) * stream->time_base.num / stream->time_base.den;
+  if (clampPreroll && timestamp < 0 && timestamp + 0.5 > 0)
+    timestamp = 0;
+
+  return timestamp * DVD_TIME_BASE;
+}
