@@ -653,6 +653,7 @@ int CDVDInputStreamNavigator::ProcessBlock(uint8_t* dest_buffer, int* read)
         m_iTime = (int) ( m_dll.dvdnav_get_current_time(m_dvdnav)  / 90 );
 
         NavPacket nav{.position = position,
+                      .time = m_iTime,
                       .part = m_iPart,
                       .partCount = m_iPartCount,
                       .menu = menu,
@@ -931,12 +932,15 @@ void CDVDInputStreamNavigator::SetNavPacketOffset(double offset)
     it->pts = it->start - offset;
 }
 
-void CDVDInputStreamNavigator::ReleaseNavPackets(double presented)
+const CDVDInputStreamNavigator::NavPacket* CDVDInputStreamNavigator::ReleaseNavPackets(
+    double presented)
 {
   // a VOBU is passed once the picture reaches the start of the next one
   while (m_navPackets.size() > 1 && presented != DVD_NOPTS_VALUE &&
          m_navPackets[1].pts != DVD_NOPTS_VALUE && presented >= m_navPackets[1].pts)
     m_navPackets.pop_front();
+
+  return m_navPackets.empty() ? nullptr : &m_navPackets.front();
 }
 
 void CDVDInputStreamNavigator::OnBack()
