@@ -145,8 +145,9 @@ public:
 
   //! The next close of the newest decoder, on this thread, hands its output on to the decoder of
   //! the next item, which plays under it if it plays the same format; with a known `next` it
-  //! also keeps the last picture until the first frame of a next item of that format
-  static void   ContinuePresentation(const std::optional<NextVideoFormat>& next);
+  //! also keeps the last picture until the first frame of a next item of that format, and after
+  //! a `jump` of the disc program to a next not known yet until the open of the next decoder
+  static void   ContinuePresentation(const std::optional<NextVideoFormat>& next, bool jump = false);
   //! Ends a hold that no decoder claimed; a `stop` also disarms the next close and ends a hold
   //! a decoder claimed but did not take
   static void   EndPresentation(bool stop);

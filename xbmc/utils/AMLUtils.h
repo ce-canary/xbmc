@@ -101,8 +101,9 @@ std::chrono::steady_clock::time_point aml_display_reset_end();
 // the time of the last vblank of the display, on CLOCK_MONOTONIC as the steady clock; false while
 // the output is off
 bool aml_display_last_vblank(std::chrono::steady_clock::time_point& time);
-// `next` is the clip of the next item, nullptr when unknown
-void aml_continue_presentation(const BLURAY_CLIP_INFO* next);
+// `next` is the clip of the next item, nullptr when unknown; `jump` when the disc program jumped
+// to a next it has not named yet
+void aml_continue_presentation(const BLURAY_CLIP_INFO* next, bool jump);
 // `next` is the stream the next decoder opens with
 void aml_continue_presentation(const CDVDStreamInfo& next);
 void aml_end_presentation(bool stop);

@@ -2179,6 +2179,8 @@ uint64_t lastGen{0};
 uint64_t armGen{0};
 std::thread::id armThread;
 std::optional<NextVideoFormat> armNext;
+// the armed close follows a jump of the disc program to a next item not known yet
+bool armJump{false};
 // the held output and the decoder that takes or ends it, none while holdOwner is 0
 bool holdKept{false};
 uint64_t holdOwner{0};
@@ -2372,14 +2374,23 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL, const AMLVide
 
         if (convert)
         {
+          const OutputModule module = pictureFallback;
+          auto* AmlDisplay =
+              static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
           // the mode is stored only once the policy is forced
-          if (heldModule != OutputModule::DV)
+          if (module == OutputModule::DV && heldModule != OutputModule::DV)
           {
-            auto* AmlDisplay =
-                static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
             AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC,
                                             AMDV_FORCE_OUTPUT_MODE);
             AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC, pictureDvMode);
+          }
+          else if (module == OutputModule::HDR && heldModule != OutputModule::HDR &&
+                   AmlDisplay->aml_get_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC) ==
+                       HDR_FOLLOW_SOURCE)
+          {
+            AmlDisplay->aml_set_drmProperty("force_output", DRM_MODE_OBJECT_CRTC,
+                                            FORCE_OUTPUT_BT2020_PQ);
+            AmlDisplay->aml_set_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC, HDR_FOLLOW_SINK);
           }
           ShowMainVideo(false);
           keptOnScreen = false;
@@ -2389,10 +2400,10 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL, const AMLVide
             CloseLayers({});
             m_lowerLayers = false;
           }
-          heldModule = OutputModule::DV;
+          heldModule = module;
           heldPicture = false;
-          CLog::Log(LOGDEBUG, "CAMLCodec::{}: the picture goes off, the taker keeps the dv output",
-                    __FUNCTION__);
+          CLog::Log(LOGDEBUG, "CAMLCodec::{}: the picture goes off, the taker keeps the {} output",
+                    __FUNCTION__, module == OutputModule::DV ? "dv" : "hdr");
         }
 
         m_outputModule = heldModule;
@@ -3117,12 +3128,13 @@ void CAMLCodec::CloseAmlVideo()
   }
 }
 
-void CAMLCodec::ContinuePresentation(const std::optional<NextVideoFormat>& next)
+void CAMLCodec::ContinuePresentation(const std::optional<NextVideoFormat>& next, bool jump)
 {
   std::lock_guard<std::mutex> lock(holdMutex);
   armGen = lastGen;
   armThread = std::this_thread::get_id();
   armNext = next;
+  armJump = jump;
 }
 
 void CAMLCodec::EndPresentation(bool stop)
@@ -3242,7 +3254,8 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
     }
     holdOwner = 0;
   }
-  if (armed && holdKept && !holdOwner && heldPicture && !pictureDvHold && !NextPlays(heldFormat))
+  if (armed && holdKept && !holdOwner && heldPicture && !pictureDvHold && !armJump &&
+      !NextPlays(heldFormat))
   {
     ShowMainVideo(false);
     keptOnScreen = false;
@@ -3261,7 +3274,7 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   const bool corePicture = dvEnabled && (dvOutputHold || dvPolicy == AMDV_FORCE_OUTPUT_MODE);
   const bool dvPicture = dvEnabled && dvOutputHold;
   if (!dropped && (!dvEnabled || corePicture) && !format.interlaced && !format.mvc &&
-      (dvPicture || NextPlays(format)))
+      (dvPicture || armJump || NextPlays(format)))
   {
     heldFormat = format;
     heldModule = m_outputModule;
@@ -3296,14 +3309,15 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   // SDR otherwise; outside follow source the forced output is the module's output now
   const int hdrPolicy =
       dvEnabled ? -1 : AmlDisplay->aml_get_drmProperty("hdr_policy", DRM_MODE_OBJECT_CRTC);
-  if (hold == Hold::NONE && !dvEnabled &&
-      PlaysHdr10Output(m_hints, m_output, m_processInfo.GetIsHdr10Plus()) &&
+  const bool hdrOutputHold =
+      !dvEnabled && PlaysHdr10Output(m_hints, m_output, m_processInfo.GetIsHdr10Plus()) &&
       (!armNext || armNext->hdrType == StreamHdrType::HDR_TYPE_HDR10) &&
       (m_outputModule == OutputModule::HDR ||
        (dvPolicy != AMDV_FORCE_OUTPUT_MODE &&
         (hdrPolicy == HDR_FOLLOW_SOURCE ||
          (m_ownOutput && AmlDisplay->aml_get_drmProperty("force_output", DRM_MODE_OBJECT_CRTC) ==
-                             FORCE_OUTPUT_BT2020_PQ)))))
+                             FORCE_OUTPUT_BT2020_PQ))));
+  if (hold == Hold::NONE && hdrOutputHold)
   {
     // follow sink without the forced output sees a sink without HDR, so the forced output goes
     // first
@@ -3322,10 +3336,12 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
   {
     holdDecoderTimeout = m_decoder_timeout;
     holdKept = true;
-    pictureFallback = hold == Hold::PICTURE && dvPicture &&
-                              (!armNext || armNext->hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION)
-                          ? OutputModule::DV
-                          : OutputModule::NONE;
+    pictureFallback =
+        hold != Hold::PICTURE ? OutputModule::NONE
+        : dvPicture && (!armNext || armNext->hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION)
+            ? OutputModule::DV
+        : armJump && hdrOutputHold ? OutputModule::HDR
+                                   : OutputModule::NONE;
   }
   CLog::Log(LOGDEBUG, "CAMLCodec::{}: armed close keeps {}, next {}, dv core {}, dv policy {}",
             __FUNCTION__,
@@ -3333,7 +3349,10 @@ CAMLCodec::Hold CAMLCodec::HoldOnClose(bool dvEnabled, int& dvPolicy)
             : hold == Hold::OUTPUT_DV  ? "the dv output"
             : hold == Hold::OUTPUT_HDR ? "the hdr output"
                                        : "nothing",
-            armNext ? "known" : "unknown", dvEnabled, dvPolicy);
+            armNext   ? "known"
+            : armJump ? "unknown after a jump"
+                      : "unknown",
+            dvEnabled, dvPolicy);
   return hold;
 }
 
