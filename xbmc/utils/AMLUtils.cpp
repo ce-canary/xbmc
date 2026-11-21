@@ -441,12 +441,17 @@ bool aml_display_last_vblank(std::chrono::steady_clock::time_point& time)
 
 void aml_continue_presentation()
 {
-  CAMLCodec::ContinuePresentation();
+  CAMLCodec::ContinuePresentation(std::nullopt);
 }
 
 void aml_end_presentation(bool stop)
 {
   CAMLCodec::EndPresentation(stop);
+}
+
+void aml_drop_kept_picture(bool taken)
+{
+  CAMLCodec::DropKeptPicture(taken);
 }
 
 int aml_amdv_wait(StreamHdrType hdrType)

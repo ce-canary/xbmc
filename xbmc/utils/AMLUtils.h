@@ -92,6 +92,8 @@ bool aml_video_started();
 bool aml_display_last_vblank(std::chrono::steady_clock::time_point& time);
 void aml_continue_presentation();
 void aml_end_presentation(bool stop);
+// `taken` also drops a picture a next decoder took before its first frame
+void aml_drop_kept_picture(bool taken);
 int aml_amdv_wait(StreamHdrType hdrType);
 void aml_set_3d_video_mode(unsigned int mode, bool framepacking_support, int view_mode);
 

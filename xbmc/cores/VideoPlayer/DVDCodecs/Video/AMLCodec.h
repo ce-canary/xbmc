@@ -20,6 +20,7 @@
 #include <deque>
 #include <mutex>
 #include <atomic>
+#include <optional>
 
 typedef struct am_private_t am_private_t;
 
@@ -29,6 +30,14 @@ class PosixFile;
 typedef std::shared_ptr<PosixFile> PosixFilePtr;
 
 class CProcessInfo;
+
+// the format a caller predicts for the video of the next item
+struct NextVideoFormat
+{
+  AVCodecID codec{AV_CODEC_ID_NONE};
+  StreamHdrType hdrType{StreamHdrType::HDR_TYPE_NONE};
+  bool interlaced{false};
+};
 
 struct vpp_pq_ctrl_s {
 	unsigned int length;
@@ -129,11 +138,16 @@ public:
   static bool   WaitPresentStep(uint64_t& seen, int fenceFd);
 
   //! The next close of the newest decoder, on this thread, hands its output on to the decoder of
-  //! the next item, which plays under it if it plays the same format
-  static void   ContinuePresentation();
+  //! the next item, which plays under it if it plays the same format; with a known `next` it
+  //! also keeps the last picture until the first frame of a next item of that format
+  static void   ContinuePresentation(const std::optional<NextVideoFormat>& next);
   //! Ends a hold that no decoder claimed; a `stop` also disarms the next close and ends a hold
   //! a decoder claimed but did not take
   static void   EndPresentation(bool stop);
+  //! Blanks a kept picture still on screen, one a next decoder took only with `taken`; the
+  //! output stays set up for the next decoder, and an HDR10 picture leaves the forced HDR output
+  //! to the hold or the decoder that took it
+  static void   DropKeptPicture(bool taken);
   //! Makes this decoder the newest, and the one that takes or ends a held output no decoder
   //! claimed
   void          ClaimHold();
@@ -150,6 +164,7 @@ private:
   enum class Hold
   {
     NONE,
+    PICTURE,
     OUTPUT_DV,
     OUTPUT_HDR,
   };
@@ -186,6 +201,7 @@ private:
   std::atomic<double> m_presentHold{0.0};
   bool             m_setUp{false};
   uint64_t         m_holdGen{0};
+  std::atomic<bool> m_keptPicture{false};
   bool             m_ownOutput{false};
   OutputModule     m_outputModule{OutputModule::NONE};
   am_private_t    *am_private;
