@@ -653,6 +653,9 @@ int CDVDInputStreamNavigator::ProcessBlock(uint8_t* dest_buffer, int* read)
         m_iTime = (int) ( m_dll.dvdnav_get_current_time(m_dvdnav)  / 90 );
 
         NavPacket nav{.position = position,
+                      .part = m_iPart,
+                      .partCount = m_iPartCount,
+                      .menu = menu,
                       .start = static_cast<double>(m_iVobUnitStart * 1000) / 90};
         if (positioned)
           m_navPackets.push_back(nav);
@@ -896,8 +899,29 @@ bool CDVDInputStreamNavigator::CallMenu(DVDMenuID_t menu)
   if (!called)
     called = m_dll.dvdnav_menu_call(m_dvdnav, menu) == DVDNAV_STATUS_OK;
   if (called)
+  {
     m_navPackets.clear();
+    UpdateTitleInfo();
+  }
   return called;
+}
+
+// after a jump the title, its parts and the PGC length follow the VM, as at a cell change, and the
+// menu state its domain; a NAV packet adds its buttons to the menu state
+void CDVDInputStreamNavigator::UpdateTitleInfo()
+{
+  m_dll.dvdnav_current_title_info(m_dvdnav, &m_iTitle, &m_iPart);
+  if (m_iTitle > 0)
+    m_dll.dvdnav_get_number_of_parts(m_dvdnav, m_iTitle, &m_iPartCount);
+  else
+    m_iPartCount = 0;
+
+  dvdnav_nav_position_t position{};
+  if (m_dll.dvdnav_get_current_nav_position(m_dvdnav, &position) == DVDNAV_STATUS_OK)
+  {
+    m_iTotalTime = static_cast<int>(position.pgc_length / 90);
+    m_bInMenu = position.domain != DVD_DOMAIN_VTSTitle;
+  }
 }
 
 void CDVDInputStreamNavigator::SetNavPacketOffset(double offset)
@@ -926,7 +950,10 @@ void CDVDInputStreamNavigator::OnNext()
   if (m_dvdnav && !(IsInMenu() && GetTotalButtons() > 0))
   {
     if (m_dll.dvdnav_next_pg_search(m_dvdnav) == DVDNAV_STATUS_OK)
+    {
       m_navPackets.clear();
+      UpdateTitleInfo();
+    }
   }
 }
 
@@ -936,7 +963,10 @@ void CDVDInputStreamNavigator::OnPrevious()
   if (m_dvdnav && !(IsInMenu() && GetTotalButtons() > 0))
   {
     if (m_dll.dvdnav_prev_pg_search(m_dvdnav) == DVDNAV_STATUS_OK)
+    {
       m_navPackets.clear();
+      UpdateTitleInfo();
+    }
   }
 }
 
@@ -1302,6 +1332,7 @@ bool CDVDInputStreamNavigator::PosTime(int iTimeInMsec)
     return false;
   }
   m_navPackets.clear();
+  UpdateTitleInfo();
   m_iTime = iTimeInMsec;
   return true;
 }
@@ -1334,6 +1365,7 @@ bool CDVDInputStreamNavigator::SeekChapter(int iChapter)
     return false;
   }
   m_navPackets.clear();
+  UpdateTitleInfo();
 
   SetActiveSubtitleStream(subtitle);
   SetActiveAudioStream(audio);
@@ -1385,8 +1417,16 @@ bool CDVDInputStreamNavigator::FillDVDState(DVDState& dvdState)
     return false;
   }
 
-  if (m_dll.dvdnav_current_title_program(m_dvdnav, &dvdState.title, &dvdState.pgcn,
-                                         &dvdState.pgn) == DVDNAV_STATUS_ERR)
+  // the read runs ahead of the picture, a resume returns to the program on screen
+  if (!m_navPackets.empty())
+  {
+    const dvdnav_nav_position_t& position = m_navPackets.front().position;
+    dvdState.title = position.title;
+    dvdState.pgcn = position.pgcn;
+    dvdState.pgn = position.pgn;
+  }
+  else if (m_dll.dvdnav_current_title_program(m_dvdnav, &dvdState.title, &dvdState.pgcn,
+                                              &dvdState.pgn) == DVDNAV_STATUS_ERR)
   {
     CLog::LogF(LOGERROR, "Failed to get current title info ({})",
                m_dll.dvdnav_err_to_string(m_dvdnav));
@@ -1415,7 +1455,8 @@ bool CDVDInputStreamNavigator::GetState(std::string& xmlstate)
   }
 
   // do not save state if we are not playing a title stream (e.g. if we are in menus)
-  if (!m_dll.dvdnav_is_domain_vts(m_dvdnav))
+  if (m_navPackets.empty() ? !m_dll.dvdnav_is_domain_vts(m_dvdnav)
+                           : m_navPackets.front().position.domain != DVD_DOMAIN_VTSTitle)
   {
     return false;
   }
@@ -1450,7 +1491,10 @@ bool CDVDInputStreamNavigator::SetState(const std::string& xmlstate)
 
   if (m_dll.dvdnav_program_play(m_dvdnav, dvdState.title, dvdState.pgcn, dvdState.pgn) ==
       DVDNAV_STATUS_OK)
+  {
     m_navPackets.clear();
+    UpdateTitleInfo();
+  }
   m_dll.dvdnav_angle_change(m_dvdnav, dvdState.current_angle);
   SetActiveSubtitleStream(dvdState.subp_num);
   SetActiveAudioStream(dvdState.audio_num);
@@ -1502,7 +1546,8 @@ std::chrono::milliseconds CDVDInputStreamNavigator::GetChapterPos(int ch)
   if (ch == -1 || ch > GetChapterCount())
     ch = GetChapter();
 
-  std::map<int, std::map<int, int64_t>>::iterator title = m_mapTitleChapters.find(m_iTitle);
+  std::map<int, std::map<int, int64_t>>::iterator title = m_mapTitleChapters.find(
+      m_navPackets.empty() ? m_iTitle : m_navPackets.front().position.title);
   if (title != m_mapTitleChapters.end())
   {
     std::map<int, int64_t>::iterator chapter = title->second.find(ch);
@@ -1651,9 +1696,10 @@ void CDVDInputStreamNavigator::SaveCurrentState(const CStreamDetails& details)
   std::unique_lock lock(m_statesLock);
 
   // Details for this playlist
+  const NavPacket* nav = m_navPackets.empty() ? nullptr : &m_navPackets.front();
   SavePlaylistDetails(m_playedPlaylists, m_startWatchTime,
-                      {.playlist = m_iTitle,
-                       .inMenu = m_bInMenu,
+                      {.playlist = nav ? nav->position.title : m_iTitle,
+                       .inMenu = nav ? nav->menu : m_bInMenu,
                        .duration = std::chrono::milliseconds(GetTotalTime()),
                        .details = details});
 
