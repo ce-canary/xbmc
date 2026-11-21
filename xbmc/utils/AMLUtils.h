@@ -10,6 +10,8 @@
 
 #include "utils/StreamDetails.h"
 
+#include <chrono>
+
 extern "C"
 {
 #include <libavutil/pixfmt.h>
@@ -89,6 +91,9 @@ struct AMLVideoOutput
 };
 AMLVideoOutput aml_video_output(const CDVDStreamInfo& source);
 bool aml_video_started();
+bool aml_display_reset_pending();
+// when the last delayed display reset ended, the clock's epoch when none ran
+std::chrono::steady_clock::time_point aml_display_reset_end();
 // the time of the last vblank of the display, on CLOCK_MONOTONIC as the steady clock; false while
 // the output is off
 bool aml_display_last_vblank(std::chrono::steady_clock::time_point& time);
