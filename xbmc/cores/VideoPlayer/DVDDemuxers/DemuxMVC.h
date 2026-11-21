@@ -46,8 +46,22 @@ public:
   virtual int GetNrOfStreams() const override { return 1; };
   virtual std::string GetFileName();
 
-  void SetStartTime(int64_t start_time, MenuType menu_type) { m_start_time = start_time; m_menu_type = menu_type; }
+  void SetStartTime(int64_t start_time, MenuType menu_type, bool clampPreroll)
+  {
+    m_start_time = start_time;
+    m_menu_type = menu_type;
+    m_clampPreroll = clampPreroll;
+  }
   int64_t GetStartTime() const { return m_start_time; }
+  bool GetClampPreroll() const { return m_clampPreroll; }
+  //! puts the packets on the title time of the base view's clip and keeps those of its play item
+  void SetClipTime(uint64_t inTime, uint64_t outTime, uint64_t startTime)
+  {
+    m_clipInTime = inTime;
+    m_clipOutTime = outTime;
+    m_clipStartTime = startTime;
+    m_hasClipTime = true;
+  }
 
   AVStream* GetAVStream();
   CDVDInputStream*    m_pInput;
@@ -61,4 +75,9 @@ private:
   int                 m_nStreamIndex = -1;
   int64_t			  m_start_time = 0;
   MenuType		  m_menu_type = MenuType::NONE;
+  bool m_clampPreroll{false};
+  bool m_hasClipTime{false};
+  uint64_t m_clipInTime{0};
+  uint64_t m_clipOutTime{0};
+  uint64_t m_clipStartTime{0};
 };
