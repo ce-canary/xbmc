@@ -8,7 +8,8 @@ DEPS = ../../Makefile.include LIBDVDNAV-VERSION Makefile ../../download-files.in
                                   06-all-run-the-cell-step-after-a-sync-wait.patch \
                                   07-all-wait-at-a-non-seamless-pgc-join.patch \
                                   08-all-select-the-forced-button-when-its-highlight-starts.patch \
-                                  09-all-resume-a-menu-call-at-the-vobu-shown.patch
+                                  09-all-resume-a-menu-call-at-the-vobu-shown.patch \
+                                  10-all-seek-a-time-past-the-end-of-a-pgc-to-its-last-vobu.patch
 
 MESON_BUILD_TYPE=release
 
@@ -50,6 +51,7 @@ all: .installed-$(PLATFORM)
 	cd $(PLATFORM); patch -p1 -i ../07-all-wait-at-a-non-seamless-pgc-join.patch
 	cd $(PLATFORM); patch -p1 -i ../08-all-select-the-forced-button-when-its-highlight-starts.patch
 	cd $(PLATFORM); patch -p1 -i ../09-all-resume-a-menu-call-at-the-vobu-shown.patch
+	cd $(PLATFORM); patch -p1 -i ../10-all-seek-a-time-past-the-end-of-a-pgc-to-its-last-vobu.patch
 ifeq ($(TARGET_PLATFORM),windows)
 	cd $(PLATFORM); patch -p1 -i ../01-win-uwpcompat.patch
 	cd $(PLATFORM); patch -p1 -i ../02-win-remove-lib-version.patch
