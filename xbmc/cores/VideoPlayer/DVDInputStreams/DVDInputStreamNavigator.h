@@ -97,6 +97,7 @@ public:
 
   bool IsInMenu() override { return m_bInMenu; }
   double GetTimeStampCorrection() override { return (double)(m_iVobUnitCorrection * 1000) / 90; }
+  double GetVobUnitEnd() const { return static_cast<double>(m_iVobUnitStop * 1000) / 90; }
 
   int GetActiveSubtitleStream();
   int GetSubTitleStreamCount();
