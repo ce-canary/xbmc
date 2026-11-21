@@ -56,6 +56,9 @@ public:
   struct NavPacket
   {
     dvdnav_nav_position_t position{};
+    int part{0}; // the part and part count of its cell
+    int partCount{0};
+    bool menu{false}; // has buttons, or is outside a title
     double start{0.0}; // the VOBU start on the pts the demuxer gives its packets
     double pts{DVD_NOPTS_VALUE}; // the start less the offset of the first A/V packet after it
   };
@@ -127,8 +130,12 @@ public:
   bool GetState(std::string &xmlstate) override;
   bool SetState(const std::string &xmlstate) override;
 
-  int GetChapter() override { return m_iPart; } // the current part in the current title
-  int GetChapterCount() override { return m_iPartCount; } // the number of parts in the current title
+  // the part and the number of parts of the title on screen
+  int GetChapter() override { return m_navPackets.empty() ? m_iPart : m_navPackets.front().part; }
+  int GetChapterCount() override
+  {
+    return m_navPackets.empty() ? m_iPartCount : m_navPackets.front().partCount;
+  }
   void GetChapterName(std::string& name, int idx = -1) override {};
   std::chrono::milliseconds GetChapterPos(int ch = -1) override;
   bool SeekChapter(int iChapter) override;
@@ -173,6 +180,7 @@ protected:
   static void SetSubtitleStreamName(SubtitleStreamInfo &info, const subp_attr_t &subp_attributes);
 
   bool CallMenu(DVDMenuID_t menu);
+  void UpdateTitleInfo();
   int GetAngleCount();
   void GetVideoResolution(uint32_t * width, uint32_t * height);
 
