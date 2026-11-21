@@ -178,8 +178,9 @@ private:
   void          CloseAmlVideo();
   static void   CloseOutput(bool dvEnabled, int dvPolicy, int decoderTimeout);
   static void   CloseLayers();
-  Hold          HoldOnClose(bool dvEnabled, int dvPolicy);
+  Hold          HoldOnClose(bool dvEnabled, int& dvPolicy);
   void          EndHold(bool failed);
+  void          HandBack();
   static void   ReleaseKept();
   static void   RestoreOutput(OutputModule module, int decoderTimeout);
   std::string   GetVfmMap(const std::string &name);
@@ -204,6 +205,9 @@ private:
   std::atomic<bool> m_keptPicture{false};
   bool             m_ownOutput{false};
   OutputModule     m_outputModule{OutputModule::NONE};
+  std::atomic<bool> m_handback{false};
+  bool             m_handbackFrame{false};
+  bool             m_handbackOff{false};
   am_private_t    *am_private;
   CDVDStreamInfo   m_hints;
   AMLVideoOutput   m_output;
