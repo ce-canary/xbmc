@@ -56,6 +56,7 @@ public:
   struct NavPacket
   {
     dvdnav_nav_position_t position{};
+    int time{0}; // ms into the PGC at the start of the VOBU
     int part{0}; // the part and part count of its cell
     int partCount{0};
     bool menu{false}; // has buttons, or is outside a title
@@ -165,8 +166,9 @@ public:
   VideoStreamInfo GetVideoStreamInfo();
 
   void SetNavPacketOffset(double offset);
-  // drops the VOBUs the picture at `presented` has passed, none while it is not known
-  void ReleaseNavPackets(double presented);
+  // drops the VOBUs the picture at `presented` has passed, none while it is not known, returns
+  // the one on screen
+  const NavPacket* ReleaseNavPackets(double presented);
 
   void SaveCurrentState(const CStreamDetails& details) override;
   UpdateState UpdateItemFromSavedStates(CFileItem& item, double time, bool& closed) override;
