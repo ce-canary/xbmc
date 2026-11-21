@@ -1,0 +1,70 @@
+Subject: [PATCH] dvdnav: seek a time past the end of a PGC to its last VOBU
+
+A time search failed at a time past the length of the PGC. A player
+that seeks there, as a skip past the end of a title, got an error where
+playing to the end reaches the last cell, its still and the commands
+that end the PGC. In an angle block the last cell to play is the one of
+the current angle.
+---
+ src/dvdnav/dvdnav.h |  3 +++
+ src/searching.c     | 19 +++++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/src/dvdnav/dvdnav.h b/src/dvdnav/dvdnav.h
+index 934a9d5441..b7e05dad26 100644
+--- a/src/dvdnav/dvdnav.h
++++ b/src/dvdnav/dvdnav.h
+@@ -487,6 +487,9 @@ DVDNAV_API dvdnav_status_t dvdnav_time_search(dvdnav_t *self,
+  *  0: Default. Jump to a time which may be either <> time_in_pts_ticks
+  *  1: After. Always jump to a time that is > time_in_pts_ticks
+  * -1: Before. Always jump to a time that is < time_in_pts_ticks
++ * A time at or past the length of the PGC jumps to the last VOBU of its last
++ * cell, of the current angle in an angle block, from where the PGC plays to its
++ * end.
+  */
+ DVDNAV_API dvdnav_status_t dvdnav_jump_to_sector_by_time(dvdnav_t *self,
+                                               uint64_t time_in_pts_ticks, int32_t mode);
+diff --git a/src/searching.c b/src/searching.c
+index 3de076df37..57b20290d7 100644
+--- a/src/searching.c
++++ b/src/searching.c
+@@ -1333,6 +1333,7 @@ dvdnav_status_t dvdnav_jump_to_sector_by_time(dvdnav_t *this,
+   if (mode != JUMP_MODE_TIME_DEFAULT) return DVDNAV_STATUS_ERR;
+   int32_t result = DVDNAV_STATUS_ERR;
+   dvd_state_t *state = NULL;
++  const cell_playback_t *cell = NULL;
+   uint32_t sector_off = 0;
+   dvdnav_pos_data_t *jump = NULL;
+   dvdnav_cell_data_t *cell_data = NULL;
+@@ -1350,6 +1351,23 @@ dvdnav_status_t dvdnav_jump_to_sector_by_time(dvdnav_t *this,
+   cell_data = &(dvdnav_cell_data_t){0};
+   cell_data->bgn = &(dvdnav_pos_data_t){0};
+   cell_data->end = &(dvdnav_pos_data_t){0};
++  /* a time at or past the length of the PGC is its last VOBU, which plays it to its end */
++  if (state->pgc && state->pgc->nr_of_cells &&
++      jump->time >= (uint64_t)dvdnav_convert_time(&state->pgc->playback_time) / 90) {
++    cell_data->idx = state->pgc->nr_of_cells;
++    /* in an angle block, the cell of the current angle, which play_Cell() picks the same way */
++    if (state->pgc->cell_playback[cell_data->idx - 1].block_type == BLOCK_TYPE_ANGLE_BLOCK) {
++      while (cell_data->idx > 1 &&
++             state->pgc->cell_playback[cell_data->idx - 1].block_mode != BLOCK_MODE_FIRST_CELL)
++        cell_data->idx--;
++      if (state->AGL_REG && cell_data->idx + state->AGL_REG - 1 <= state->pgc->nr_of_cells)
++        cell_data->idx += state->AGL_REG - 1;
++    }
++    cell = &state->pgc->cell_playback[cell_data->idx - 1];
++    cell_data->bgn->sector = cell->first_sector;
++    jump->sector = cell->last_vobu_start_sector;
++    goto found;
++  }
+   result = dvdnav_cell_find(this, state, jump->time, cell_data);
+   if (!result) goto exit;
+ 
+@@ -1367,6 +1385,7 @@ dvdnav_status_t dvdnav_jump_to_sector_by_time(dvdnav_t *this,
+     }
+   }
+ 
++found:
+   /* jump to sector */
+   sector_off = jump->sector - cell_data->bgn->sector;
+   result = vm_jump_cell_block(this->vm, cell_data->idx, sector_off);
