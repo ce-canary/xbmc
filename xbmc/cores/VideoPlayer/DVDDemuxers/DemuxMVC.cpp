@@ -181,15 +181,36 @@ DemuxPacket* CDemuxMVC::Read()
     else
     {
       AVStream *stream = m_pFormatContext->streams[pkt->stream_index];
+      if (m_hasClipTime && pkt->dts != AV_NOPTS_VALUE)
+      {
+        // libbluray reads the base view of the play item only
+        const int64_t outTime =
+            av_rescale_q(static_cast<int64_t>(m_clipOutTime), CDVDDemuxUtils::BLURAY_CLIP_TIME_BASE,
+                         stream->time_base);
+        if (CDVDDemuxUtils::BlurayTitleTime(pkt->dts, stream, m_clipInTime, 0, false) >=
+            CDVDDemuxUtils::BlurayTitleTime(outTime, stream, m_clipInTime, 0, false))
+        {
+          av_packet_unref(pkt);
+          break;
+        }
+      }
       newPkt = CDVDDemuxUtils::AllocateDemuxPacket(pkt->size);
       if (pkt->data)
         memcpy(newPkt->pData, pkt->data, pkt->size);
       newPkt->iSize = pkt->size;
       newPkt->iStreamId = stream->id;
-      newPkt->dts =
-        ConvertTimestamp(pkt->dts, stream->time_base.den, stream->time_base.num);
-      newPkt->pts =
-        ConvertTimestamp(pkt->pts, stream->time_base.den, stream->time_base.num);
+      if (m_hasClipTime)
+      {
+        newPkt->dts = CDVDDemuxUtils::BlurayTitleTime(pkt->dts, stream, m_clipInTime,
+                                                      m_clipStartTime, m_clampPreroll);
+        newPkt->pts = CDVDDemuxUtils::BlurayTitleTime(pkt->pts, stream, m_clipInTime,
+                                                      m_clipStartTime, m_clampPreroll);
+      }
+      else
+      {
+        newPkt->dts = ConvertTimestamp(pkt->dts, stream->time_base.den, stream->time_base.num);
+        newPkt->pts = ConvertTimestamp(pkt->pts, stream->time_base.den, stream->time_base.num);
+      }
       newPkt->duration = DVD_SEC_TO_TIME((double)pkt->duration * stream->time_base.num /
                                           stream->time_base.den);
       break;

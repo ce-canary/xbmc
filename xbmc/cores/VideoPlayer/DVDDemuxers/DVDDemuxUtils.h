@@ -17,6 +17,8 @@
 
 struct AVChapter;
 struct AVPacket;
+struct AVRational;
+struct AVStream;
 
 struct ChapterFFmpeg
 {
@@ -55,4 +57,11 @@ public:
   static bool SnapMsQuantisedFrameRate(int& fpsRate, int& fpsScale, double hintFps);
   //! Average rate from Matroska NUMBER_OF_FRAMES and DURATION tags, or 0 if invalid.
   static double FrameRateFromStatistics(const std::string& frames, const std::string& duration);
+  //! Time base of Blu-ray clip times (90 kHz)
+  static const AVRational BLURAY_CLIP_TIME_BASE;
+  //! Title time (DVD_TIME_BASE) of timestamp `ts` of `stream`, read in a Blu-ray clip from
+  //! `inTime` that plays at `startTime` of the title (both 90 kHz); `clampPreroll` puts the
+  //! half second before the title start at zero
+  static double BlurayTitleTime(
+      int64_t ts, const AVStream* stream, uint64_t inTime, uint64_t startTime, bool clampPreroll);
 };
